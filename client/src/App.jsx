@@ -2,6 +2,84 @@ import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 
 function App() {
+  const [token, setToken] = useState(() => localStorage.getItem('token') || sessionStorage.getItem('token'));
+  const [user, setUser] = useState(() => {
+    const userStr = localStorage.getItem('user') || sessionStorage.getItem('user');
+    return userStr ? JSON.parse(userStr) : null;
+  });
+  const [authMode, setAuthMode] = useState('login');
+  const [authForm, setAuthForm] = useState({ name: '', email: '', password: '', remember: false });
+  const [authError, setAuthError] = useState('');
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [storageStats, setStorageStats] = useState({ usedBytes: 0, totalLimitBytes: 1, usedPercentage: 0 });
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const formatBytes = (bytes, decimals = 1) => {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+  };
+
+  const fetchStorageStats = async () => {
+    try {
+      const res = await axios.get('http://localhost:5000/api/storage-stats');
+      setStorageStats(res.data);
+    } catch (err) {
+      console.error('Error fetching storage stats:', err);
+    }
+  };
+
+  useEffect(() => {
+    if (token) {
+      axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+      fetchStorageStats();
+      fetchFiles();
+    } else {
+      delete axios.defaults.headers.common['Authorization'];
+    }
+  }, [token]);
+
+  const handleAuthSubmit = async (e) => {
+    e.preventDefault();
+    setAuthError('');
+    try {
+      if (authMode === 'register') {
+        await axios.post('http://localhost:5000/api/auth/register', authForm);
+        setAuthMode('login');
+        setToastMessage({ type: 'success', message: 'Account created! Please sign in.' });
+      } else {
+        const res = await axios.post('http://localhost:5000/api/auth/login', { email: authForm.email, password: authForm.password });
+        const { token: newToken, user: newUser } = res.data;
+        if (authForm.remember) {
+          localStorage.setItem('token', newToken);
+          localStorage.setItem('user', JSON.stringify(newUser));
+        } else {
+          sessionStorage.setItem('token', newToken);
+          sessionStorage.setItem('user', JSON.stringify(newUser));
+        }
+        setToken(newToken);
+        setUser(newUser);
+        setViewMode('all');
+        setCurrentDirectory('');
+      }
+    } catch (err) {
+      setAuthError(err.response?.data?.error || 'Authentication failed');
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    sessionStorage.removeItem('token');
+    sessionStorage.removeItem('user');
+    setToken(null);
+    setUser(null);
+    setShowProfileMenu(false);
+  };
+
   const [files, setFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [previewFile, setPreviewFile] = useState(null);
@@ -12,10 +90,39 @@ function App() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadStats, setUploadStats] = useState({ loaded: 0, total: 0 });
   const [toastMessage, setToastMessage] = useState(null);
-  const [viewMode, setViewMode] = useState('dashboard');
+  const [viewMode, setViewMode] = useState('all');
   const [currentDirectory, setCurrentDirectory] = useState('');
   const fileInputRef = useRef(null);
   const folderInputRef = useRef(null);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+
+  const handlePasswordUpdate = async (e) => {
+    e.preventDefault();
+    try {
+      await axios.put('http://localhost:5000/api/auth/password', { currentPassword, newPassword });
+      setToastMessage({ type: 'success', message: 'Password updated successfully.' });
+      setCurrentPassword('');
+      setNewPassword('');
+    } catch (err) {
+      setToastMessage({ type: 'error', message: err.response?.data?.error || 'Failed to update password.' });
+    }
+  };
+
+  const handleAccountDelete = async (e) => {
+    e.preventDefault();
+    if (deleteConfirmText !== 'DELETE') {
+      setToastMessage({ type: 'error', message: 'Please type DELETE to confirm.' });
+      return;
+    }
+    try {
+      await axios.delete('http://localhost:5000/api/auth/account');
+      handleLogout();
+    } catch (err) {
+      setToastMessage({ type: 'error', message: 'Failed to delete account.' });
+    }
+  };
 
   const fetchFiles = async () => {
     try {
@@ -50,6 +157,7 @@ function App() {
     try {
       await axios.delete(`http://localhost:5000/api/files/${fileToDelete.diskName}`);
       await fetchFiles();
+      await fetchStorageStats();
       setFileToDelete(null);
       setToastMessage({ type: 'success', message: 'File deleted successfully.' });
     } catch (error) {
@@ -59,8 +167,8 @@ function App() {
   };
 
   useEffect(() => {
-    fetchFiles();
-  }, [currentDirectory]);
+    if (token) fetchFiles();
+  }, [currentDirectory, token]);
 
   useEffect(() => {
     if (toastMessage) {
@@ -71,6 +179,15 @@ function App() {
 
   const handleFileUpload = async (filesToUpload) => {
     if (!filesToUpload || filesToUpload.length === 0) return;
+
+    const totalUploadSize = Array.from(filesToUpload).reduce((sum, file) => sum + file.size, 0);
+    const availableBytes = storageStats.totalLimitBytes - storageStats.usedBytes;
+    
+    if (totalUploadSize > availableBytes) {
+      setToastMessage({ type: 'error', message: "Upload Failed: Insufficient storage space. This file exceeds your available account limit." });
+      return;
+    }
+
     try {
       setUploading(true);
       setUploadProgress(0);
@@ -95,11 +212,17 @@ function App() {
       
       if (response.data.status === 'safe') {
         await fetchFiles();
+        await fetchStorageStats();
         setToastMessage({ type: 'success', message: 'Files uploaded safely.' });
       }
     } catch (error) {
-      if (error.response && error.response.status === 400 && error.response.data.status === 'malware') {
+      // Clear any potential pending success toasts
+      setToastMessage(null);
+      
+      if (error.response && error.response.status === 400) {
         setToastMessage({ type: 'error', message: 'Security Alert: Malware detected! Files quarantined/deleted.' });
+      } else if (!error.response) {
+        setToastMessage({ type: 'error', message: 'Upload failed: File blocked locally or network error.' });
       } else {
         setToastMessage({ type: 'error', message: 'Error uploading files.' });
       }
@@ -208,7 +331,7 @@ function App() {
     
     if (type === 'txt' || type === 'md') {
       try {
-        const response = await axios.get(`http://localhost:5000/api/view/${file.diskName}`);
+        const response = await axios.get(`http://localhost:5000/api/view/${file.diskName}?token=${token}`);
         setPreviewText(typeof response.data === 'string' ? response.data : JSON.stringify(response.data, null, 2));
       } catch (err) {
         setPreviewText('Error loading file content.');
@@ -220,6 +343,101 @@ function App() {
     setPreviewFile(null);
     setPreviewText("");
   };
+
+  const searchFiltered = files.filter(file => file.name.toLowerCase().includes(searchQuery.toLowerCase()));
+  const filteredFiles = viewMode === 'recent' ? searchFiltered.slice(0, 5) : searchFiltered;
+
+  if (!token) {
+    return (
+      <div className="min-h-screen bg-surface-container-lowest flex items-center justify-center p-4">
+        <div className="bg-surface w-full max-w-md rounded-2xl shadow-xl border border-outline-variant p-8">
+          <div className="flex flex-col items-center mb-8">
+            <div className="w-16 h-16 rounded-xl bg-surface-container-high flex items-center justify-center mb-4">
+              <span className="material-symbols-outlined text-secondary text-3xl" data-weight="fill">security</span>
+            </div>
+            <h1 className="font-headline-md text-primary font-bold">CloudGuard</h1>
+            <p className="text-on-surface-variant mt-2 font-body-md text-center">
+              {authMode === 'login' ? 'Sign in to access your secure storage' : 'Create an account to get started'}
+            </p>
+          </div>
+
+          {authError && (
+            <div className="mb-6 p-3 bg-error/10 border border-error/20 rounded-lg text-error text-sm text-center">
+              {authError}
+            </div>
+          )}
+
+          <form onSubmit={handleAuthSubmit} className="space-y-4">
+            {authMode === 'register' && (
+              <div>
+                <label className="block text-sm font-medium text-on-surface mb-1">Full Name</label>
+                <input 
+                  type="text" 
+                  required 
+                  className="w-full px-4 py-2 bg-surface-container-lowest border border-outline-variant rounded-lg focus:ring-2 focus:ring-secondary outline-none transition-all"
+                  value={authForm.name}
+                  onChange={e => setAuthForm({...authForm, name: e.target.value})}
+                />
+              </div>
+            )}
+            <div>
+              <label className="block text-sm font-medium text-on-surface mb-1">Email</label>
+              <input 
+                type="email" 
+                required 
+                className="w-full px-4 py-2 bg-surface-container-lowest border border-outline-variant rounded-lg focus:ring-2 focus:ring-secondary outline-none transition-all"
+                value={authForm.email}
+                onChange={e => setAuthForm({...authForm, email: e.target.value})}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-on-surface mb-1">Password</label>
+              <input 
+                type="password" 
+                required 
+                className="w-full px-4 py-2 bg-surface-container-lowest border border-outline-variant rounded-lg focus:ring-2 focus:ring-secondary outline-none transition-all"
+                value={authForm.password}
+                onChange={e => setAuthForm({...authForm, password: e.target.value})}
+              />
+            </div>
+            
+            {authMode === 'login' && (
+              <div className="flex items-center">
+                <input 
+                  type="checkbox" 
+                  id="remember" 
+                  className="rounded border-outline-variant text-secondary focus:ring-secondary w-4 h-4"
+                  checked={authForm.remember}
+                  onChange={e => setAuthForm({...authForm, remember: e.target.checked})}
+                />
+                <label htmlFor="remember" className="ml-2 text-sm text-on-surface-variant">Remember me</label>
+              </div>
+            )}
+
+            <button 
+              type="submit" 
+              className="w-full py-3 bg-primary text-on-primary rounded-lg font-medium hover:bg-primary/90 transition-colors mt-6 shadow-sm"
+            >
+              {authMode === 'login' ? 'Sign In' : 'Create Account'}
+            </button>
+          </form>
+
+          <div className="mt-6 text-center">
+            <button 
+              type="button"
+              onClick={() => {
+                setAuthMode(authMode === 'login' ? 'register' : 'login');
+                setAuthError('');
+              }}
+              className="text-secondary text-sm hover:underline font-medium"
+            >
+              {authMode === 'login' ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen w-full">
@@ -236,40 +454,32 @@ function App() {
         </div>
         {/* Main Navigation */}
         <div className="flex-1 px-4 space-y-1">
-          <a className="flex items-center gap-3 px-4 py-3 rounded-lg text-secondary font-bold border-l-4 border-secondary bg-surface-container-low cursor-pointer active:opacity-80" href="#">
-            <span className="material-symbols-outlined" data-weight="fill">folder_open</span>
+          <button 
+            onClick={() => { setViewMode('all'); setCurrentDirectory(''); }}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg font-bold cursor-pointer active:opacity-80 transition-colors duration-200 border-l-4 ${viewMode === 'all' ? 'text-secondary border-secondary bg-surface-container-low' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high border-transparent'}`}
+          >
+            <span className="material-symbols-outlined" data-weight={viewMode === 'all' ? "fill" : ""}>folder_open</span>
             <span className="font-body-md text-body-md">My Files</span>
-          </a>
-          <a className="flex items-center gap-3 px-4 py-3 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors duration-200 cursor-pointer active:opacity-80 border-l-4 border-transparent" href="#">
-            <span className="material-symbols-outlined">gpp_bad</span>
-            <span className="font-body-md text-body-md">Quarantine Zone</span>
-          </a>
-          <a className="flex items-center gap-3 px-4 py-3 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors duration-200 cursor-pointer active:opacity-80 border-l-4 border-transparent" href="#">
-            <span className="material-symbols-outlined">group</span>
-            <span className="font-body-md text-body-md">Shared</span>
-          </a>
-          <a className="flex items-center gap-3 px-4 py-3 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors duration-200 cursor-pointer active:opacity-80 border-l-4 border-transparent" href="#">
-            <span className="material-symbols-outlined">history</span>
+          </button>
+          
+          <button 
+            onClick={() => { setViewMode('recent'); setCurrentDirectory(''); }}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg font-bold cursor-pointer active:opacity-80 transition-colors duration-200 border-l-4 ${viewMode === 'recent' ? 'text-secondary border-secondary bg-surface-container-low' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high border-transparent'}`}
+          >
+            <span className="material-symbols-outlined" data-weight={viewMode === 'recent' ? "fill" : ""}>history</span>
             <span className="font-body-md text-body-md">Recent</span>
-          </a>
-        </div>
-        {/* CTA */}
-        <div className="px-6 mb-6">
-          <button onClick={triggerFileInput} className="w-full bg-secondary text-on-secondary font-body-md text-body-md font-medium py-3 px-4 rounded-lg flex items-center justify-center gap-2 hover:bg-secondary-container transition-colors shadow-sm">
-            <span className="material-symbols-outlined">cloud_upload</span>
-            Upload File
           </button>
         </div>
+
         {/* Footer Navigation */}
         <div className="px-4 space-y-1 mt-auto border-t border-outline-variant pt-4 mx-4">
-          <a className="flex items-center gap-3 px-4 py-2 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors duration-200 cursor-pointer active:opacity-80" href="#">
-            <span className="material-symbols-outlined">settings</span>
+          <button 
+            onClick={() => setViewMode('settings')}
+            className={`w-full flex items-center gap-3 px-4 py-2 rounded-lg font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${viewMode === 'settings' ? 'text-secondary bg-surface-container-low' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high'}`}
+          >
+            <span className="material-symbols-outlined" data-weight={viewMode === 'settings' ? "fill" : ""}>settings</span>
             <span className="font-body-md text-body-md">Settings</span>
-          </a>
-          <a className="flex items-center gap-3 px-4 py-2 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors duration-200 cursor-pointer active:opacity-80" href="#">
-            <span className="material-symbols-outlined">help</span>
-            <span className="font-body-md text-body-md">Support</span>
-          </a>
+          </button>
         </div>
       </nav>
 
@@ -281,28 +491,103 @@ function App() {
           </button>
           <h1 className="font-headline-md text-headline-md font-bold text-primary dark:text-primary-fixed md:hidden">CloudGuard</h1>
         </div>
-        <div className="hidden md:flex flex-1 max-w-md ml-4 mr-8">
-          <div className="relative w-full focus-within:ring-2 focus-within:ring-secondary rounded-lg transition-all">
-            <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant">search</span>
-            <input className="w-full bg-surface text-on-surface border border-outline-variant rounded-lg pl-10 pr-4 py-2 font-body-md text-body-md outline-none" placeholder="Search files, folders..." type="text" />
+          <div className="hidden md:flex flex-1 max-w-md ml-4 mr-8">
+            <div className="relative w-full focus-within:ring-2 focus-within:ring-secondary rounded-lg transition-all">
+              <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant">search</span>
+              <input 
+                value={searchQuery} 
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full bg-surface text-on-surface border border-outline-variant rounded-lg pl-10 pr-4 py-2 font-body-md text-body-md outline-none" 
+                placeholder="Search files, folders..." 
+                type="text" 
+              />
+            </div>
           </div>
-        </div>
         <div className="flex items-center gap-2">
-          <button className="p-2 text-on-surface-variant hover:bg-surface-container-high rounded-full transition-colors relative">
-            <span className="material-symbols-outlined">notifications</span>
-            <span className="absolute top-2 right-2 w-2 h-2 bg-error rounded-full"></span>
-          </button>
-          <button className="p-2 text-on-surface-variant hover:bg-surface-container-high rounded-full transition-colors hidden sm:block">
-            <span className="material-symbols-outlined">help</span>
-          </button>
-          <div className="ml-4 w-8 h-8 rounded-full bg-surface-dim overflow-hidden border border-outline-variant shrink-0 cursor-pointer hover:ring-2 hover:ring-secondary transition-all">
-            <img alt="User avatar" className="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBd-aGj6dGHiBbcHHblfy1AseFvz7dBxETDU95Y--3npnoG46YQ7w2MBY-imewUhDWf730-26SlIM3bne5vgK6hxVc0xocPErrQL0oONfT4lI_2ZeLWfqqgL3GCZNTO5NoE8lG3eki-O2-T_omSaL-rm8_ksG7sreOCMd0Z8UUDYHqZocPLvuMmKznL3eSIRzp99_cqL3QB9PSbeZmqisbf9cFom2M_dKYiM-_ARi_gE2nP5k4qwpWp" />
+          <div className="relative ml-2">
+            <div 
+              onClick={(e) => { e.stopPropagation(); setShowProfileMenu(!showProfileMenu); }}
+              className="w-10 h-10 rounded-full bg-secondary text-on-secondary flex items-center justify-center font-title-md cursor-pointer border-2 border-surface-container-lowest select-none"
+            >
+              {user?.name ? user.name.charAt(0).toUpperCase() : 'U'}
+            </div>
+            {showProfileMenu && (
+              <div className="absolute right-0 mt-2 w-48 bg-surface-container-lowest border border-outline-variant shadow-lg rounded-xl overflow-hidden z-50">
+                <div className="px-4 py-3 border-b border-outline-variant bg-surface-container-low cursor-default">
+                  <p className="text-sm font-bold text-on-surface truncate">{user?.name || 'User'}</p>
+                  <p className="text-xs text-on-surface-variant truncate">{user?.email || 'user@example.com'}</p>
+                </div>
+                <button 
+                  onClick={() => { setViewMode('settings'); setShowProfileMenu(false); }}
+                  className="w-full text-left px-4 py-3 text-on-surface hover:bg-surface-container-high text-sm flex items-center gap-2 transition-colors"
+                >
+                  <span className="material-symbols-outlined text-[18px]">person</span> Profile Settings
+                </button>
+                <div className="w-full h-px bg-outline-variant"></div>
+                <button 
+                  onClick={handleLogout}
+                  className="w-full text-left px-4 py-3 text-error hover:bg-error/10 text-sm flex items-center gap-2 transition-colors"
+                >
+                  <span className="material-symbols-outlined text-[18px]">logout</span> Sign out
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </header>
 
       {/* Main Content Canvas */}
-      <main className="pt-24 pb-12 px-margin-mobile md:px-margin-desktop md:ml-64 max-w-container-max mx-auto w-full">
+      <main 
+        onClick={() => setShowProfileMenu(false)} 
+        className="pt-24 pb-12 px-margin-mobile md:px-margin-desktop md:ml-64 max-w-container-max mx-auto w-full"
+      >
+        {viewMode === 'settings' ? (
+          <div className="max-w-3xl mx-auto space-y-6">
+            <h2 className="font-headline-md text-headline-md font-bold text-on-surface mb-8">Profile Settings</h2>
+            
+            <div className="bg-surface-container-lowest border border-outline-variant rounded-xl p-6 shadow-sm">
+              <h3 className="font-title-md text-on-surface mb-4">Profile Details</h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-on-surface-variant mb-1">Name</label>
+                  <input type="text" value={user?.name || ''} readOnly className="w-full bg-surface-container-low text-on-surface-variant border border-outline-variant rounded-lg px-4 py-2 opacity-70 cursor-not-allowed" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-on-surface-variant mb-1">Email</label>
+                  <input type="text" value={user?.email || ''} readOnly className="w-full bg-surface-container-low text-on-surface-variant border border-outline-variant rounded-lg px-4 py-2 opacity-70 cursor-not-allowed" />
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-surface-container-lowest border border-outline-variant rounded-xl p-6 shadow-sm">
+              <h3 className="font-title-md text-on-surface mb-4">Security</h3>
+              <form onSubmit={handlePasswordUpdate} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-on-surface-variant mb-1">Current Password</label>
+                  <input type="password" value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} required className="w-full bg-surface text-on-surface border border-outline-variant focus:ring-2 focus:ring-secondary rounded-lg px-4 py-2 outline-none" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-on-surface-variant mb-1">New Password</label>
+                  <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} required className="w-full bg-surface text-on-surface border border-outline-variant focus:ring-2 focus:ring-secondary rounded-lg px-4 py-2 outline-none" />
+                </div>
+                <button type="submit" className="px-6 py-2 bg-primary text-on-primary rounded-lg font-medium hover:bg-primary/90 transition-colors shadow-sm">Update Password</button>
+              </form>
+            </div>
+
+            <div className="bg-error/10 border border-error/20 rounded-xl p-6">
+              <h3 className="font-title-md text-error mb-2">Danger Zone</h3>
+              <p className="text-sm text-on-surface-variant mb-4">Once you delete your account, there is no going back. Please be certain.</p>
+              <form onSubmit={handleAccountDelete} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-on-surface-variant mb-1">To verify, type <strong>DELETE</strong> below:</label>
+                  <input type="text" value={deleteConfirmText} onChange={e => setDeleteConfirmText(e.target.value)} className="w-full bg-surface text-on-surface border border-outline-variant focus:ring-2 focus:ring-error rounded-lg px-4 py-2 outline-none" />
+                </div>
+                <button type="submit" disabled={deleteConfirmText !== 'DELETE'} className={`px-6 py-2 rounded-lg font-medium transition-colors shadow-sm ${deleteConfirmText === 'DELETE' ? 'bg-error text-on-error hover:bg-[#b91c1c]' : 'bg-surface-dim text-on-surface-variant cursor-not-allowed'}`}>Delete Account</button>
+              </form>
+            </div>
+          </div>
+        ) : (
+          <>
         {/* Page Title */}
         <div className="mb-stack-lg flex justify-between items-end">
           <div>
@@ -313,19 +598,19 @@ function App() {
             <div className="relative w-12 h-12">
               <svg className="w-full h-full transform -rotate-90" viewBox="0 0 36 36">
                 <path className="text-surface-dim" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" strokeWidth="3"></path>
-                <path className="text-secondary" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" strokeDasharray="65, 100" strokeWidth="3"></path>
+                <path className="text-secondary" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" strokeDasharray={`${Math.min(storageStats.usedPercentage, 100)}, 100`} strokeWidth="3"></path>
               </svg>
-              <div className="absolute inset-0 flex items-center justify-center font-label-md text-[10px] font-bold text-on-surface">65%</div>
+              <div className="absolute inset-0 flex items-center justify-center font-label-md text-[10px] font-bold text-on-surface">{Math.min(100, Math.round(storageStats.usedPercentage))}%</div>
             </div>
             <div>
               <p className="font-label-md text-label-md text-on-surface-variant uppercase tracking-wider">Storage Used</p>
-              <p className="font-body-md text-body-md font-medium">650 GB / 1 TB</p>
+              <p className="font-body-md text-body-md font-medium">{formatBytes(storageStats.usedBytes)} / {formatBytes(storageStats.totalLimitBytes, 0)}</p>
             </div>
           </div>
         </div>
 
         {/* Dropzone */}
-        {viewMode === 'dashboard' && (
+        {viewMode === 'all' && (
           <section className="mb-stack-lg">
             <input 
               type="file" 
@@ -377,7 +662,7 @@ function App() {
         <section>
           <div className="flex items-center justify-between mb-stack-md">
             <h3 className="font-title-lg text-title-lg text-on-surface">
-              {viewMode === 'dashboard' ? 'Recent Files' : 'All Files'}
+              {viewMode === 'recent' ? 'Recent Files' : 'All Files'}
             </h3>
             <div className="flex items-center gap-4">
               <button 
@@ -387,21 +672,6 @@ function App() {
                 <span className="material-symbols-outlined text-sm">sort</span>
                 Sort: {sortOrder === 'newest' ? 'Newest First' : 'Oldest First'}
               </button>
-              {viewMode === 'dashboard' ? (
-                <button 
-                  onClick={() => setViewMode('allFiles')}
-                  className="text-secondary font-label-md text-label-md hover:underline flex items-center gap-1"
-                >
-                  View All <span className="material-symbols-outlined text-sm">arrow_forward</span>
-                </button>
-              ) : (
-                <button 
-                  onClick={() => setViewMode('dashboard')}
-                  className="text-secondary font-label-md text-label-md hover:underline flex items-center gap-1"
-                >
-                  <span className="material-symbols-outlined text-sm">arrow_back</span> Back to Dashboard
-                </button>
-              )}
             </div>
           </div>
 
@@ -436,7 +706,14 @@ function App() {
                   </tr>
                 </thead>
                 <tbody className="font-body-md text-body-md text-on-surface divide-y divide-outline-variant/50">
-                  {(viewMode === 'dashboard' ? files.slice(0, 5) : files).map(file => (
+                  {filteredFiles.length === 0 ? (
+                    <tr>
+                      <td colSpan="5" className="py-8 text-center text-on-surface-variant">
+                        No files match your search.
+                      </td>
+                    </tr>
+                  ) : 
+                    filteredFiles.map(file => (
                     <tr 
                       key={file.id} 
                       onClick={() => file.isFolder ? setCurrentDirectory(file.diskName) : handlePreview(file)}
@@ -467,33 +744,36 @@ function App() {
                           )
                         )}
                       </td>
-                      <td className="py-3 px-6 text-right relative">
-                        <button 
-                          onClick={(e) => { e.stopPropagation(); setActiveMenu(activeMenu === file.id ? null : file.id); }}
-                          className="p-1.5 text-on-surface-variant hover:text-secondary rounded hover:bg-surface-container-high transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
-                        >
-                          <span className="material-symbols-outlined">more_vert</span>
-                        </button>
-                        {activeMenu === file.id && (
-                          <div className="absolute right-8 top-10 bg-surface-container-lowest border border-outline-variant shadow-lg rounded-lg py-2 w-32 z-10 flex flex-col items-start">
-                            {!file.isFolder && file.diskName && file.status === 'Safe' && (
-                              <a 
-                                href={`http://localhost:5000/api/download/${file.diskName}`} 
-                                download
-                                onClick={(e) => { e.stopPropagation(); setActiveMenu(null); }}
-                                className="w-full text-left px-4 py-2 hover:bg-surface-container-high text-on-surface text-sm flex items-center gap-2"
-                              >
-                                <span className="material-symbols-outlined text-sm">download</span> Download
-                              </a>
-                            )}
-                            <button 
-                              onClick={(e) => { e.stopPropagation(); setActiveMenu(null); setFileToDelete(file); }}
-                              className="w-full text-left px-4 py-2 hover:bg-surface-container-high text-error text-sm flex items-center gap-2"
+                      <td className="py-3 px-6 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          {!file.isFolder && file.diskName && file.status === 'Safe' && (
+                            <a 
+                              href={`http://localhost:5000/api/download/${file.diskName}?token=${token}`} 
+                              download
+                              onClick={(e) => e.stopPropagation()}
+                              className="p-1.5 text-on-surface-variant hover:text-secondary rounded hover:bg-surface-container-high transition-colors"
+                              title="Download"
                             >
-                              <span className="material-symbols-outlined text-sm">delete</span> Delete
+                              <span className="material-symbols-outlined text-[18px]">download</span>
+                            </a>
+                          )}
+                          {!file.isFolder && (
+                            <button 
+                              onClick={(e) => { e.stopPropagation(); handlePreview(file); }}
+                              className="p-1.5 text-on-surface-variant hover:text-secondary rounded hover:bg-surface-container-high transition-colors"
+                              title="Preview"
+                            >
+                              <span className="material-symbols-outlined text-[18px]">visibility</span>
                             </button>
-                          </div>
-                        )}
+                          )}
+                          <button 
+                            onClick={(e) => { e.stopPropagation(); setFileToDelete(file); }}
+                            className="p-1.5 text-on-surface-variant hover:text-error rounded hover:bg-error/10 transition-colors"
+                            title="Delete"
+                          >
+                            <span className="material-symbols-outlined text-[18px]">delete</span>
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -501,7 +781,9 @@ function App() {
               </table>
             </div>
           </div>
-        </section>
+          </section>
+          </>
+        )}
       </main>
 
       {/* Preview Modal */}
@@ -514,7 +796,7 @@ function App() {
                 <h3 className="font-title-md text-title-md font-medium truncate">{previewFile.name}</h3>
               </div>
               <div className="flex items-center gap-2">
-                <a href={`http://localhost:5000/api/download/${previewFile.diskName}`} download className="p-2 text-white/80 hover:bg-white/10 rounded-full transition-colors flex items-center">
+                <a href={`http://localhost:5000/api/download/${previewFile.diskName}?token=${token}`} download className="p-2 text-white/80 hover:bg-white/10 rounded-full transition-colors flex items-center">
                   <span className="material-symbols-outlined">download</span>
                 </a>
                 <button onClick={closePreview} className="p-2 text-white/80 hover:bg-white/10 rounded-full transition-colors">
@@ -528,7 +810,7 @@ function App() {
                 autoPlay 
                 controlsList="nodownload" 
                 style={{ width: '100%', maxHeight: '100%' }} 
-                src={`http://localhost:5000/api/view/${previewFile.diskName}`} 
+                src={`http://localhost:5000/api/view/${previewFile.diskName}?token=${token}`} 
               />
             </div>
           </div>
@@ -539,7 +821,7 @@ function App() {
                 <h3 className="font-title-lg text-on-surface truncate pr-4">{previewFile.name}</h3>
                 <div className="flex items-center gap-2">
                   <a 
-                    href={`http://localhost:5000/api/download/${previewFile.diskName}`} 
+                    href={`http://localhost:5000/api/download/${previewFile.diskName}?token=${token}`} 
                     download
                     className="bg-secondary text-on-secondary hover:bg-secondary-container transition-colors p-2 rounded-lg flex items-center justify-center"
                     title="Download File"
@@ -553,9 +835,9 @@ function App() {
               </div>
               <div className="flex-1 overflow-auto bg-surface-container p-4 flex items-center justify-center">
                 {(previewFile.type.toLowerCase() === 'png' || previewFile.type.toLowerCase() === 'jpg' || previewFile.type.toLowerCase() === 'jpeg') ? (
-                  <img src={`http://localhost:5000/api/view/${previewFile.diskName}`} alt={previewFile.name} className="max-w-full max-h-[70vh] object-contain shadow-sm" />
+                  <img src={`http://localhost:5000/api/view/${previewFile.diskName}?token=${token}`} alt={previewFile.name} className="max-w-full max-h-[70vh] object-contain shadow-sm" />
                 ) : previewFile.type.toLowerCase() === 'pdf' ? (
-                  <iframe src={`http://localhost:5000/api/view/${previewFile.diskName}`} className="w-full h-[70vh] border-0" title="PDF Preview" />
+                  <iframe src={`http://localhost:5000/api/view/${previewFile.diskName}?token=${token}`} className="w-full h-[70vh] border-0" title="PDF Preview" />
                 ) : (previewFile.type.toLowerCase() === 'txt' || previewFile.type.toLowerCase() === 'md') ? (
                   <pre className="w-full h-full text-left bg-surface-container-lowest p-6 rounded-lg overflow-auto text-sm font-mono whitespace-pre-wrap shadow-inner border border-outline-variant">
                     {previewText || "Loading..."}
@@ -574,11 +856,11 @@ function App() {
 
       {/* Delete Confirmation Modal */}
       {fileToDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
-          <div className="bg-surface-container-lowest rounded-xl shadow-lg w-full max-w-sm p-6 flex flex-col gap-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-surface-container-lowest rounded-xl shadow-xl border border-outline-variant w-full max-w-md p-6 flex flex-col gap-4">
             <h3 className="font-title-lg text-on-surface">Confirm Delete</h3>
             <p className="font-body-md text-on-surface-variant">
-              Are you sure you want to permanently delete <strong>{fileToDelete.name}</strong>?
+              Are you sure you want to permanently delete <strong className="break-all text-on-surface">{fileToDelete.name}</strong>?
             </p>
             <div className="flex justify-end gap-3 mt-4">
               <button 

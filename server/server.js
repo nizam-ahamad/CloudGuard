@@ -6,8 +6,12 @@ const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
 const archiver = require('archiver');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 
 const app = express();
+
+const JWT_SECRET = 'cloudguard-super-secret-key';
 
 // Configure CORS for Vite frontend
 app.use(cors({
@@ -36,6 +40,7 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 // File Metadata Schema
 const FileSchema = new mongoose.Schema({
+  userId: { type: String, required: true },
   name: String,
   originalName: String,
   path: String,
@@ -55,12 +60,248 @@ mongoose.connect('mongodb://localhost:27017/cloudguard', { serverSelectionTimeou
     isDbConnected = true;
   })
   .catch(err => {
-    console.warn('MongoDB connection warning: Database is offline. Files will still be processed and saved locally.', err.message);
+    console.error('MongoDB connection warning: Database is offline. Files will still be processed and saved locally.', err.message);
   });
 
+// User Schema
+const UserSchema = new mongoose.Schema({
+  name: { type: String, required: true },
+  email: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
+  isAdmin: { type: Boolean, default: false }
+});
+const User = mongoose.model('User', UserSchema);
+
+const GLOBAL_MAX_BYTES = 1073741824; // 1 GB
+
+// Auth Middleware
+const verifyToken = (req, res, next) => {
+  const token = req.headers.authorization?.split(' ')[1] || req.query.token;
+  if (!token) return res.status(401).json({ error: 'Access denied. Please log in.' });
+  try {
+    const verified = jwt.verify(token, JWT_SECRET);
+    req.user = verified;
+    next();
+  } catch (err) {
+    res.status(400).json({ error: 'Invalid or expired token.' });
+  }
+};
+
+// Auth Routes
+const usersFilePath = path.join(storageDir, 'users.json');
+if (!fs.existsSync(usersFilePath)) {
+  fs.writeFileSync(usersFilePath, JSON.stringify([]));
+}
+
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const globalUsed = getDirSize(storageDir);
+    if (globalUsed > GLOBAL_MAX_BYTES) {
+      return res.status(503).json({ error: "Registration disabled: CloudGuard global server capacity has been reached." });
+    }
+
+    const { name, email, password } = req.body;
+    if (!name || !email || !password) return res.status(400).json({ error: 'Missing fields' });
+    
+    let emailExists = false;
+    
+    if (isDbConnected || mongoose.connection.readyState === 1) {
+      emailExists = await User.findOne({ email });
+    } else {
+      const users = JSON.parse(fs.readFileSync(usersFilePath));
+      emailExists = users.find(u => u.email === email);
+    }
+    
+    if (emailExists) return res.status(400).json({ error: 'Email already exists' });
+    
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+    
+    if (isDbConnected || mongoose.connection.readyState === 1) {
+      const user = new User({ name, email, password: hashedPassword });
+      await user.save();
+    } else {
+      const users = JSON.parse(fs.readFileSync(usersFilePath));
+      users.push({ _id: Date.now().toString(), name, email, password: hashedPassword });
+      fs.writeFileSync(usersFilePath, JSON.stringify(users, null, 2));
+    }
+    
+    res.json({ message: 'User created successfully' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    let user = null;
+    
+    if (isDbConnected || mongoose.connection.readyState === 1) {
+      user = await User.findOne({ email });
+    } else {
+      const users = JSON.parse(fs.readFileSync(usersFilePath));
+      user = users.find(u => u.email === email);
+    }
+    
+    if (!user) return res.status(400).json({ error: 'Invalid credentials' });
+    
+    const validPass = await bcrypt.compare(password, user.password);
+    if (!validPass) return res.status(400).json({ error: 'Invalid credentials' });
+    
+    const token = jwt.sign({ _id: user._id, name: user.name, isAdmin: user.isAdmin || false }, JWT_SECRET, { expiresIn: '7d' });
+    res.json({ token, user: { name: user.name, email: user.email, isAdmin: user.isAdmin || false } });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/auth/password', verifyToken, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    if (!currentPassword || !newPassword) return res.status(400).json({ error: 'Missing fields' });
+
+    let userPass = null;
+    let userIndex = -1;
+    let users = [];
+
+    if (isDbConnected || mongoose.connection.readyState === 1) {
+      const user = await User.findById(req.user._id);
+      if (!user) return res.status(404).json({ error: 'User not found' });
+      userPass = user.password;
+    } else {
+      users = JSON.parse(fs.readFileSync(usersFilePath));
+      userIndex = users.findIndex(u => u._id === req.user._id);
+      if (userIndex === -1) return res.status(404).json({ error: 'User not found' });
+      userPass = users[userIndex].password;
+    }
+
+    const validPass = await bcrypt.compare(currentPassword, userPass);
+    if (!validPass) return res.status(400).json({ error: 'Invalid current password' });
+
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(newPassword, salt);
+
+    if (isDbConnected || mongoose.connection.readyState === 1) {
+      await User.findByIdAndUpdate(req.user._id, { password: hashedPassword });
+    } else {
+      users[userIndex].password = hashedPassword;
+      fs.writeFileSync(usersFilePath, JSON.stringify(users, null, 2));
+    }
+
+    res.json({ message: 'Password updated successfully' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/auth/account', verifyToken, async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    // 1. Delete physical files
+    const userStorageDir = path.join(storageDir, userId);
+    if (fs.existsSync(userStorageDir)) {
+      fs.rmSync(userStorageDir, { recursive: true, force: true });
+    }
+
+    // 2. Delete user and files from DB / JSON
+    if (isDbConnected || mongoose.connection.readyState === 1) {
+      await FileModel.deleteMany({ userId: userId });
+      await User.findByIdAndDelete(userId);
+    } else {
+      const users = JSON.parse(fs.readFileSync(usersFilePath));
+      const updatedUsers = users.filter(u => u._id !== userId);
+      fs.writeFileSync(usersFilePath, JSON.stringify(updatedUsers, null, 2));
+    }
+
+    res.json({ message: 'Account deleted successfully' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Storage Helper
+function getDirSize(dirPath) {
+  let size = 0;
+  if (!fs.existsSync(dirPath)) return 0;
+  const files = fs.readdirSync(dirPath);
+  for (const file of files) {
+    const fullPath = path.join(dirPath, file);
+    const stats = fs.statSync(fullPath);
+    if (stats.isDirectory()) {
+      size += getDirSize(fullPath);
+    } else {
+      size += stats.size;
+    }
+  }
+  return size;
+}
+
+// Storage Stats Endpoint
+app.get('/api/storage-stats', verifyToken, async (req, res) => {
+  try {
+    let usedBytes = 0;
+    const userId = req.user._id;
+
+    if (isDbConnected || mongoose.connection.readyState === 1) {
+      const result = await FileModel.aggregate([
+        { $match: { userId: userId } },
+        { $group: { _id: null, totalSize: { $sum: "$size" } } }
+      ]);
+      if (result.length > 0) {
+        usedBytes = result[0].totalSize;
+      }
+    } else {
+      const userStorageDir = path.join(storageDir, userId);
+      usedBytes = getDirSize(userStorageDir);
+    }
+    
+    const totalLimitBytes = 5 * 1024 * 1024 * 1024; // 5 GB
+    const usedPercentage = ((usedBytes / totalLimitBytes) * 100).toFixed(1);
+    res.json({ usedBytes, totalLimitBytes, usedPercentage });
+  } catch (error) {
+    res.status(500).json({ error: 'Error calculating storage stats' });
+  }
+});
+
 // Upload Endpoint
-app.post('/api/upload', upload.array('files'), async (req, res) => {
+app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => {
   if (!req.files || req.files.length === 0) return res.status(400).json({ error: 'No files uploaded' });
+
+  const userId = req.user._id;
+  const incomingSize = req.files.reduce((sum, f) => sum + f.size, 0);
+
+  // Global Quota Check
+  const globalUsed = getDirSize(storageDir);
+  if (globalUsed > GLOBAL_MAX_BYTES) {
+    req.files.forEach(f => {
+      if (fs.existsSync(f.path)) fs.unlinkSync(f.path);
+    });
+    return res.status(503).json({ error: "Upload failed: The server has reached its maximum global capacity limit." });
+  }
+
+  // Check User Quota
+  let currentStorageUsed = 0;
+  if (isDbConnected || mongoose.connection.readyState === 1) {
+    const result = await FileModel.aggregate([
+      { $match: { userId: userId } },
+      { $group: { _id: null, totalSize: { $sum: "$size" } } }
+    ]);
+    if (result.length > 0) {
+      currentStorageUsed = result[0].totalSize;
+    }
+  } else {
+    const userStorageDir = path.join(storageDir, userId);
+    currentStorageUsed = getDirSize(userStorageDir);
+  }
+
+  if (currentStorageUsed + incomingSize > 5368709120) {
+    req.files.forEach(f => {
+      if (fs.existsSync(f.path)) fs.unlinkSync(f.path);
+    });
+    return res.status(400).json({ error: "Upload Failed: Insufficient storage space. This file exceeds your 5 GB account limit." });
+  }
 
   let results = [];
   let hasMalware = false;
@@ -83,13 +324,16 @@ app.post('/api/upload', upload.array('files'), async (req, res) => {
           relativePath = Array.isArray(req.body.relativePaths) ? req.body.relativePaths[i] : req.body.relativePaths;
         }
         
-        let permanentPath = path.join(storageDir, diskName);
+        const userStorageDir = path.join(storageDir, userId);
+        if (!fs.existsSync(userStorageDir)) fs.mkdirSync(userStorageDir, { recursive: true });
+
+        let permanentPath = path.join(userStorageDir, diskName);
         let nestedRelativePath = diskName;
 
         if (relativePath) {
           const relativeDir = path.dirname(relativePath);
           if (relativeDir && relativeDir !== '.') {
-            const targetDir = path.join(storageDir, relativeDir);
+            const targetDir = path.join(userStorageDir, relativeDir);
             if (!fs.existsSync(targetDir)) {
               fs.mkdirSync(targetDir, { recursive: true });
             }
@@ -102,6 +346,7 @@ app.post('/api/upload', upload.array('files'), async (req, res) => {
         fs.renameSync(tempFilePath, permanentPath);
 
         const fileData = {
+          userId: userId,
           name: file.filename,
           diskName: nestedRelativePath,
           originalName: originalName,
@@ -128,12 +373,12 @@ app.post('/api/upload', upload.array('files'), async (req, res) => {
         // Malware detected
         hasMalware = true;
         if (fs.existsSync(tempFilePath)) {
-          fs.unlinkSync(tempFilePath); // Delete file from temp
+          try { fs.unlinkSync(tempFilePath); } catch (e) {} // Ignore EBUSY
         }
       }
     } catch (error) {
       if (fs.existsSync(tempFilePath)) {
-        fs.unlinkSync(tempFilePath);
+        try { fs.unlinkSync(tempFilePath); } catch (e) {}
       }
     }
   }
@@ -146,9 +391,10 @@ app.post('/api/upload', upload.array('files'), async (req, res) => {
 });
 
 // View Endpoint (Inline)
-app.get('/api/view/:filename(*)', (req, res) => {
+app.get('/api/view/:filename(*)', verifyToken, (req, res) => {
   const filename = req.params.filename;
-  const filePath = path.join(storageDir, filename);
+  const userStorageDir = path.join(storageDir, req.user._id);
+  const filePath = path.join(userStorageDir, filename);
 
   if (fs.existsSync(filePath)) {
     const stats = fs.statSync(filePath);
@@ -193,9 +439,10 @@ app.get('/api/view/:filename(*)', (req, res) => {
 });
 
 // Download Endpoint (Attachment)
-app.get('/api/download/:filename(*)', async (req, res) => {
+app.get('/api/download/:filename(*)', verifyToken, async (req, res) => {
   const filename = req.params.filename;
-  const filePath = path.join(storageDir, filename);
+  const userStorageDir = path.join(storageDir, req.user._id);
+  const filePath = path.join(userStorageDir, filename);
 
   if (fs.existsSync(filePath)) {
     const stats = fs.statSync(filePath);
@@ -227,13 +474,14 @@ app.get('/api/download/:filename(*)', async (req, res) => {
 });
 
 // List Files Endpoint
-app.get('/api/files', async (req, res) => {
+app.get('/api/files', verifyToken, async (req, res) => {
   try {
     const queryPath = req.query.path || '';
-    const targetDir = path.join(storageDir, queryPath);
+    const userStorageDir = path.join(storageDir, req.user._id);
+    const targetDir = path.join(userStorageDir, queryPath);
 
     // Prevent directory traversal
-    if (!targetDir.startsWith(storageDir)) {
+    if (!targetDir.startsWith(userStorageDir)) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
@@ -245,7 +493,7 @@ app.get('/api/files', async (req, res) => {
     const mappedFiles = items.map(item => {
       const itemPath = path.join(targetDir, item);
       const stats = fs.statSync(itemPath);
-      const relativePath = path.relative(storageDir, itemPath).split(path.sep).join('/');
+      const relativePath = path.relative(userStorageDir, itemPath).split(path.sep).join('/');
       const isFolder = stats.isDirectory();
       
       let originalName = item;
@@ -274,9 +522,10 @@ app.get('/api/files', async (req, res) => {
 });
 
 // Delete File Endpoint
-app.delete('/api/files/:filename(*)', (req, res) => {
+app.delete('/api/files/:filename(*)', verifyToken, async (req, res) => {
   const filename = req.params.filename;
-  const filePath = path.join(storageDir, filename);
+  const userStorageDir = path.join(storageDir, req.user._id);
+  const filePath = path.join(userStorageDir, filename);
 
   try {
     if (fs.existsSync(filePath)) {
@@ -286,6 +535,11 @@ app.delete('/api/files/:filename(*)', (req, res) => {
       } else {
         fs.unlinkSync(filePath);
       }
+      
+      if (isDbConnected || mongoose.connection.readyState === 1) {
+        await FileModel.deleteMany({ path: { $regex: `^${filePath}` }, userId: req.user._id });
+      }
+      
       return res.json({ success: true, message: 'Deleted successfully' });
     } else {
       return res.status(404).json({ error: 'File not found' });
