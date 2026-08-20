@@ -2,3 +2,7 @@ fastapi
 uvicorn
 pefile
 pydantic
+scikit-learn
+pandas
+joblib
+requests
