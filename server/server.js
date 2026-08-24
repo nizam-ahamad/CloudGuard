@@ -364,16 +364,17 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
           status: 'safe'
         };
 
-        // Wrap MongoDB save in try/catch to allow fallback
-        try {
-          if (isDbConnected || mongoose.connection.readyState === 1) {
+        // Handle MongoDB save errors as 500 errors
+        if (isDbConnected || mongoose.connection.readyState === 1) {
+          try {
             const newFile = new FileModel(fileData);
             await newFile.save();
             results.push(newFile);
-          } else {
-            results.push(fileData);
+          } catch (dbError) {
+            console.error('MongoDB save error:', dbError);
+            return res.status(500).json({ error: 'Database error while saving file metadata.' });
           }
-        } catch (dbError) {
+        } else {
           results.push(fileData);
         }
       } else {
@@ -384,9 +385,11 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
         }
       }
     } catch (error) {
+      console.error('File processing error:', error);
       if (fs.existsSync(tempFilePath)) {
         try { fs.unlinkSync(tempFilePath); } catch (e) {}
       }
+      return res.status(500).json({ error: 'Internal server error during file processing.' });
     }
   }
 
