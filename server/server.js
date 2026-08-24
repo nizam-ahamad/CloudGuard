@@ -54,7 +54,8 @@ const FileModel = mongoose.model('File', FileSchema);
 
 // Connect to MongoDB
 let isDbConnected = false;
-mongoose.connect('mongodb://localhost:27017/cloudguard', { serverSelectionTimeoutMS: 5000 })
+const mongoURI = process.env.MONGO_URI || 'mongodb://localhost:27017/cloudguard';
+mongoose.connect(mongoURI, { serverSelectionTimeoutMS: 5000 })
   .then(() => {
     console.log('Connected to MongoDB');
     isDbConnected = true;
