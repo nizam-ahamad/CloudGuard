@@ -68,7 +68,8 @@ function App() {
         setCurrentDirectory('');
       }
     } catch (err) {
-      setAuthError(err.response?.data?.error || 'Authentication failed');
+      const extracted = err.response?.data?.error || err.response?.data?.message || err.message || 'An unexpected error occurred';
+      setAuthError(typeof extracted === 'string' ? extracted : JSON.stringify(extracted));
     }
   };
 
@@ -108,7 +109,8 @@ function App() {
       setCurrentPassword('');
       setNewPassword('');
     } catch (err) {
-      setToastMessage({ type: 'error', message: err.response?.data?.error || 'Failed to update password.' });
+      const extracted = err.response?.data?.error || err.response?.data?.message || err.message || 'Failed to update password.';
+      setToastMessage({ type: 'error', message: typeof extracted === 'string' ? extracted : JSON.stringify(extracted) });
     }
   };
 
