@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+
 function App() {
   const [token, setToken] = useState(() => localStorage.getItem('token') || sessionStorage.getItem('token'));
   const [user, setUser] = useState(() => {
@@ -25,7 +27,7 @@ function App() {
 
   const fetchStorageStats = async () => {
     try {
-      const res = await axios.get('http://localhost:5000/api/storage-stats');
+      const res = await axios.get(`${API_BASE_URL}/api/storage-stats`);
       setStorageStats(res.data);
     } catch (err) {
       console.error('Error fetching storage stats:', err);
@@ -47,11 +49,11 @@ function App() {
     setAuthError('');
     try {
       if (authMode === 'register') {
-        await axios.post('http://localhost:5000/api/auth/register', authForm);
+        await axios.post(`${API_BASE_URL}/api/auth/register`, authForm);
         setAuthMode('login');
         setToastMessage({ type: 'success', message: 'Account created! Please sign in.' });
       } else {
-        const res = await axios.post('http://localhost:5000/api/auth/login', { email: authForm.email, password: authForm.password });
+        const res = await axios.post(`${API_BASE_URL}/api/auth/login`, { email: authForm.email, password: authForm.password });
         const { token: newToken, user: newUser } = res.data;
         if (authForm.remember) {
           localStorage.setItem('token', newToken);
@@ -101,7 +103,7 @@ function App() {
   const handlePasswordUpdate = async (e) => {
     e.preventDefault();
     try {
-      await axios.put('http://localhost:5000/api/auth/password', { currentPassword, newPassword });
+      await axios.put(`${API_BASE_URL}/api/auth/password`, { currentPassword, newPassword });
       setToastMessage({ type: 'success', message: 'Password updated successfully.' });
       setCurrentPassword('');
       setNewPassword('');
@@ -117,7 +119,7 @@ function App() {
       return;
     }
     try {
-      await axios.delete('http://localhost:5000/api/auth/account');
+      await axios.delete(`${API_BASE_URL}/api/auth/account`);
       handleLogout();
     } catch (err) {
       setToastMessage({ type: 'error', message: 'Failed to delete account.' });
@@ -126,7 +128,7 @@ function App() {
 
   const fetchFiles = async () => {
     try {
-      const response = await axios.get(`http://localhost:5000/api/files?path=${encodeURIComponent(currentDirectory)}`);
+      const response = await axios.get(`${API_BASE_URL}/api/files?path=${encodeURIComponent(currentDirectory)}`);
       const sortedFiles = [...response.data];
       sortedFiles.sort((a, b) => {
         const timeA = a.mtimeMs || new Date(a.date).getTime();
@@ -155,7 +157,7 @@ function App() {
   const confirmDelete = async () => {
     if (!fileToDelete) return;
     try {
-      await axios.delete(`http://localhost:5000/api/files/${fileToDelete.diskName}`);
+      await axios.delete(`${API_BASE_URL}/api/files/${fileToDelete.diskName}`);
       await fetchFiles();
       await fetchStorageStats();
       setFileToDelete(null);
@@ -198,7 +200,7 @@ function App() {
         formData.append('relativePaths', file.webkitRelativePath || file.customPath || '');
       }
 
-      const response = await axios.post('http://localhost:5000/api/upload', formData, {
+      const response = await axios.post(`${API_BASE_URL}/api/upload`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
         onUploadProgress: (progressEvent) => {
           const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
@@ -331,7 +333,7 @@ function App() {
     
     if (type === 'txt' || type === 'md') {
       try {
-        const response = await axios.get(`http://localhost:5000/api/view/${file.diskName}?token=${token}`);
+        const response = await axios.get(`${API_BASE_URL}/api/view/${file.diskName}?token=${token}`);
         setPreviewText(typeof response.data === 'string' ? response.data : JSON.stringify(response.data, null, 2));
       } catch (err) {
         setPreviewText('Error loading file content.');
@@ -748,7 +750,7 @@ function App() {
                         <div className="flex items-center justify-end gap-1">
                           {!file.isFolder && file.diskName && file.status === 'Safe' && (
                             <a 
-                              href={`http://localhost:5000/api/download/${file.diskName}?token=${token}`} 
+                              href={`${API_BASE_URL}/api/download/${file.diskName}?token=${token}`} 
                               download
                               onClick={(e) => e.stopPropagation()}
                               className="p-1.5 text-on-surface-variant hover:text-secondary rounded hover:bg-surface-container-high transition-colors"
@@ -796,7 +798,7 @@ function App() {
                 <h3 className="font-title-md text-title-md font-medium truncate">{previewFile.name}</h3>
               </div>
               <div className="flex items-center gap-2">
-                <a href={`http://localhost:5000/api/download/${previewFile.diskName}?token=${token}`} download className="p-2 text-white/80 hover:bg-white/10 rounded-full transition-colors flex items-center">
+                <a href={`${API_BASE_URL}/api/download/${previewFile.diskName}?token=${token}`} download className="p-2 text-white/80 hover:bg-white/10 rounded-full transition-colors flex items-center">
                   <span className="material-symbols-outlined">download</span>
                 </a>
                 <button onClick={closePreview} className="p-2 text-white/80 hover:bg-white/10 rounded-full transition-colors">
@@ -810,7 +812,7 @@ function App() {
                 autoPlay 
                 controlsList="nodownload" 
                 style={{ width: '100%', maxHeight: '100%' }} 
-                src={`http://localhost:5000/api/view/${previewFile.diskName}?token=${token}`} 
+                src={`${API_BASE_URL}/api/view/${previewFile.diskName}?token=${token}`} 
               />
             </div>
           </div>
@@ -821,7 +823,7 @@ function App() {
                 <h3 className="font-title-lg text-on-surface truncate pr-4">{previewFile.name}</h3>
                 <div className="flex items-center gap-2">
                   <a 
-                    href={`http://localhost:5000/api/download/${previewFile.diskName}?token=${token}`} 
+                    href={`${API_BASE_URL}/api/download/${previewFile.diskName}?token=${token}`} 
                     download
                     className="bg-secondary text-on-secondary hover:bg-secondary-container transition-colors p-2 rounded-lg flex items-center justify-center"
                     title="Download File"
@@ -835,9 +837,9 @@ function App() {
               </div>
               <div className="flex-1 overflow-auto bg-surface-container p-4 flex items-center justify-center">
                 {(previewFile.type.toLowerCase() === 'png' || previewFile.type.toLowerCase() === 'jpg' || previewFile.type.toLowerCase() === 'jpeg') ? (
-                  <img src={`http://localhost:5000/api/view/${previewFile.diskName}?token=${token}`} alt={previewFile.name} className="max-w-full max-h-[70vh] object-contain shadow-sm" />
+                  <img src={`${API_BASE_URL}/api/view/${previewFile.diskName}?token=${token}`} alt={previewFile.name} className="max-w-full max-h-[70vh] object-contain shadow-sm" />
                 ) : previewFile.type.toLowerCase() === 'pdf' ? (
-                  <iframe src={`http://localhost:5000/api/view/${previewFile.diskName}?token=${token}`} className="w-full h-[70vh] border-0" title="PDF Preview" />
+                  <iframe src={`${API_BASE_URL}/api/view/${previewFile.diskName}?token=${token}`} className="w-full h-[70vh] border-0" title="PDF Preview" />
                 ) : (previewFile.type.toLowerCase() === 'txt' || previewFile.type.toLowerCase() === 'md') ? (
                   <pre className="w-full h-full text-left bg-surface-container-lowest p-6 rounded-lg overflow-auto text-sm font-mono whitespace-pre-wrap shadow-inner border border-outline-variant">
                     {previewText || "Loading..."}
