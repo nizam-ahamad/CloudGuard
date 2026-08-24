@@ -314,7 +314,8 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
 
     try {
       // Call AI Microservice
-      const aiResponse = await axios.post('http://localhost:8000/scan', {
+      const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
+      const aiResponse = await axios.post(`${aiServiceUrl}/scan`, {
         file_path: tempFilePath
       });
 
