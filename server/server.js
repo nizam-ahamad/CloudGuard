@@ -88,6 +88,11 @@ const verifyToken = (req, res, next) => {
   }
 };
 
+// Health Check Route
+app.get('/', (req, res) => {
+  res.status(200).json({ status: 'active', message: 'CloudGuard Backend is running' });
+});
+
 // Auth Routes
 const usersFilePath = path.join(storageDir, 'users.json');
 if (!fs.existsSync(usersFilePath)) {
@@ -554,5 +559,5 @@ app.delete('/api/files/:filename(*)', verifyToken, async (req, res) => {
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Gateway running on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
