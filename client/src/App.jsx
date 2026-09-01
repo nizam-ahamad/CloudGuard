@@ -129,7 +129,9 @@ function App() {
     }
     try {
       await axios.delete(`${API_BASE_URL}/api/auth/account`);
-      handleLogout();
+      localStorage.clear();
+      sessionStorage.clear();
+      window.location.href = '/login';
     } catch (err) {
       addToast('error', 'Failed to delete account.');
     }
