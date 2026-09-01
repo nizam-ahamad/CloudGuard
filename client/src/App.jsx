@@ -174,9 +174,10 @@ function App() {
   const confirmDelete = async () => {
     if (!fileToDelete) return;
     try {
-      const response = await axios.delete(`${API_BASE_URL}/api/files/${fileToDelete.diskName}`);
+      const deleteId = fileToDelete._id || fileToDelete.diskName;
+      const response = await axios.delete(`${API_BASE_URL}/api/files/${encodeURIComponent(deleteId)}`);
       if (response.status === 200) {
-        setFiles(prev => prev.filter(f => f.diskName !== fileToDelete.diskName && f.id !== fileToDelete.id));
+        setFiles(prev => prev.filter(f => f._id !== fileToDelete._id && f.diskName !== fileToDelete.diskName));
         await fetchStorageStats();
         setFileToDelete(null);
         addToast('success', 'File deleted successfully.');

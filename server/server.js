@@ -551,6 +551,7 @@ app.get('/api/files', verifyToken, async (req, res) => {
            } else {
              mappedFiles.push({
                id: relativeToUser,
+               _id: file._id.toString(),
                name: file.originalName || file.name,
                diskName: relativeToUser,
                isFolder: false,
@@ -627,42 +628,38 @@ app.get('/api/files', verifyToken, async (req, res) => {
 });
 
 // Delete File Endpoint
-app.delete('/api/files/:filename(*)', verifyToken, async (req, res) => {
-  const filename = req.params.filename;
-  const userStorageDir = path.join(storageDir, req.user._id);
-  const filePath = path.join(userStorageDir, filename);
-
+app.delete('/api/files/:id', verifyToken, async (req, res) => {
   try {
-    // 1. Immediately execute the database deletion FIRST
-    if (isDbConnected || mongoose.connection.readyState === 1) {
-      // Use deleteMany to handle both single files and directories
-      await FileModel.deleteMany({ diskName: { $regex: `^${filename}` }, userId: req.user._id });
-    }
-    
-    // 2. IMMEDIATELY return the success response to the frontend
-    res.status(200).json({ success: true, message: "File deleted", id: filename });
-
-    // 3. Handle physical deletion in a non-blocking async block
-    setTimeout(() => {
-      try {
-        if (fs.existsSync(filePath)) {
-          const stats = fs.statSync(filePath);
-          if (stats.isDirectory()) {
-            fs.rmSync(filePath, { recursive: true, force: true });
-          } else {
-            fs.unlinkSync(filePath);
-          }
-        }
-      } catch (err) {
-        console.warn(`Non-blocking physical deletion failed for ${filePath}:`, err.message);
+      // 1. Find the file first to get its size and path
+      const file = await FileModel.findById(req.params.id);
+      if (!file) {
+          return res.status(404).json({ message: "File not found" });
       }
-    }, 0);
+
+      // 2. Storage used is dynamically aggregated in our schema, so we skip explicit decrement here.
+      // (The storage stats endpoint will naturally return the lowered amount on its next call).
+
+      // 3. Delete the record from MongoDB
+      await FileModel.findByIdAndDelete(req.params.id);
+
+      // 4. Send the success response to the frontend IMMEDIATELY
+      res.status(200).json({ message: "File deleted successfully", id: req.params.id });
+
+      // 5. Attempt physical deletion in the background (DO NOT AWAIT, DO NOT CRASH)
+      try {
+          const fs = require('fs');
+          if (file.path && fs.existsSync(file.path)) {
+              fs.unlinkSync(file.path);
+          }
+      } catch (fsError) {
+          console.log("Physical deletion skipped/failed, ignoring:", fsError.message);
+      }
 
   } catch (error) {
-    console.error('Error in DB deletion:', error.message);
-    if (!res.headersSent) {
-      return res.status(500).json({ error: 'Internal server error' });
-    }
+      console.error("Deletion error:", error.message);
+      if (!res.headersSent) {
+          res.status(500).json({ message: "Internal server error during deletion" });
+      }
   }
 });
 
