@@ -188,13 +188,9 @@ function App() {
       (response) => response,
       (error) => {
         if (error.response && error.response.status === 401) {
-          localStorage.removeItem('token');
-          localStorage.removeItem('user');
-          sessionStorage.removeItem('token');
-          sessionStorage.removeItem('user');
-          setToken(null);
-          setUser(null);
-          addToast('error', 'Session expired. Please log in again.');
+          localStorage.clear();
+          sessionStorage.clear();
+          window.location.href = '/';
         }
         return Promise.reject(error);
       }
@@ -750,7 +746,7 @@ function App() {
                   {filteredFiles.length === 0 ? (
                     <tr>
                       <td colSpan="5" className="py-8 text-center text-on-surface-variant">
-                        No files match your search.
+                        {files.length === 0 ? "No files have been uploaded yet." : "No files match your search."}
                       </td>
                     </tr>
                   ) : 
