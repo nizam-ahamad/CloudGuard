@@ -328,7 +328,7 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
   for (let i = 0; i < req.files.length; i++) {
     const file = req.files[i];
     const tempFilePath = file.path;
-    const originalName = file.originalname;
+    const originalName = Buffer.from(file.originalname, 'latin1').toString('utf8');
 
     try {
       // Call AI Microservice
