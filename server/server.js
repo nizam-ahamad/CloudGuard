@@ -77,15 +77,26 @@ const User = mongoose.model('User', UserSchema);
 const GLOBAL_MAX_BYTES = 1073741824; // 1 GB
 
 // Auth Middleware
-const verifyToken = (req, res, next) => {
+const verifyToken = async (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1] || req.query.token;
   if (!token) return res.status(401).json({ error: 'Access denied. Please log in.' });
   try {
     const verified = jwt.verify(token, JWT_SECRET);
+    
+    // Check if user still exists in database
+    if (isDbConnected || mongoose.connection.readyState === 1) {
+      const user = await User.findById(verified._id);
+      if (!user) return res.status(401).json({ error: 'Account no longer exists.' });
+    } else {
+      const users = JSON.parse(fs.readFileSync(usersFilePath));
+      const userExists = users.some(u => u._id === verified._id);
+      if (!userExists) return res.status(401).json({ error: 'Account no longer exists.' });
+    }
+
     req.user = verified;
     next();
   } catch (err) {
-    res.status(400).json({ error: 'Invalid or expired token.' });
+    res.status(401).json({ error: 'Invalid or expired token.' });
   }
 };
 

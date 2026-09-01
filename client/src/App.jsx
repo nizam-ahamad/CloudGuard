@@ -15,6 +15,7 @@ function App() {
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [storageStats, setStorageStats] = useState({ usedBytes: 0, totalLimitBytes: 1, usedPercentage: 0 });
   const [searchQuery, setSearchQuery] = useState('');
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   const formatBytes = (bytes, decimals = 1) => {
     if (bytes === 0) return '0 Bytes';
@@ -181,6 +182,25 @@ function App() {
       setToasts(prev => prev.filter(t => t.id !== id));
     }, 5000);
   };
+
+  useEffect(() => {
+    const interceptor = axios.interceptors.response.use(
+      (response) => response,
+      (error) => {
+        if (error.response && error.response.status === 401) {
+          localStorage.removeItem('token');
+          localStorage.removeItem('user');
+          sessionStorage.removeItem('token');
+          sessionStorage.removeItem('user');
+          setToken(null);
+          setUser(null);
+          addToast('error', 'Session expired. Please log in again.');
+        }
+        return Promise.reject(error);
+      }
+    );
+    return () => axios.interceptors.response.eject(interceptor);
+  }, []);
 
   const handleFileUpload = async (filesToUpload) => {
     if (!filesToUpload || filesToUpload.length === 0) return;
@@ -463,7 +483,7 @@ function App() {
   return (
     <div className="flex h-screen w-full">
       {/* SideNavBar */}
-      <nav className="bg-surface-container-lowest dark:bg-surface-container-low h-screen w-64 fixed left-0 top-0 border-r border-outline-variant dark:border-outline flex flex-col py-stack-lg z-20 hidden md:flex">
+      <nav className={`bg-surface-container-lowest dark:bg-surface-container-low h-screen w-64 fixed left-0 top-0 border-r border-outline-variant dark:border-outline flex flex-col py-stack-lg z-50 transform transition-transform duration-300 md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         {/* Brand Header */}
         <div className="px-6 mb-8 flex items-center gap-3">
           <div className="w-10 h-10 rounded-lg bg-surface-container-high flex items-center justify-center shrink-0">
@@ -476,7 +496,7 @@ function App() {
         {/* Main Navigation */}
         <div className="flex-1 px-4 space-y-1">
           <button 
-            onClick={() => { setViewMode('all'); setCurrentDirectory(''); }}
+            onClick={() => { setViewMode('all'); setCurrentDirectory(''); setIsSidebarOpen(false); }}
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg font-bold cursor-pointer active:opacity-80 transition-colors duration-200 border-l-4 ${viewMode === 'all' ? 'text-secondary border-secondary bg-surface-container-low' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high border-transparent'}`}
           >
             <span className="material-symbols-outlined" data-weight={viewMode === 'all' ? "fill" : ""}>folder_open</span>
@@ -484,7 +504,7 @@ function App() {
           </button>
           
           <button 
-            onClick={() => { setViewMode('recent'); setCurrentDirectory(''); }}
+            onClick={() => { setViewMode('recent'); setCurrentDirectory(''); setIsSidebarOpen(false); }}
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg font-bold cursor-pointer active:opacity-80 transition-colors duration-200 border-l-4 ${viewMode === 'recent' ? 'text-secondary border-secondary bg-surface-container-low' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high border-transparent'}`}
           >
             <span className="material-symbols-outlined" data-weight={viewMode === 'recent' ? "fill" : ""}>history</span>
@@ -495,7 +515,7 @@ function App() {
         {/* Footer Navigation */}
         <div className="px-4 space-y-1 mt-auto border-t border-outline-variant pt-4 mx-4">
           <button 
-            onClick={() => setViewMode('settings')}
+            onClick={() => { setViewMode('settings'); setIsSidebarOpen(false); }}
             className={`w-full flex items-center gap-3 px-4 py-2 rounded-lg font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${viewMode === 'settings' ? 'text-secondary bg-surface-container-low' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high'}`}
           >
             <span className="material-symbols-outlined" data-weight={viewMode === 'settings' ? "fill" : ""}>settings</span>
@@ -507,7 +527,7 @@ function App() {
       {/* TopAppBar */}
       <header className="bg-surface-container-lowest dark:bg-surface-container-low fixed top-0 right-0 w-full md:w-[calc(100%-256px)] h-16 border-b border-outline-variant dark:border-outline flex justify-between items-center px-margin-mobile md:px-margin-desktop z-10">
         <div className="flex items-center gap-4">
-          <button className="md:hidden p-2 text-on-surface-variant hover:bg-surface-container-high rounded-full transition-colors">
+          <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="md:hidden p-2 text-on-surface-variant hover:bg-surface-container-high rounded-full transition-colors">
             <span className="material-symbols-outlined">menu</span>
           </button>
           <h1 className="font-headline-md text-headline-md font-bold text-primary dark:text-primary-fixed md:hidden">CloudGuard</h1>
@@ -559,7 +579,7 @@ function App() {
 
       {/* Main Content Canvas */}
       <main 
-        onClick={() => setShowProfileMenu(false)} 
+        onClick={() => { setShowProfileMenu(false); setIsSidebarOpen(false); }} 
         className="pt-24 pb-12 px-margin-mobile md:px-margin-desktop md:ml-64 max-w-container-max mx-auto w-full"
       >
         {viewMode === 'settings' ? (
