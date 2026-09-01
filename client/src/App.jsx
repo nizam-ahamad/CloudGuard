@@ -31,6 +31,12 @@ function App() {
       const res = await axios.get(`${API_BASE_URL}/api/storage-stats`);
       setStorageStats(res.data);
     } catch (err) {
+      if (err.response && err.response.status === 401) {
+        localStorage.clear();
+        sessionStorage.clear();
+        window.location.href = '/';
+        return;
+      }
       console.error('Error fetching storage stats:', err);
     }
   };
@@ -140,6 +146,12 @@ function App() {
       });
       setFiles(sortedFiles);
     } catch (error) {
+      if (error.response && error.response.status === 401) {
+        localStorage.clear();
+        sessionStorage.clear();
+        window.location.href = '/';
+        return;
+      }
       console.error('Error fetching files:', error);
     }
   };
@@ -166,6 +178,12 @@ function App() {
       setFileToDelete(null);
       addToast('success', 'File deleted successfully.');
     } catch (error) {
+      if (error.response && error.response.status === 401) {
+        localStorage.clear();
+        sessionStorage.clear();
+        window.location.href = '/';
+        return;
+      }
       console.error('Error deleting file:', error);
       addToast('error', 'Error deleting file.');
     }
@@ -244,6 +262,12 @@ function App() {
         }
       }
     } catch (error) {
+      if (error.response && error.response.status === 401) {
+        localStorage.clear();
+        sessionStorage.clear();
+        window.location.href = '/';
+        return;
+      }
       if (error.response && error.response.status === 400 && error.response.data.status === 'malware') {
         const { uploadedFiles, deletedFiles } = error.response.data;
         if (uploadedFiles && uploadedFiles.length > 0) {
