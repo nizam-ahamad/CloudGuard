@@ -655,12 +655,12 @@ function App() {
         ) : (
           <>
         {/* Page Title */}
-        <div className="mb-stack-lg flex justify-between items-end">
+        <div className="mb-stack-lg flex flex-col md:flex-row md:justify-between md:items-end gap-4">
           <div>
             <h2 className="font-headline-lg-mobile md:font-headline-lg text-headline-lg-mobile md:text-headline-lg font-bold text-on-surface mb-2">My Files</h2>
             <p className="font-body-md text-body-md text-on-surface-variant">Manage and secure your enterprise data.</p>
           </div>
-          <div className="hidden lg:flex items-center gap-4 bg-surface-container-lowest p-4 rounded-xl border border-outline-variant shadow-sm">
+          <div className="flex items-center gap-4 bg-surface-container-lowest p-4 rounded-xl border border-outline-variant shadow-sm w-fit">
             <div className="relative w-12 h-12">
               <svg className="w-full h-full transform -rotate-90" viewBox="0 0 36 36">
                 <path className="text-surface-dim" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" strokeWidth="3"></path>
