@@ -633,25 +633,36 @@ app.delete('/api/files/:filename(*)', verifyToken, async (req, res) => {
   const filePath = path.join(userStorageDir, filename);
 
   try {
-    if (fs.existsSync(filePath)) {
-      const stats = fs.statSync(filePath);
-      if (stats.isDirectory()) {
-        fs.rmSync(filePath, { recursive: true, force: true });
-      } else {
-        fs.unlinkSync(filePath);
-      }
-      
-      if (isDbConnected || mongoose.connection.readyState === 1) {
-        await FileModel.deleteMany({ path: { $regex: `^${filePath}` }, userId: req.user._id });
-      }
-      
-      return res.json({ success: true, message: 'Deleted successfully' });
-    } else {
-      return res.status(404).json({ error: 'File not found' });
+    // 1. Immediately execute the database deletion FIRST
+    if (isDbConnected || mongoose.connection.readyState === 1) {
+      // Use deleteMany to handle both single files and directories
+      await FileModel.deleteMany({ diskName: { $regex: `^${filename}` }, userId: req.user._id });
     }
+    
+    // 2. IMMEDIATELY return the success response to the frontend
+    res.status(200).json({ success: true, message: "File deleted", id: filename });
+
+    // 3. Handle physical deletion in a non-blocking async block
+    setTimeout(() => {
+      try {
+        if (fs.existsSync(filePath)) {
+          const stats = fs.statSync(filePath);
+          if (stats.isDirectory()) {
+            fs.rmSync(filePath, { recursive: true, force: true });
+          } else {
+            fs.unlinkSync(filePath);
+          }
+        }
+      } catch (err) {
+        console.warn(`Non-blocking physical deletion failed for ${filePath}:`, err.message);
+      }
+    }, 0);
+
   } catch (error) {
-    console.error('Error deleting file:', error.message);
-    return res.status(500).json({ error: 'Internal server error' });
+    console.error('Error in DB deletion:', error.message);
+    if (!res.headersSent) {
+      return res.status(500).json({ error: 'Internal server error' });
+    }
   }
 });
 

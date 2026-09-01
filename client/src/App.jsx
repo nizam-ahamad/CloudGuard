@@ -174,11 +174,13 @@ function App() {
   const confirmDelete = async () => {
     if (!fileToDelete) return;
     try {
-      await axios.delete(`${API_BASE_URL}/api/files/${fileToDelete.diskName}`);
-      await fetchFiles();
-      await fetchStorageStats();
-      setFileToDelete(null);
-      addToast('success', 'File deleted successfully.');
+      const response = await axios.delete(`${API_BASE_URL}/api/files/${fileToDelete.diskName}`);
+      if (response.status === 200) {
+        setFiles(prev => prev.filter(f => f.diskName !== fileToDelete.diskName && f.id !== fileToDelete.id));
+        await fetchStorageStats();
+        setFileToDelete(null);
+        addToast('success', 'File deleted successfully.');
+      }
     } catch (error) {
       if (error.response && error.response.status === 401) {
         localStorage.clear();
