@@ -51,7 +51,7 @@ function App() {
       if (authMode === 'register') {
         await axios.post(`${API_BASE_URL}/api/auth/register`, authForm);
         setAuthMode('login');
-        setToastMessage({ type: 'success', message: 'Account created! Please sign in.' });
+        addToast('success', 'Account created! Please sign in.');
       } else {
         const res = await axios.post(`${API_BASE_URL}/api/auth/login`, { email: authForm.email, password: authForm.password });
         const { token: newToken, user: newUser } = res.data;
@@ -92,7 +92,7 @@ function App() {
   const [fileToDelete, setFileToDelete] = useState(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadStats, setUploadStats] = useState({ loaded: 0, total: 0 });
-  const [toastMessage, setToastMessage] = useState(null);
+  const [toasts, setToasts] = useState([]);
   const [viewMode, setViewMode] = useState('all');
   const [currentDirectory, setCurrentDirectory] = useState('');
   const fileInputRef = useRef(null);
@@ -105,7 +105,7 @@ function App() {
     e.preventDefault();
     try {
       await axios.put(`${API_BASE_URL}/api/auth/password`, { currentPassword, newPassword });
-      setToastMessage({ type: 'success', message: 'Password updated successfully.' });
+      addToast('success', 'Password updated successfully.');
       setCurrentPassword('');
       setNewPassword('');
     } catch (err) {
@@ -117,14 +117,14 @@ function App() {
   const handleAccountDelete = async (e) => {
     e.preventDefault();
     if (deleteConfirmText !== 'DELETE') {
-      setToastMessage({ type: 'error', message: 'Please type DELETE to confirm.' });
+      addToast('error', 'Please type DELETE to confirm.');
       return;
     }
     try {
       await axios.delete(`${API_BASE_URL}/api/auth/account`);
       handleLogout();
     } catch (err) {
-      setToastMessage({ type: 'error', message: 'Failed to delete account.' });
+      addToast('error', 'Failed to delete account.');
     }
   };
 
@@ -163,10 +163,10 @@ function App() {
       await fetchFiles();
       await fetchStorageStats();
       setFileToDelete(null);
-      setToastMessage({ type: 'success', message: 'File deleted successfully.' });
+      addToast('success', 'File deleted successfully.');
     } catch (error) {
       console.error('Error deleting file:', error);
-      setToastMessage({ type: 'error', message: 'Error deleting file.' });
+      addToast('error', 'Error deleting file.');
     }
   };
 
@@ -174,12 +174,13 @@ function App() {
     if (token) fetchFiles();
   }, [currentDirectory, token]);
 
-  useEffect(() => {
-    if (toastMessage) {
-      const timer = setTimeout(() => setToastMessage(null), 5000);
-      return () => clearTimeout(timer);
-    }
-  }, [toastMessage]);
+  const addToast = (type, message) => {
+    const id = Date.now() + Math.random();
+    setToasts(prev => [...prev, { id, type, message }]);
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 5000);
+  };
 
   const handleFileUpload = async (filesToUpload) => {
     if (!filesToUpload || filesToUpload.length === 0) return;
@@ -188,7 +189,7 @@ function App() {
     const availableBytes = storageStats.totalLimitBytes - storageStats.usedBytes;
     
     if (totalUploadSize > availableBytes) {
-      setToastMessage({ type: 'error', message: "Upload Failed: Insufficient storage space. This file exceeds your available account limit." });
+      addToast('error', "Upload Failed: Insufficient storage space. This file exceeds your available account limit.");
       return;
     }
 
@@ -214,21 +215,37 @@ function App() {
         }
       });
       
-      if (response.data.status === 'safe') {
+      if (response.data.status === 'safe' || response.data.hasMalware) {
         await fetchFiles();
         await fetchStorageStats();
-        setToastMessage({ type: 'success', message: 'Files uploaded safely.' });
+        
+        const { uploadedFiles, deletedFiles } = response.data;
+        if (uploadedFiles && uploadedFiles.length > 0) {
+          addToast('success', `Successfully uploaded: ${uploadedFiles.map(f => f.originalName).join(', ')}`);
+        }
+        if (deletedFiles && deletedFiles.length > 0) {
+          addToast('error', `Security Alert: Detected and deleted malicious file(s): ${deletedFiles.join(', ')}`);
+        }
       }
     } catch (error) {
-      // Clear any potential pending success toasts
-      setToastMessage(null);
-      
-      if (error.response && error.response.status === 400) {
-        setToastMessage({ type: 'error', message: 'Security Alert: Malware detected! Files quarantined/deleted.' });
+      if (error.response && error.response.status === 400 && error.response.data.status === 'malware') {
+        const { uploadedFiles, deletedFiles } = error.response.data;
+        if (uploadedFiles && uploadedFiles.length > 0) {
+          addToast('success', `Successfully uploaded: ${uploadedFiles.map(f => f.originalName).join(', ')}`);
+        }
+        if (deletedFiles && deletedFiles.length > 0) {
+          if (deletedFiles.length === 1 && (!uploadedFiles || uploadedFiles.length === 0)) {
+             addToast('error', `Malicious file detected and deleted: ${deletedFiles[0]}`);
+          } else {
+             addToast('error', `Security Alert: Detected and deleted malicious file(s): ${deletedFiles.join(', ')}`);
+          }
+        }
+      } else if (error.response && error.response.data && error.response.data.error) {
+        addToast('error', error.response.data.error);
       } else if (!error.response) {
-        setToastMessage({ type: 'error', message: 'Upload failed: File blocked locally or network error.' });
+        addToast('error', 'Upload failed: File blocked locally or network error.');
       } else {
-        setToastMessage({ type: 'error', message: 'Error uploading files.' });
+        addToast('error', 'Error uploading files.');
       }
       console.error(error);
     } finally {
@@ -279,7 +296,7 @@ function App() {
     }
 
     if (allFiles.length > 15) {
-      setToastMessage({ type: 'error', message: "Upload limit exceeded. Please select a maximum of 15 items per upload to ensure stability." });
+      addToast('error', "Upload limit exceeded. Please select a maximum of 15 items per upload to ensure stability.");
       return;
     }
     
@@ -296,7 +313,7 @@ function App() {
     if (e.target.files && e.target.files.length > 0) {
       const allFiles = Array.from(e.target.files);
       if (allFiles.length > 15) {
-        setToastMessage({ type: 'error', message: "Upload limit exceeded. Please select a maximum of 15 items per upload to ensure stability." });
+        addToast('error', "Upload limit exceeded. Please select a maximum of 15 items per upload to ensure stability.");
         return;
       }
       await handleFileUpload(allFiles);
@@ -721,11 +738,11 @@ function App() {
                     <tr 
                       key={file.id} 
                       onClick={() => file.isFolder ? setCurrentDirectory(file.diskName) : handlePreview(file)}
-                      className={`hover:bg-surface-bright transition-colors group h-14 ${file.status === 'Quarantined' ? 'bg-[#fffbeb]' : ''} ${file.isFolder || (file.diskName && file.status === 'Safe') ? 'cursor-pointer' : ''}`}
+                      className={`hover:bg-surface-bright transition-colors group h-14 ${file.isFolder || (file.diskName && file.status === 'Safe') ? 'cursor-pointer' : ''}`}
                     >
                       <td className="py-3 px-6">
                         <div className="flex items-center gap-3">
-                          <div className={`w-8 h-8 rounded flex items-center justify-center shrink-0 ${file.status === 'Quarantined' ? 'bg-[#fef3c7] text-[#d97706]' : 'bg-surface-dim text-on-surface-variant'}`}>
+                          <div className="w-8 h-8 rounded flex items-center justify-center shrink-0 bg-surface-dim text-on-surface-variant">
                             <span className="material-symbols-outlined text-sm">{getIconForType(file.type)}</span>
                           </div>
                           <span className="font-medium truncate max-w-[250px]">{file.name}</span>
@@ -735,15 +752,10 @@ function App() {
                       <td className="py-3 px-6 text-on-surface-variant">{file.size}</td>
                       <td className="py-3 px-6">
                         {!file.isFolder && (
-                          file.status === 'Safe' ? (
+                          file.status === 'Safe' && (
                             <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#dcfce7] text-[#166534] border border-[#bbf7d0]">
                               <span className="material-symbols-outlined text-[14px]">check_circle</span>
                               <span className="font-label-md text-[11px]">Safe</span>
-                            </div>
-                          ) : (
-                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#fef3c7] text-[#92400e] border border-[#fde68a]">
-                              <span className="material-symbols-outlined text-[14px]">lowercase</span>
-                              <span className="font-label-md text-[11px]">Quarantined</span>
                             </div>
                           )
                         )}
@@ -885,10 +897,10 @@ function App() {
       )}
 
       {/* Toast Notification */}
-      {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50">
-          <div className="bg-surface-container-highest border border-outline-variant rounded-xl shadow-xl p-4 flex items-center gap-3 min-w-[300px]">
-            {toastMessage.type === 'success' ? (
+      <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-2">
+        {toasts.map(toast => (
+          <div key={toast.id} className="bg-surface-container-highest border border-outline-variant rounded-xl shadow-xl p-4 flex items-center gap-3 min-w-[300px]">
+            {toast.type === 'success' ? (
               <div className="w-8 h-8 rounded-full bg-[#dcfce7] flex items-center justify-center shrink-0">
                 <span className="material-symbols-outlined text-[#166534] text-sm">check</span>
               </div>
@@ -897,16 +909,16 @@ function App() {
                 <span className="material-symbols-outlined text-error text-sm">warning</span>
               </div>
             )}
-            <p className="font-body-md text-on-surface flex-1">{toastMessage.message}</p>
+            <p className="font-body-md text-on-surface flex-1">{toast.message}</p>
             <button 
-              onClick={() => setToastMessage(null)}
+              onClick={() => setToasts(prev => prev.filter(t => t.id !== toast.id))}
               className="text-on-surface-variant hover:text-on-surface transition-colors p-1"
             >
               <span className="material-symbols-outlined text-sm">close</span>
             </button>
           </div>
-        </div>
-      )}
+        ))}
+      </div>
     </div>
   );
 }

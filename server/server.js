@@ -311,6 +311,7 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
   }
 
   let results = [];
+  let deletedFiles = [];
   let hasMalware = false;
 
   for (let i = 0; i < req.files.length; i++) {
@@ -386,6 +387,7 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
       } else {
         // Malware detected
         hasMalware = true;
+        deletedFiles.push(originalName);
         if (fs.existsSync(tempFilePath)) {
           try { fs.unlinkSync(tempFilePath); } catch (e) {} // Ignore EBUSY
         }
@@ -400,10 +402,30 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
   }
 
   if (hasMalware && results.length === 0) {
-    return res.status(400).json({ status: 'malware', message: 'Malware detected in all files' });
+    let msg = req.files.length === 1 
+      ? `Malicious file detected and deleted: ${deletedFiles[0]}`
+      : `Security Alert: Detected and deleted malicious file(s): ${deletedFiles.join(', ')}`;
+    return res.status(400).json({ 
+      status: 'malware', 
+      message: msg,
+      uploadedFiles: results,
+      deletedFiles: deletedFiles
+    });
   }
 
-  return res.json({ status: 'safe', files: results, hasMalware });
+  let msg = 'Upload successful';
+  if (hasMalware && results.length > 0) {
+    msg = `Partially successful. Deleted malicious files: ${deletedFiles.join(', ')}`;
+  }
+
+  return res.json({ 
+    status: 'safe', 
+    files: results, 
+    uploadedFiles: results,
+    deletedFiles: deletedFiles,
+    message: msg,
+    hasMalware 
+  });
 });
 
 // View Endpoint (Inline)
