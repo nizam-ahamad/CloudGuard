@@ -8,6 +8,7 @@ const fs = require('fs');
 const archiver = require('archiver');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const FormData = require('form-data');
 
 const app = express();
 
@@ -22,8 +23,8 @@ app.use(cors({
 
 app.use(express.json());
 
-// Automatically create /temp and /storage directories if they do not exist
-const tempDir = path.join(__dirname, 'temp');
+// Automatically create /uploads and /storage directories if they do not exist
+const tempDir = path.join(__dirname, 'uploads');
 const storageDir = path.join(__dirname, 'storage');
 
 if (!fs.existsSync(tempDir)) {
@@ -320,8 +321,13 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
     try {
       // Call AI Microservice
       const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
-      const aiResponse = await axios.post(`${aiServiceUrl}/scan`, {
-        file_path: tempFilePath
+      const form = new FormData();
+      form.append('file', fs.createReadStream(tempFilePath));
+
+      const aiResponse = await axios.post(`${aiServiceUrl}/scan`, form, {
+        headers: {
+          ...form.getHeaders()
+        }
       });
 
       if (aiResponse.data.status === 'safe') {

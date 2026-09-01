@@ -5,7 +5,9 @@ import joblib
 import pandas as pd
 import requests
 import hashlib
-from fastapi import FastAPI, HTTPException
+import tempfile
+import shutil
+from fastapi import FastAPI, HTTPException, File, UploadFile
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
 
@@ -27,8 +29,6 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-class ScanRequest(BaseModel):
-    file_path: str
 
 def calculate_entropy(data):
     if not data:
@@ -61,56 +61,68 @@ def scan_with_virustotal(file_hash):
         return {"status": "safe"}
 
 @app.post("/scan")
-async def scan_file(request: ScanRequest):
-    if not os.path.exists(request.file_path):
-        raise HTTPException(status_code=404, detail="File not found")
+async def scan_file(file: UploadFile = File(...)):
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file provided")
 
-    ext = os.path.splitext(request.file_path)[1].lower()
-    is_executable = ext in ['.exe', '.dll']
+    ext = os.path.splitext(file.filename)[1].lower()
+    
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+            shutil.copyfileobj(file.file, tmp)
+            tmp_path = tmp.name
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Could not save file")
+        
+    try:
+        is_executable = ext in ['.exe', '.dll']
 
-    if is_executable:
-        if rf_model is None:
-            raise HTTPException(status_code=500, detail="ML model is not loaded")
+        if is_executable:
+            if rf_model is None:
+                raise HTTPException(status_code=500, detail="ML model is not loaded")
 
-        features = {}
-        try:
-            pe = pefile.PE(request.file_path)
-            features['SizeOfOptionalHeader'] = pe.FILE_HEADER.SizeOfOptionalHeader
-            features['Characteristics'] = pe.FILE_HEADER.Characteristics
-            features['MajorLinkerVersion'] = pe.OPTIONAL_HEADER.MajorLinkerVersion
-            features['SizeOfInitializedData'] = pe.OPTIONAL_HEADER.SizeOfInitializedData
-            pe.close()
-            
-            with open(request.file_path, 'rb') as f:
-                data = f.read()
-            features['Entropy'] = calculate_entropy(data)
+            features = {}
+            try:
+                pe = pefile.PE(tmp_path)
+                features['SizeOfOptionalHeader'] = pe.FILE_HEADER.SizeOfOptionalHeader
+                features['Characteristics'] = pe.FILE_HEADER.Characteristics
+                features['MajorLinkerVersion'] = pe.OPTIONAL_HEADER.MajorLinkerVersion
+                features['SizeOfInitializedData'] = pe.OPTIONAL_HEADER.SizeOfInitializedData
+                pe.close()
                 
-        except Exception as e:
-            # Fallback for non-PE files ending in .exe or .dll
-            with open(request.file_path, 'rb') as f:
-                data = f.read()
+                with open(tmp_path, 'rb') as f:
+                    data = f.read()
+                features['Entropy'] = calculate_entropy(data)
+                    
+            except Exception as e:
+                # Fallback for non-PE files ending in .exe or .dll
+                with open(tmp_path, 'rb') as f:
+                    data = f.read()
+                
+                features['SizeOfOptionalHeader'] = 0
+                features['Characteristics'] = 0
+                features['MajorLinkerVersion'] = 0
+                features['SizeOfInitializedData'] = len(data)
+                features['Entropy'] = calculate_entropy(data)
+
+            df = pd.DataFrame([features])
             
-            features['SizeOfOptionalHeader'] = 0
-            features['Characteristics'] = 0
-            features['MajorLinkerVersion'] = 0
-            features['SizeOfInitializedData'] = len(data)
-            features['Entropy'] = calculate_entropy(data)
+            # Ensure column order matches training data
+            columns = ['SizeOfOptionalHeader', 'Characteristics', 'MajorLinkerVersion', 'SizeOfInitializedData', 'Entropy']
+            df = df[columns]
 
-        df = pd.DataFrame([features])
-        
-        # Ensure column order matches training data
-        columns = ['SizeOfOptionalHeader', 'Characteristics', 'MajorLinkerVersion', 'SizeOfInitializedData', 'Entropy']
-        df = df[columns]
-
-        # Make prediction
-        prediction = rf_model.predict(df)[0]
-        
-        status = "malware" if prediction == 1 else "safe"
-        
-        return {"status": status}
-        
-    else:
-        with open(request.file_path, 'rb') as f:
-            file_bytes = f.read()
-        file_hash = get_file_hash(file_bytes)
-        return scan_with_virustotal(file_hash)
+            # Make prediction
+            prediction = rf_model.predict(df)[0]
+            
+            status = "malware" if prediction == 1 else "safe"
+            
+            return {"status": status}
+            
+        else:
+            with open(tmp_path, 'rb') as f:
+                file_bytes = f.read()
+            file_hash = get_file_hash(file_bytes)
+            return scan_with_virustotal(file_hash)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
