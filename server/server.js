@@ -515,10 +515,66 @@ app.get('/api/download/:filename(*)', verifyToken, async (req, res) => {
 app.get('/api/files', verifyToken, async (req, res) => {
   try {
     const queryPath = req.query.path || '';
+    const userId = req.user._id;
+
+    if (isDbConnected || mongoose.connection.readyState === 1) {
+      // Query MongoDB to ensure all files (including non-images) are returned
+      // regardless of ephemeral disk state on Render.
+      const dbFiles = await FileModel.find({ userId: userId });
+      
+      const mappedFiles = [];
+      const folders = new Set();
+
+      dbFiles.forEach(file => {
+        // Exclude malicious files
+        if (file.status === 'malware') return;
+
+        const relativeToUser = file.diskName || file.name;
+        const qp = queryPath ? (queryPath.endsWith('/') ? queryPath : queryPath + '/') : '';
+        
+        if (relativeToUser.startsWith(qp)) {
+           const remainder = relativeToUser.substring(qp.length);
+           if (remainder.includes('/')) {
+             const folderName = remainder.split('/')[0];
+             folders.add(folderName);
+           } else {
+             mappedFiles.push({
+               id: relativeToUser,
+               name: file.originalName || file.name,
+               diskName: relativeToUser,
+               isFolder: false,
+               date: new Date(file.uploadedAt || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+               mtimeMs: new Date(file.uploadedAt || Date.now()).getTime(),
+               size: (file.size / (1024 * 1024)).toFixed(1) + ' MB',
+               status: 'Safe',
+               type: (file.originalName || file.name).split('.').pop()
+             });
+           }
+        }
+      });
+
+      folders.forEach(folder => {
+        mappedFiles.push({
+          id: queryPath ? `${queryPath}/${folder}` : folder,
+          name: folder,
+          diskName: queryPath ? `${queryPath}/${folder}` : folder,
+          isFolder: true,
+          date: '--',
+          mtimeMs: 0,
+          size: '--',
+          status: 'Safe',
+          type: 'folder'
+        });
+      });
+
+      mappedFiles.sort((a, b) => b.mtimeMs - a.mtimeMs);
+      return res.json(mappedFiles);
+    }
+
+    // Fallback to local FS if DB is not connected
     const userStorageDir = path.join(storageDir, req.user._id);
     const targetDir = path.join(userStorageDir, queryPath);
 
-    // Prevent directory traversal
     if (!targetDir.startsWith(userStorageDir)) {
       return res.status(403).json({ error: 'Access denied' });
     }
