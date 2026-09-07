@@ -112,6 +112,7 @@ function App() {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
 
   const handlePasswordUpdate = async (e) => {
     e.preventDefault();
@@ -132,6 +133,7 @@ function App() {
       addToast('error', 'Please type DELETE to confirm.');
       return;
     }
+    setIsDeletingAccount(true);
     try {
       await axios.delete(`${API_BASE_URL}/api/auth/account`);
       localStorage.clear();
@@ -139,6 +141,8 @@ function App() {
       window.location.href = '/login';
     } catch (err) {
       addToast('error', 'Failed to delete account.');
+    } finally {
+      setIsDeletingAccount(false);
     }
   };
 
@@ -269,7 +273,8 @@ function App() {
         const { uploadedFiles, deletedFiles } = response.data;
         if (deletedFiles && deletedFiles.length > 0) {
           addToast('error', `Security Alert: Detected and deleted malicious file(s): ${deletedFiles.join(', ')}`);
-        } else if (uploadedFiles && uploadedFiles.length > 0) {
+        }
+        if (uploadedFiles && uploadedFiles.length > 0) {
           addToast('success', `Successfully uploaded: ${uploadedFiles.map(f => f.originalName).join(', ')}`);
         }
       }
@@ -288,7 +293,8 @@ function App() {
           } else {
              addToast('error', `Security Alert: Detected and deleted malicious file(s): ${deletedFiles.join(', ')}`);
           }
-        } else if (uploadedFiles && uploadedFiles.length > 0) {
+        }
+        if (uploadedFiles && uploadedFiles.length > 0) {
           addToast('success', `Successfully uploaded: ${uploadedFiles.map(f => f.originalName).join(', ')}`);
         }
       } else if (error.response && error.response.data && error.response.data.error) {
@@ -662,7 +668,16 @@ function App() {
                   <label className="block text-sm font-medium text-on-surface-variant mb-1">To verify, type <strong>DELETE</strong> below:</label>
                   <input type="text" value={deleteConfirmText} onChange={e => setDeleteConfirmText(e.target.value)} className="w-full bg-surface text-on-surface border border-outline-variant focus:ring-2 focus:ring-error rounded-lg px-4 py-2 outline-none" />
                 </div>
-                <button type="submit" disabled={deleteConfirmText !== 'DELETE'} className={`px-6 py-2 rounded-lg font-medium transition-colors shadow-sm ${deleteConfirmText === 'DELETE' ? 'bg-error text-on-error hover:bg-[#b91c1c]' : 'bg-surface-dim text-on-surface-variant cursor-not-allowed'}`}>Delete Account</button>
+                <button type="submit" disabled={deleteConfirmText !== 'DELETE' || isDeletingAccount} className={`px-6 py-2 rounded-lg font-medium transition-colors shadow-sm ${deleteConfirmText === 'DELETE' && !isDeletingAccount ? 'bg-error text-on-error hover:bg-[#b91c1c]' : 'bg-surface-dim text-on-surface-variant cursor-not-allowed opacity-70'}`}>
+                  {isDeletingAccount ? (
+                    <span className="flex items-center justify-center gap-2">
+                      <span className="animate-spin inline-block w-4 h-4 border-[2px] border-current border-t-transparent rounded-full" role="status" aria-label="loading"></span>
+                      Deleting...
+                    </span>
+                  ) : (
+                    'Delete Account'
+                  )}
+                </button>
               </form>
             </div>
           </div>
