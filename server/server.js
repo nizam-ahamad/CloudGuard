@@ -282,7 +282,7 @@ app.get('/api/storage-stats', verifyToken, async (req, res) => {
 
     if (isDbConnected || mongoose.connection.readyState === 1) {
       const result = await FileModel.aggregate([
-        { $match: { userId: userId } },
+        { $match: { userId: userId, securityStatus: 'Safe' } },
         { $group: { _id: null, totalSize: { $sum: "$size" } } }
       ]);
       if (result.length > 0) {
@@ -321,7 +321,7 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
   let currentStorageUsed = 0;
   if (isDbConnected || mongoose.connection.readyState === 1) {
     const result = await FileModel.aggregate([
-      { $match: { userId: userId } },
+      { $match: { userId: userId, securityStatus: 'Safe' } },
       { $group: { _id: null, totalSize: { $sum: "$size" } } }
     ]);
     if (result.length > 0) {
@@ -443,7 +443,7 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
     msg = `Warning: Uploaded file(s) flagged as malware: ${deletedFiles.join(', ')}`;
   }
 
-  await recalculateStorage(userId);
+  const exactStorageUsed = await recalculateStorage(userId);
 
   return res.json({ 
     status: hasMalware ? 'malware' : 'safe', 
@@ -451,7 +451,8 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
     uploadedFiles: results,
     deletedFiles: deletedFiles,
     message: msg,
-    hasMalware 
+    hasMalware,
+    storageUsed: exactStorageUsed
   });
 });
 
