@@ -267,11 +267,10 @@ function App() {
         await fetchStorageStats();
         
         const { uploadedFiles, deletedFiles } = response.data;
-        if (uploadedFiles && uploadedFiles.length > 0) {
-          addToast('success', `Successfully uploaded: ${uploadedFiles.map(f => f.originalName).join(', ')}`);
-        }
         if (deletedFiles && deletedFiles.length > 0) {
           addToast('error', `Security Alert: Detected and deleted malicious file(s): ${deletedFiles.join(', ')}`);
+        } else if (uploadedFiles && uploadedFiles.length > 0) {
+          addToast('success', `Successfully uploaded: ${uploadedFiles.map(f => f.originalName).join(', ')}`);
         }
       }
     } catch (error) {
@@ -283,15 +282,14 @@ function App() {
       }
       if (error.response && error.response.status === 400 && error.response.data.status === 'malware') {
         const { uploadedFiles, deletedFiles } = error.response.data;
-        if (uploadedFiles && uploadedFiles.length > 0) {
-          addToast('success', `Successfully uploaded: ${uploadedFiles.map(f => f.originalName).join(', ')}`);
-        }
         if (deletedFiles && deletedFiles.length > 0) {
           if (deletedFiles.length === 1 && (!uploadedFiles || uploadedFiles.length === 0)) {
              addToast('error', `Malicious file detected and deleted: ${deletedFiles[0]}`);
           } else {
              addToast('error', `Security Alert: Detected and deleted malicious file(s): ${deletedFiles.join(', ')}`);
           }
+        } else if (uploadedFiles && uploadedFiles.length > 0) {
+          addToast('success', `Successfully uploaded: ${uploadedFiles.map(f => f.originalName).join(', ')}`);
         }
       } else if (error.response && error.response.data && error.response.data.error) {
         addToast('error', error.response.data.error);
