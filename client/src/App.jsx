@@ -12,6 +12,7 @@ function App() {
   const [authMode, setAuthMode] = useState('login');
   const [authForm, setAuthForm] = useState({ name: '', email: '', password: '', remember: false });
   const [authError, setAuthError] = useState('');
+  const [isAuthLoading, setIsAuthLoading] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [storageStats, setStorageStats] = useState({ usedBytes: 0, totalLimitBytes: 1, usedPercentage: 0 });
   const [searchQuery, setSearchQuery] = useState('');
@@ -54,6 +55,7 @@ function App() {
   const handleAuthSubmit = async (e) => {
     e.preventDefault();
     setAuthError('');
+    setIsAuthLoading(true);
     try {
       if (authMode === 'register') {
         await axios.post(`${API_BASE_URL}/api/auth/register`, authForm);
@@ -77,6 +79,8 @@ function App() {
     } catch (err) {
       const extracted = err.response?.data?.error || err.response?.data?.message || err.message || 'An unexpected error occurred';
       setAuthError(typeof extracted === 'string' ? extracted : JSON.stringify(extracted));
+    } finally {
+      setIsAuthLoading(false);
     }
   };
 
@@ -97,6 +101,7 @@ function App() {
   const [sortOrder, setSortOrder] = useState('newest');
   const [activeMenu, setActiveMenu] = useState(null);
   const [fileToDelete, setFileToDelete] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadStats, setUploadStats] = useState({ loaded: 0, total: 0 });
   const [toasts, setToasts] = useState([]);
@@ -173,6 +178,7 @@ function App() {
 
   const confirmDelete = async () => {
     if (!fileToDelete) return;
+    setIsDeleting(true);
     try {
       const deleteId = fileToDelete._id || fileToDelete.diskName;
       const response = await axios.delete(`${API_BASE_URL}/api/files/${encodeURIComponent(deleteId)}`);
@@ -191,6 +197,8 @@ function App() {
       }
       console.error('Error deleting file:', error);
       addToast('error', 'Error deleting file.');
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -482,9 +490,17 @@ function App() {
 
             <button 
               type="submit" 
-              className="w-full py-3 bg-primary text-on-primary rounded-lg font-medium hover:bg-primary/90 transition-colors mt-6 shadow-sm"
+              disabled={isAuthLoading}
+              className={`w-full py-3 bg-primary text-on-primary rounded-lg font-medium hover:bg-primary/90 transition-colors mt-6 shadow-sm ${isAuthLoading ? 'opacity-70 cursor-not-allowed' : ''}`}
             >
-              {authMode === 'login' ? 'Sign In' : 'Create Account'}
+              {isAuthLoading ? (
+                <span className="flex items-center justify-center gap-2">
+                  <span className="animate-spin inline-block w-4 h-4 border-[2px] border-current border-t-transparent rounded-full" role="status" aria-label="loading"></span>
+                  Processing...
+                </span>
+              ) : (
+                authMode === 'login' ? 'Sign In' : 'Create Account'
+              )}
             </button>
           </form>
 
@@ -932,9 +948,17 @@ function App() {
               </button>
               <button 
                 onClick={confirmDelete}
-                className="px-4 py-2 font-label-md bg-error text-on-error hover:bg-[#b91c1c] rounded-lg transition-colors"
+                disabled={isDeleting}
+                className={`px-4 py-2 font-label-md bg-error text-on-error rounded-lg transition-colors ${isDeleting ? 'opacity-70 cursor-not-allowed' : 'hover:bg-[#b91c1c]'}`}
               >
-                Yes, Delete
+                {isDeleting ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <span className="animate-spin inline-block w-4 h-4 border-[2px] border-current border-t-transparent rounded-full" role="status" aria-label="loading"></span>
+                    Deleting...
+                  </span>
+                ) : (
+                  'Yes, Delete'
+                )}
               </button>
             </div>
           </div>
