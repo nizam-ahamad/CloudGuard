@@ -76,6 +76,22 @@ const UserSchema = new mongoose.Schema({
 });
 const User = mongoose.model('User', UserSchema);
 
+async function recalculateStorage(userId) {
+  if (isDbConnected || mongoose.connection.readyState === 1) {
+    try {
+      const result = await FileModel.aggregate([
+        { $match: { userId: userId, securityStatus: 'Safe' } },
+        { $group: { _id: null, totalSize: { $sum: "$size" } } }
+      ]);
+      const totalSize = result.length > 0 ? result[0].totalSize : 0;
+      await User.findByIdAndUpdate(userId, { storageUsed: totalSize });
+      return totalSize;
+    } catch (err) {
+      console.error('Error recalculating storage:', err);
+    }
+  }
+}
+
 const GLOBAL_MAX_BYTES = 1073741824; // 1 GB
 
 // Auth Middleware
@@ -399,11 +415,6 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
           await newFile.save();
           if (!isMalware) {
             results.push(newFile);
-            const user = await User.findById(userId);
-            if (user) {
-              user.storageUsed = (user.storageUsed || 0) + fileData.size;
-              await user.save();
-            }
           }
         } catch (dbError) {
           console.error('MongoDB save error:', dbError);
@@ -431,6 +442,8 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
   if (hasMalware) {
     msg = `Warning: Uploaded file(s) flagged as malware: ${deletedFiles.join(', ')}`;
   }
+
+  await recalculateStorage(userId);
 
   return res.json({ 
     status: hasMalware ? 'malware' : 'safe', 
@@ -641,17 +654,11 @@ app.delete('/api/files/:id', verifyToken, async (req, res) => {
 
       // 2. Storage used is dynamically aggregated in our schema, so we skip explicit decrement here.
       // (The storage stats endpoint will naturally return the lowered amount on its next call).
-      if (isDbConnected || mongoose.connection.readyState === 1) {
-          const user = await User.findById(file.userId);
-          if (user) {
-              const newStorageAmount = (user.storageUsed || 0) - file.size;
-              user.storageUsed = Math.max(0, newStorageAmount);
-              await user.save();
-          }
-      }
 
       // 3. Delete the record from MongoDB
       await FileModel.findByIdAndDelete(req.params.id);
+
+      await recalculateStorage(file.userId);
 
       // 4. Send the success response to the frontend IMMEDIATELY
       res.status(200).json({ message: "File deleted successfully", id: req.params.id });
