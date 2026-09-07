@@ -413,10 +413,15 @@ function App() {
     
     if (type === 'txt' || type === 'md') {
       try {
-        const response = await axios.get(`${API_BASE_URL}/api/view/${file.diskName}?token=${token}`);
-        setPreviewText(typeof response.data === 'string' ? response.data : JSON.stringify(response.data, null, 2));
+        setPreviewText('Loading...');
+        const response = await fetch(`${API_BASE_URL}/api/view/${file.diskName}?token=${token}`);
+        if (!response.ok) {
+          throw new Error('File not found');
+        }
+        const text = await response.text();
+        setPreviewText(text);
       } catch (err) {
-        setPreviewText('Error loading file content.');
+        setPreviewText('Error: File no longer exists on the server (Ephemeral storage wiped).');
       }
     }
   };
@@ -942,7 +947,7 @@ function App() {
                 ) : previewFile.type.toLowerCase() === 'pdf' ? (
                   <iframe src={`${API_BASE_URL}/api/view/${previewFile.diskName}?token=${token}`} className="w-full h-[70vh] border-0" title="PDF Preview" />
                 ) : (previewFile.type.toLowerCase() === 'txt' || previewFile.type.toLowerCase() === 'md') ? (
-                  <pre className="w-full h-full text-left bg-surface-container-lowest p-6 rounded-lg overflow-auto text-sm font-mono whitespace-pre-wrap shadow-inner border border-outline-variant">
+                  <pre className="whitespace-pre-wrap p-4 text-sm w-full h-full text-left bg-surface-container-lowest rounded-lg overflow-auto font-mono shadow-inner border border-outline-variant">
                     {previewText || "Loading..."}
                   </pre>
                 ) : (

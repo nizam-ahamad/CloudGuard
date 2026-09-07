@@ -396,13 +396,13 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
         try {
           const newFile = new FileModel(fileData);
           await newFile.save();
-          results.push(newFile);
+          if (!isMalware) results.push(newFile);
         } catch (dbError) {
           console.error('MongoDB save error:', dbError);
           return res.status(500).json({ error: 'Database error while saving file metadata.' });
         }
       } else {
-        results.push(fileData);
+        if (!isMalware) results.push(fileData);
       }
 
       if (isMalware) {
