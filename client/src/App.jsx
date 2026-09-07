@@ -113,9 +113,11 @@ function App() {
   const [newPassword, setNewPassword] = useState('');
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+  const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
 
   const handlePasswordUpdate = async (e) => {
     e.preventDefault();
+    setIsUpdatingPassword(true);
     try {
       await axios.put(`${API_BASE_URL}/api/auth/password`, { currentPassword, newPassword });
       addToast('success', 'Password updated successfully.');
@@ -123,7 +125,9 @@ function App() {
       setNewPassword('');
     } catch (err) {
       const extracted = err.response?.data?.error || err.response?.data?.message || err.message || 'Failed to update password.';
-      setToastMessage({ type: 'error', message: typeof extracted === 'string' ? extracted : JSON.stringify(extracted) });
+      addToast('error', typeof extracted === 'string' ? extracted : JSON.stringify(extracted));
+    } finally {
+      setIsUpdatingPassword(false);
     }
   };
 
@@ -656,7 +660,16 @@ function App() {
                   <label className="block text-sm font-medium text-on-surface-variant mb-1">New Password</label>
                   <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} required className="w-full bg-surface text-on-surface border border-outline-variant focus:ring-2 focus:ring-secondary rounded-lg px-4 py-2 outline-none" />
                 </div>
-                <button type="submit" className="px-6 py-2 bg-primary text-on-primary rounded-lg font-medium hover:bg-primary/90 transition-colors shadow-sm">Update Password</button>
+                <button type="submit" disabled={isUpdatingPassword} className={`px-6 py-2 bg-primary text-on-primary rounded-lg font-medium transition-colors shadow-sm ${isUpdatingPassword ? 'opacity-70 cursor-not-allowed' : 'hover:bg-primary/90'}`}>
+                  {isUpdatingPassword ? (
+                    <span className="flex items-center justify-center gap-2">
+                      <span className="animate-spin inline-block w-4 h-4 border-[2px] border-current border-t-transparent rounded-full" role="status" aria-label="loading"></span>
+                      Updating...
+                    </span>
+                  ) : (
+                    'Update Password'
+                  )}
+                </button>
               </form>
             </div>
 
