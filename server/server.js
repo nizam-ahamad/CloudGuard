@@ -71,7 +71,8 @@ const UserSchema = new mongoose.Schema({
   name: { type: String, required: true },
   email: { type: String, required: true, unique: true },
   password: { type: String, required: true },
-  isAdmin: { type: Boolean, default: false }
+  isAdmin: { type: Boolean, default: false },
+  storageUsed: { type: Number, default: 0 }
 });
 const User = mongoose.model('User', UserSchema);
 
@@ -396,7 +397,14 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
         try {
           const newFile = new FileModel(fileData);
           await newFile.save();
-          if (!isMalware) results.push(newFile);
+          if (!isMalware) {
+            results.push(newFile);
+            const user = await User.findById(userId);
+            if (user) {
+              user.storageUsed = (user.storageUsed || 0) + fileData.size;
+              await user.save();
+            }
+          }
         } catch (dbError) {
           console.error('MongoDB save error:', dbError);
           return res.status(500).json({ error: 'Database error while saving file metadata.' });
@@ -633,6 +641,14 @@ app.delete('/api/files/:id', verifyToken, async (req, res) => {
 
       // 2. Storage used is dynamically aggregated in our schema, so we skip explicit decrement here.
       // (The storage stats endpoint will naturally return the lowered amount on its next call).
+      if (isDbConnected || mongoose.connection.readyState === 1) {
+          const user = await User.findById(file.userId);
+          if (user) {
+              const newStorageAmount = (user.storageUsed || 0) - file.size;
+              user.storageUsed = Math.max(0, newStorageAmount);
+              await user.save();
+          }
+      }
 
       // 3. Delete the record from MongoDB
       await FileModel.findByIdAndDelete(req.params.id);

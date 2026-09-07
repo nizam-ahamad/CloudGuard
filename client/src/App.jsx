@@ -415,9 +415,7 @@ function App() {
       try {
         setPreviewText('Loading...');
         const response = await fetch(`${API_BASE_URL}/api/view/${file.diskName}?token=${token}`);
-        if (!response.ok) {
-          throw new Error('File not found');
-        }
+        if (!response.ok) throw new Error("File no longer exists on the server (Ephemeral storage wiped)");
         const text = await response.text();
         setPreviewText(text);
       } catch (err) {
