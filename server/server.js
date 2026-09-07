@@ -50,6 +50,7 @@ const FileSchema = new mongoose.Schema({
   mimetype: String,
   uploadedAt: { type: Date, default: Date.now },
   status: String,
+  securityStatus: { type: String, default: 'Pending' },
 });
 const FileModel = mongoose.model('File', FileSchema);
 
@@ -336,73 +337,79 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
       const form = new FormData();
       form.append('file', fs.createReadStream(tempFilePath));
 
-      const aiResponse = await axios.post(`${aiServiceUrl}/scan`, form, {
-        headers: {
-          ...form.getHeaders()
-        }
-      });
+      let scanResult = 'Unknown';
+      try {
+        const aiResponse = await axios.post(`${aiServiceUrl}/scan`, form, {
+          headers: { ...form.getHeaders() }
+        });
+        scanResult = aiResponse.data.status;
+      } catch (scanErr) {
+        console.error("Scanner error:", scanErr.message);
+        scanResult = 'Pending';
+      }
 
-      if (aiResponse.data.status === 'safe') {
-        const diskName = file.filename;
-        let relativePath = '';
-        if (req.body.relativePaths) {
-          relativePath = Array.isArray(req.body.relativePaths) ? req.body.relativePaths[i] : req.body.relativePaths;
-        }
-        
-        const userStorageDir = path.join(storageDir, userId);
-        if (!fs.existsSync(userStorageDir)) fs.mkdirSync(userStorageDir, { recursive: true });
+      const isMalware = (scanResult === 'malware' || scanResult === 'malicious');
+      const securityStatus = isMalware ? 'Malicious' : (scanResult === 'safe' ? 'Safe' : 'Pending');
 
-        let permanentPath = path.join(userStorageDir, diskName);
-        let nestedRelativePath = diskName;
+      const diskName = file.filename;
+      let relativePath = '';
+      if (req.body.relativePaths) {
+        relativePath = Array.isArray(req.body.relativePaths) ? req.body.relativePaths[i] : req.body.relativePaths;
+      }
+      
+      const userStorageDir = path.join(storageDir, userId);
+      if (!fs.existsSync(userStorageDir)) fs.mkdirSync(userStorageDir, { recursive: true });
 
-        if (relativePath) {
-          const relativeDir = path.dirname(relativePath);
-          if (relativeDir && relativeDir !== '.') {
-            const targetDir = path.join(userStorageDir, relativeDir);
-            if (!fs.existsSync(targetDir)) {
-              fs.mkdirSync(targetDir, { recursive: true });
-            }
-            permanentPath = path.join(targetDir, diskName);
-            nestedRelativePath = path.posix.join(relativeDir.split(path.sep).join('/'), diskName);
+      let permanentPath = path.join(userStorageDir, diskName);
+      let nestedRelativePath = diskName;
+
+      if (relativePath) {
+        const relativeDir = path.dirname(relativePath);
+        if (relativeDir && relativeDir !== '.') {
+          const targetDir = path.join(userStorageDir, relativeDir);
+          if (!fs.existsSync(targetDir)) {
+            fs.mkdirSync(targetDir, { recursive: true });
           }
-        }
-        
-        // Move file to permanent storage
-        fs.renameSync(tempFilePath, permanentPath);
-
-        const fileData = {
-          userId: userId,
-          name: file.filename,
-          diskName: nestedRelativePath,
-          originalName: originalName,
-          path: permanentPath,
-          relativePath: relativePath,
-          size: file.size,
-          mimetype: file.mimetype,
-          status: 'safe'
-        };
-
-        // Handle MongoDB save errors as 500 errors
-        if (isDbConnected || mongoose.connection.readyState === 1) {
-          try {
-            const newFile = new FileModel(fileData);
-            await newFile.save();
-            results.push(newFile);
-          } catch (dbError) {
-            console.error('MongoDB save error:', dbError);
-            return res.status(500).json({ error: 'Database error while saving file metadata.' });
-          }
-        } else {
-          results.push(fileData);
-        }
-      } else {
-        // Malware detected
-        hasMalware = true;
-        deletedFiles.push(originalName);
-        if (fs.existsSync(tempFilePath)) {
-          try { fs.unlinkSync(tempFilePath); } catch (e) {} // Ignore EBUSY
+          permanentPath = path.join(targetDir, diskName);
+          nestedRelativePath = path.posix.join(relativeDir.split(path.sep).join('/'), diskName);
         }
       }
+      
+      // Move file to permanent storage (we save it even if malware, but it is flagged in DB)
+      fs.renameSync(tempFilePath, permanentPath);
+
+      const fileData = {
+        userId: userId,
+        name: file.filename,
+        diskName: nestedRelativePath,
+        originalName: originalName,
+        path: permanentPath,
+        relativePath: relativePath,
+        size: file.size,
+        mimetype: file.mimetype,
+        status: scanResult,
+        securityStatus: securityStatus
+      };
+
+      // Handle MongoDB save errors as 500 errors
+      if (isDbConnected || mongoose.connection.readyState === 1) {
+        try {
+          const newFile = new FileModel(fileData);
+          await newFile.save();
+          results.push(newFile);
+        } catch (dbError) {
+          console.error('MongoDB save error:', dbError);
+          return res.status(500).json({ error: 'Database error while saving file metadata.' });
+        }
+      } else {
+        results.push(fileData);
+      }
+
+      if (isMalware) {
+        hasMalware = true;
+        deletedFiles.push(originalName);
+      }
+
     } catch (error) {
       console.error('File processing error:', error);
       if (fs.existsSync(tempFilePath)) {
@@ -412,25 +419,13 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
     }
   }
 
-  if (hasMalware && results.length === 0) {
-    let msg = req.files.length === 1 
-      ? `Malicious file detected and deleted: ${deletedFiles[0]}`
-      : `Security Alert: Detected and deleted malicious file(s): ${deletedFiles.join(', ')}`;
-    return res.status(400).json({ 
-      status: 'malware', 
-      message: msg,
-      uploadedFiles: results,
-      deletedFiles: deletedFiles
-    });
-  }
-
   let msg = 'Upload successful';
-  if (hasMalware && results.length > 0) {
-    msg = `Partially successful. Deleted malicious files: ${deletedFiles.join(', ')}`;
+  if (hasMalware) {
+    msg = `Warning: Uploaded file(s) flagged as malware: ${deletedFiles.join(', ')}`;
   }
 
   return res.json({ 
-    status: 'safe', 
+    status: hasMalware ? 'malware' : 'safe', 
     files: results, 
     uploadedFiles: results,
     deletedFiles: deletedFiles,
@@ -558,7 +553,7 @@ app.get('/api/files', verifyToken, async (req, res) => {
                date: new Date(file.uploadedAt || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
                mtimeMs: new Date(file.uploadedAt || Date.now()).getTime(),
                size: (file.size / (1024 * 1024)).toFixed(1) + ' MB',
-               status: 'Safe',
+               status: file.securityStatus || 'Safe',
                type: (file.originalName || file.name).split('.').pop()
              });
            }
@@ -615,7 +610,7 @@ app.get('/api/files', verifyToken, async (req, res) => {
         date: new Date(stats.mtime).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
         mtimeMs: stats.mtimeMs,
         size: isFolder ? '--' : (stats.size / (1024 * 1024)).toFixed(1) + ' MB',
-        status: 'Safe',
+        status: 'Safe', // Local fallback doesn't have securityStatus DB info readily available here
         type: isFolder ? 'folder' : originalName.split('.').pop()
       };
     }).sort((a, b) => new Date(b.date) - new Date(a.date));
