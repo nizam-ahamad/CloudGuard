@@ -7,6 +7,7 @@ import requests
 import hashlib
 import tempfile
 import shutil
+import zipfile
 from fastapi import FastAPI, HTTPException, File, UploadFile
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
@@ -76,6 +77,29 @@ async def scan_file(file: UploadFile = File(...)):
         
     try:
         is_executable = ext in ['.exe', '.dll']
+
+        if ext == '.zip':
+            extract_dir = tempfile.mkdtemp()
+            try:
+                with zipfile.ZipFile(tmp_path, 'r') as zip_ref:
+                    zip_ref.extractall(extract_dir)
+                
+                for root, _, files in os.walk(extract_dir):
+                    for extracted_file in files:
+                        file_path = os.path.join(root, extracted_file)
+                        with open(file_path, 'rb') as f:
+                            file_bytes = f.read()
+                        file_hash = get_file_hash(file_bytes)
+                        scan_res = scan_with_virustotal(file_hash)
+                        if scan_res.get("status") in ["malware", "malicious"]:
+                            return {"status": "malware"}
+                return {"status": "safe"}
+            except zipfile.BadZipFile:
+                return {"status": "safe"}
+            except Exception as e:
+                return {"status": "safe"}
+            finally:
+                shutil.rmtree(extract_dir, ignore_errors=True)
 
         if is_executable:
             if rf_model is None:

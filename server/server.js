@@ -9,6 +9,8 @@ const archiver = require('archiver');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const FormData = require('form-data');
+const nodemailer = require('nodemailer');
+const crypto = require('crypto');
 
 const app = express();
 
@@ -72,7 +74,9 @@ const UserSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true },
   password: { type: String, required: true },
   isAdmin: { type: Boolean, default: false },
-  storageUsed: { type: Number, default: 0 }
+  storageUsed: { type: Number, default: 0 },
+  resetPasswordToken: String,
+  resetPasswordExpire: Date
 });
 const User = mongoose.model('User', UserSchema);
 
@@ -187,6 +191,121 @@ app.post('/api/auth/login', async (req, res) => {
     
     const token = jwt.sign({ _id: user._id, name: user.name, isAdmin: user.isAdmin || false }, JWT_SECRET, { expiresIn: '7d' });
     res.json({ token, user: { name: user.name, email: user.email, isAdmin: user.isAdmin || false } });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Forgot Password Route
+app.post('/api/auth/forgot-password', async (req, res) => {
+  try {
+    const { email } = req.body;
+    let user = null;
+    
+    if (isDbConnected || mongoose.connection.readyState === 1) {
+      user = await User.findOne({ email });
+    } else {
+      const users = JSON.parse(fs.readFileSync(usersFilePath));
+      user = users.find(u => u.email === email);
+    }
+    
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Create reset token
+    const resetToken = crypto.randomBytes(20).toString('hex');
+    const resetPasswordToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+    const resetPasswordExpire = Date.now() + 15 * 60 * 1000; // 15 minutes
+
+    if (isDbConnected || mongoose.connection.readyState === 1) {
+      user.resetPasswordToken = resetPasswordToken;
+      user.resetPasswordExpire = resetPasswordExpire;
+      await user.save();
+    } else {
+      const users = JSON.parse(fs.readFileSync(usersFilePath));
+      const userIndex = users.findIndex(u => u.email === email);
+      users[userIndex].resetPasswordToken = resetPasswordToken;
+      users[userIndex].resetPasswordExpire = resetPasswordExpire;
+      fs.writeFileSync(usersFilePath, JSON.stringify(users, null, 2));
+    }
+
+    // Send email using Ethereal Email for testing
+    const resetUrl = `http://localhost:5173/reset-password/${resetToken}`;
+    
+    // We create a test account every time since we didn't specify one
+    let testAccount = await nodemailer.createTestAccount();
+    const transporter = nodemailer.createTransport({
+      host: "smtp.ethereal.email",
+      port: 587,
+      secure: false, 
+      auth: {
+        user: testAccount.user, 
+        pass: testAccount.pass, 
+      },
+    });
+
+    const mailOptions = {
+      from: '"CloudGuard Support" <support@cloudguard.com>',
+      to: email,
+      subject: 'Password Reset Request',
+      text: `You requested a password reset. Please click on the following link or paste it into your browser to complete the process:\n\n${resetUrl}\n\nThis link will expire in 15 minutes.\nIf you did not request this, please ignore this email and your password will remain unchanged.\n`,
+    };
+
+    const info = await transporter.sendMail(mailOptions);
+    console.log("Password reset email preview URL: %s", nodemailer.getTestMessageUrl(info));
+
+    res.json({ message: 'Password reset link sent to your email.' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'There was an error sending the email. Try again later.' });
+  }
+});
+
+// Reset Password Route
+app.put('/api/auth/reset-password/:token', async (req, res) => {
+  try {
+    const resetPasswordToken = crypto.createHash('sha256').update(req.params.token).digest('hex');
+    let user = null;
+    let userIndex = -1;
+    let users = [];
+
+    if (isDbConnected || mongoose.connection.readyState === 1) {
+      user = await User.findOne({
+        resetPasswordToken,
+        resetPasswordExpire: { $gt: Date.now() }
+      });
+    } else {
+      users = JSON.parse(fs.readFileSync(usersFilePath));
+      userIndex = users.findIndex(u => u.resetPasswordToken === resetPasswordToken && u.resetPasswordExpire > Date.now());
+      if (userIndex !== -1) user = users[userIndex];
+    }
+
+    if (!user) {
+      return res.status(400).json({ error: 'Invalid or expired reset token' });
+    }
+
+    const { password } = req.body;
+    if (!password) {
+      return res.status(400).json({ error: 'Please provide a new password' });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    if (isDbConnected || mongoose.connection.readyState === 1) {
+      user.password = hashedPassword;
+      user.resetPasswordToken = undefined;
+      user.resetPasswordExpire = undefined;
+      await user.save();
+    } else {
+      users[userIndex].password = hashedPassword;
+      delete users[userIndex].resetPasswordToken;
+      delete users[userIndex].resetPasswordExpire;
+      fs.writeFileSync(usersFilePath, JSON.stringify(users, null, 2));
+    }
+
+    res.json({ message: 'Password has been reset successfully. You can now log in.' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
