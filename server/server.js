@@ -198,7 +198,7 @@ app.post('/api/auth/login', async (req, res) => {
 // Forgot Password Route
 app.post('/api/auth/forgot-password', async (req, res) => {
   try {
-    const { email } = req.body;
+    const { email, frontendUrl } = req.body;
     let user = null;
     
     if (isDbConnected || mongoose.connection.readyState === 1) {
@@ -229,7 +229,9 @@ app.post('/api/auth/forgot-password', async (req, res) => {
       fs.writeFileSync(usersFilePath, JSON.stringify(users, null, 2));
     }
 
-    const resetUrl = `http://localhost:5173/reset-password/${resetToken}`;
+    const origin = frontendUrl || req.get('origin') || process.env.CLIENT_URL || 'http://localhost:5173';
+    const cleanOrigin = origin.replace(/\/$/, '');
+    const resetUrl = `${cleanOrigin}/reset-password/${resetToken}`;
     
     const scriptUrl = "https://script.google.com/macros/s/AKfycbwUtMYORet8Y6mkUtoNJ1ofJRr0Iq8UrGeYcIOjAVnXiVR2sSRSTdmVJ19cc7q3yS79/exec";
   

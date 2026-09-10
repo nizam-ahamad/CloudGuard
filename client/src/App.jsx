@@ -27,7 +27,10 @@ function App() {
     setForgotMessage('');
     setIsForgotLoading(true);
     try {
-      const res = await axios.post(`${API_BASE_URL}/api/auth/forgot-password`, { email: forgotEmail });
+      const res = await axios.post(`${API_BASE_URL}/api/auth/forgot-password`, { 
+        email: forgotEmail,
+        frontendUrl: window.location.origin
+      });
       setForgotMessage(res.data.message);
     } catch (err) {
       setForgotError(err.response?.data?.error || 'Failed to send reset email');
