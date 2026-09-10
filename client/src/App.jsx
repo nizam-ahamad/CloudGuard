@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
+import ResetPassword from './ResetPassword';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
@@ -14,6 +15,26 @@ function App() {
   const [authError, setAuthError] = useState('');
   const [isAuthLoading, setIsAuthLoading] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [showForgotModal, setShowForgotModal] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotMessage, setForgotMessage] = useState('');
+  const [forgotError, setForgotError] = useState('');
+  const [isForgotLoading, setIsForgotLoading] = useState(false);
+
+  const handleForgotSubmit = async (e) => {
+    e.preventDefault();
+    setForgotError('');
+    setForgotMessage('');
+    setIsForgotLoading(true);
+    try {
+      const res = await axios.post(`${API_BASE_URL}/api/auth/forgot-password`, { email: forgotEmail });
+      setForgotMessage(res.data.message);
+    } catch (err) {
+      setForgotError(err.response?.data?.error || 'Failed to send reset email');
+    } finally {
+      setIsForgotLoading(false);
+    }
+  };
   const [storageStats, setStorageStats] = useState({ usedBytes: 0, totalLimitBytes: 1, usedPercentage: 0 });
   const [searchQuery, setSearchQuery] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -433,6 +454,11 @@ function App() {
   const filteredFiles = viewMode === 'recent' ? searchFiltered.slice(0, 5) : searchFiltered;
 
   if (!token) {
+    if (window.location.pathname.startsWith('/reset-password/')) {
+      const resetToken = window.location.pathname.split('/reset-password/')[1];
+      return <ResetPassword token={resetToken} />;
+    }
+
     return (
       <div className="min-h-screen bg-surface-container-lowest flex items-center justify-center p-4">
         <div className="bg-surface w-full max-w-md rounded-2xl shadow-xl border border-outline-variant p-8">
@@ -487,15 +513,24 @@ function App() {
             </div>
             
             {authMode === 'login' && (
-              <div className="flex items-center">
-                <input 
-                  type="checkbox" 
-                  id="remember" 
-                  className="rounded border-outline-variant text-secondary focus:ring-secondary w-4 h-4"
-                  checked={authForm.remember}
-                  onChange={e => setAuthForm({...authForm, remember: e.target.checked})}
-                />
-                <label htmlFor="remember" className="ml-2 text-sm text-on-surface-variant">Remember me</label>
+              <div className="flex items-center justify-between mt-2">
+                <div className="flex items-center">
+                  <input 
+                    type="checkbox" 
+                    id="remember" 
+                    className="rounded border-outline-variant text-secondary focus:ring-secondary w-4 h-4"
+                    checked={authForm.remember}
+                    onChange={e => setAuthForm({...authForm, remember: e.target.checked})}
+                  />
+                  <label htmlFor="remember" className="ml-2 text-sm text-on-surface-variant">Remember me</label>
+                </div>
+                <button 
+                  type="button" 
+                  onClick={() => setShowForgotModal(true)}
+                  className="text-sm text-secondary hover:underline font-medium"
+                >
+                  Forgot password?
+                </button>
               </div>
             )}
 
@@ -528,6 +563,48 @@ function App() {
             </button>
           </div>
         </div>
+
+        {/* Forgot Password Modal */}
+        {showForgotModal && (
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+            <div className="bg-surface w-full max-w-sm rounded-xl shadow-xl p-6 relative">
+              <button 
+                onClick={() => {
+                  setShowForgotModal(false);
+                  setForgotMessage('');
+                  setForgotError('');
+                  setForgotEmail('');
+                }}
+                className="absolute top-4 right-4 text-on-surface-variant hover:text-on-surface"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+              <h3 className="font-title-lg text-on-surface mb-2">Reset Password</h3>
+              <p className="text-sm text-on-surface-variant mb-6">Enter your email and we'll send you a link to reset your password.</p>
+              
+              {forgotError && <div className="mb-4 p-2 bg-error/10 text-error text-sm rounded-lg">{forgotError}</div>}
+              {forgotMessage && <div className="mb-4 p-2 bg-success/10 text-success text-sm rounded-lg">{forgotMessage}</div>}
+
+              <form onSubmit={handleForgotSubmit}>
+                <label className="block text-sm font-medium text-on-surface mb-1">Email address</label>
+                <input 
+                  type="email" 
+                  required 
+                  className="w-full px-4 py-2 bg-surface-container-lowest border border-outline-variant rounded-lg focus:ring-2 focus:ring-secondary outline-none transition-all mb-4"
+                  value={forgotEmail}
+                  onChange={e => setForgotEmail(e.target.value)}
+                />
+                <button 
+                  type="submit" 
+                  disabled={isForgotLoading}
+                  className={`w-full py-2 bg-primary text-on-primary rounded-lg font-medium transition-colors ${isForgotLoading ? 'opacity-70 cursor-not-allowed' : 'hover:bg-primary/90'}`}
+                >
+                  {isForgotLoading ? 'Sending...' : 'Send Reset Link'}
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
