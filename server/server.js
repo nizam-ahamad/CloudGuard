@@ -9,7 +9,6 @@ const archiver = require('archiver');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const FormData = require('form-data');
-const nodemailer = require('nodemailer');
 const crypto = require('crypto');
 
 const app = express();
@@ -230,35 +229,47 @@ app.post('/api/auth/forgot-password', async (req, res) => {
       fs.writeFileSync(usersFilePath, JSON.stringify(users, null, 2));
     }
 
-    // Send email using Ethereal Email for testing
     const resetUrl = `http://localhost:5173/reset-password/${resetToken}`;
     
-    // We create a test account every time since we didn't specify one
-    let testAccount = await nodemailer.createTestAccount();
-    const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 465,
-  secure: true,
-  auth: {
-    user: process.env.EMAIL_USERNAME,
-    pass: process.env.EMAIL_PASSWORD
-  }
-});
+    const scriptUrl = "https://script.google.com/macros/s/AKfycbwUtMYORet8Y6mkUtoNJ1ofJRr0Iq8UrGeYcIOjAVnXiVR2sSRSTdmVJ19cc7q3yS79/exec";
+  
+    try {
+      const response = await fetch(scriptUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          to: email, 
+          link: resetUrl 
+        })
+      });
 
-    const mailOptions = {
-      from: '"CloudGuard Support" <support@cloudguard.com>',
-      to: email,
-      subject: 'Password Reset Request',
-      text: `You requested a password reset. Please click on the following link or paste it into your browser to complete the process:\n\n${resetUrl}\n\nThis link will expire in 15 minutes.\nIf you did not request this, please ignore this email and your password will remain unchanged.\n`,
-    };
-
-    const info = await transporter.sendMail(mailOptions);
-    console.log("Password reset email preview URL: %s", nodemailer.getTestMessageUrl(info));
+      // Google Apps Script returns a redirect, so we don't necessarily need to parse JSON if it succeeds
+      if (!response.ok) {
+        throw new Error('Failed to reach Google Script');
+      }
+    } catch (error) {
+      console.error('GAS Email Error:', error);
+      
+      if (isDbConnected || mongoose.connection.readyState === 1) {
+        user.resetPasswordToken = undefined;
+        user.resetPasswordExpire = undefined;
+        await user.save({ validateBeforeSave: false });
+      } else {
+        const users = JSON.parse(fs.readFileSync(usersFilePath));
+        const userIndex = users.findIndex(u => u.email === email);
+        if (userIndex !== -1) {
+          delete users[userIndex].resetPasswordToken;
+          delete users[userIndex].resetPasswordExpire;
+          fs.writeFileSync(usersFilePath, JSON.stringify(users, null, 2));
+        }
+      }
+      return res.status(500).json({ error: 'Email could not be sent' });
+    }
 
     res.json({ message: 'Password reset link sent to your email.' });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'There was an error sending the email. Try again later.' });
+    res.status(500).json({ error: 'There was an error processing your request. Try again later.' });
   }
 });
 
