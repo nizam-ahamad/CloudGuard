@@ -98,7 +98,7 @@ def analyze_executable(file_path):
     df = df[columns]
 
     # Make prediction
-    prediction = rf_model.predict(df)[0]
+    prediction = int(rf_model.predict(df)[0])
     return {"status": "malware" if prediction == 1 else "safe"}
 
 class ScanRequest(BaseModel):
@@ -122,7 +122,7 @@ async def scan_file(request: ScanRequest):
                     tmp.write(chunk)
             tmp_path = tmp.name
     except Exception as e:
-        raise HTTPException(status_code=500, detail="Could not download file from S3")
+        raise HTTPException(status_code=500, detail=f"Could not download file from S3: {str(e)}")
         
     try:
         is_executable = ext in ['.exe', '.dll']
@@ -149,9 +149,9 @@ async def scan_file(request: ScanRequest):
                             return {"status": "malware"}
                 return {"status": "safe"}
             except zipfile.BadZipFile:
-                return {"status": "safe"}
+                return {"status": "safe", "error": "BadZipFile"}
             except Exception as e:
-                return {"status": "safe"}
+                return {"status": "safe", "error": str(e)}
             finally:
                 shutil.rmtree(extract_dir, ignore_errors=True)
 
