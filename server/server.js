@@ -631,8 +631,6 @@ app.get('/api/files', verifyToken, async (req, res) => {
       const folders = new Set();
 
       dbFiles.forEach(file => {
-        // Exclude malicious files
-        if (file.status === 'malware') return;
 
         const relativeToUser = file.diskName || file.name;
         const qp = queryPath ? (queryPath.endsWith('/') ? queryPath : queryPath + '/') : '';
