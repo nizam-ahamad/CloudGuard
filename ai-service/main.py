@@ -61,6 +61,46 @@ def scan_with_virustotal(file_hash):
     except Exception:
         return {"status": "safe"}
 
+def analyze_executable(file_path):
+    if rf_model is None:
+        # Graceful fallback to VT if ML model fails to load
+        with open(file_path, 'rb') as f:
+            return scan_with_virustotal(get_file_hash(f.read()))
+
+    features = {}
+    try:
+        pe = pefile.PE(file_path)
+        features['SizeOfOptionalHeader'] = pe.FILE_HEADER.SizeOfOptionalHeader
+        features['Characteristics'] = pe.FILE_HEADER.Characteristics
+        features['MajorLinkerVersion'] = pe.OPTIONAL_HEADER.MajorLinkerVersion
+        features['SizeOfInitializedData'] = pe.OPTIONAL_HEADER.SizeOfInitializedData
+        pe.close()
+        
+        with open(file_path, 'rb') as f:
+            data = f.read()
+        features['Entropy'] = calculate_entropy(data)
+            
+    except Exception as e:
+        # Fallback for non-PE files ending in .exe or .dll
+        with open(file_path, 'rb') as f:
+            data = f.read()
+        
+        features['SizeOfOptionalHeader'] = 0
+        features['Characteristics'] = 0
+        features['MajorLinkerVersion'] = 0
+        features['SizeOfInitializedData'] = len(data)
+        features['Entropy'] = calculate_entropy(data)
+
+    df = pd.DataFrame([features])
+    
+    # Ensure column order matches training data
+    columns = ['SizeOfOptionalHeader', 'Characteristics', 'MajorLinkerVersion', 'SizeOfInitializedData', 'Entropy']
+    df = df[columns]
+
+    # Make prediction
+    prediction = rf_model.predict(df)[0]
+    return {"status": "malware" if prediction == 1 else "safe"}
+
 @app.post("/scan")
 async def scan_file(file: UploadFile = File(...)):
     if not file.filename:
@@ -87,10 +127,15 @@ async def scan_file(file: UploadFile = File(...)):
                 for root, _, files in os.walk(extract_dir):
                     for extracted_file in files:
                         file_path = os.path.join(root, extracted_file)
-                        with open(file_path, 'rb') as f:
-                            file_bytes = f.read()
-                        file_hash = get_file_hash(file_bytes)
-                        scan_res = scan_with_virustotal(file_hash)
+                        extracted_ext = os.path.splitext(extracted_file)[1].lower()
+                        
+                        if extracted_ext in ['.exe', '.dll']:
+                            scan_res = analyze_executable(file_path)
+                        else:
+                            with open(file_path, 'rb') as f:
+                                file_hash = get_file_hash(f.read())
+                            scan_res = scan_with_virustotal(file_hash)
+                            
                         if scan_res.get("status") in ["malware", "malicious"]:
                             return {"status": "malware"}
                 return {"status": "safe"}
@@ -102,45 +147,7 @@ async def scan_file(file: UploadFile = File(...)):
                 shutil.rmtree(extract_dir, ignore_errors=True)
 
         if is_executable:
-            if rf_model is None:
-                raise HTTPException(status_code=500, detail="ML model is not loaded")
-
-            features = {}
-            try:
-                pe = pefile.PE(tmp_path)
-                features['SizeOfOptionalHeader'] = pe.FILE_HEADER.SizeOfOptionalHeader
-                features['Characteristics'] = pe.FILE_HEADER.Characteristics
-                features['MajorLinkerVersion'] = pe.OPTIONAL_HEADER.MajorLinkerVersion
-                features['SizeOfInitializedData'] = pe.OPTIONAL_HEADER.SizeOfInitializedData
-                pe.close()
-                
-                with open(tmp_path, 'rb') as f:
-                    data = f.read()
-                features['Entropy'] = calculate_entropy(data)
-                    
-            except Exception as e:
-                # Fallback for non-PE files ending in .exe or .dll
-                with open(tmp_path, 'rb') as f:
-                    data = f.read()
-                
-                features['SizeOfOptionalHeader'] = 0
-                features['Characteristics'] = 0
-                features['MajorLinkerVersion'] = 0
-                features['SizeOfInitializedData'] = len(data)
-                features['Entropy'] = calculate_entropy(data)
-
-            df = pd.DataFrame([features])
-            
-            # Ensure column order matches training data
-            columns = ['SizeOfOptionalHeader', 'Characteristics', 'MajorLinkerVersion', 'SizeOfInitializedData', 'Entropy']
-            df = df[columns]
-
-            # Make prediction
-            prediction = rf_model.predict(df)[0]
-            
-            status = "malware" if prediction == 1 else "safe"
-            
-            return {"status": status}
+            return analyze_executable(tmp_path)
             
         else:
             with open(tmp_path, 'rb') as f:
