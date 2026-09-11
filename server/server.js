@@ -11,6 +11,7 @@ const bcrypt = require('bcryptjs');
 const FormData = require('form-data');
 const crypto = require('crypto');
 const { S3Client, GetObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const multerS3 = require('multer-s3');
 
 const app = express();
@@ -680,6 +681,31 @@ app.get('/api/files', verifyToken, async (req, res) => {
   } catch (error) {
     console.error('Error listing files:', error.message);
     return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Access File Endpoint (Presigned URL)
+app.get('/api/files/:id/access', verifyToken, async (req, res) => {
+  try {
+    const file = await FileModel.findById(req.params.id);
+    if (!file) return res.status(404).json({ error: 'File not found' });
+    
+    if (file.userId !== req.user._id && !req.user.isAdmin) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    if (!file.s3Key) return res.status(400).json({ error: 'S3 Key missing' });
+
+    const command = new GetObjectCommand({
+      Bucket: process.env.AWS_BUCKET_NAME,
+      Key: file.s3Key
+    });
+
+    const url = await getSignedUrl(s3, command, { expiresIn: 60 });
+    res.json({ url });
+  } catch (error) {
+    console.error('Access URL generation error:', error);
+    res.status(500).json({ error: 'Failed to generate access URL' });
   }
 });
 

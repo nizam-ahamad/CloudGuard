@@ -432,25 +432,37 @@ function App() {
     }
     if (!file.diskName || file.status !== 'Safe') return;
     
-    setPreviewFile(file);
-    const type = file.type.toLowerCase();
-    
-    if (type === 'txt' || type === 'md') {
-      try {
-        setPreviewText('Loading...');
-        const response = await fetch(`${API_BASE_URL}/api/view/${file.diskName}?token=${token}`);
-        if (!response.ok) throw new Error("File no longer exists on the server (Ephemeral storage wiped)");
-        const text = await response.text();
-        setPreviewText(text);
-      } catch (err) {
-        setPreviewText('Error: File no longer exists on the server (Ephemeral storage wiped).');
-      }
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/files/${file._id}/access`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!response.ok) throw new Error("Could not fetch secure access URL");
+      const { url } = await response.json();
+      window.open(url, '_blank');
+    } catch (err) {
+      addToast('error', "Preview failed: " + err.message);
     }
   };
 
-  const closePreview = () => {
-    setPreviewFile(null);
-    setPreviewText("");
+  const handleDownload = async (file) => {
+    if (file.isFolder || !file.diskName || file.status !== 'Safe') return;
+    
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/files/${file._id}/access`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!response.ok) throw new Error("Could not fetch secure access URL");
+      const { url } = await response.json();
+      
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = file.name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch (err) {
+      addToast('error', "Download failed: " + err.message);
+    }
   };
 
   const searchFiltered = files.filter(file => file.name.toLowerCase().includes(searchQuery.toLowerCase()));
@@ -959,15 +971,13 @@ function App() {
                       <td className="py-3 px-6 text-right">
                         <div className="flex items-center justify-end gap-1">
                           {!file.isFolder && file.diskName && file.status === 'Safe' && (
-                            <a 
-                              href={`${API_BASE_URL}/api/download/${file.diskName}?token=${token}`} 
-                              download
-                              onClick={(e) => e.stopPropagation()}
+                            <button 
+                              onClick={(e) => { e.stopPropagation(); handleDownload(file); }}
                               className="p-1.5 text-on-surface-variant hover:text-secondary rounded hover:bg-surface-container-high transition-colors"
                               title="Download"
                             >
                               <span className="material-symbols-outlined text-[18px]">download</span>
-                            </a>
+                            </button>
                           )}
                           {!file.isFolder && (
                             <button 
@@ -998,73 +1008,7 @@ function App() {
         )}
       </main>
 
-      {/* Preview Modal */}
-      {previewFile && (
-        ['mp4', 'webm', 'ogg', 'mov', 'mkv'].includes(previewFile.type.toLowerCase()) ? (
-          <div className="fixed inset-0 z-50 flex flex-col bg-black/95 backdrop-blur-md">
-            <div className="flex items-center justify-between p-4 bg-transparent text-white w-full">
-              <div className="flex items-center gap-3">
-                <span className="material-symbols-outlined text-white">movie</span>
-                <h3 className="font-title-md text-title-md font-medium truncate">{previewFile.name}</h3>
-              </div>
-              <div className="flex items-center gap-2">
-                <a href={`${API_BASE_URL}/api/download/${previewFile.diskName}?token=${token}`} download className="p-2 text-white/80 hover:bg-white/10 rounded-full transition-colors flex items-center">
-                  <span className="material-symbols-outlined">download</span>
-                </a>
-                <button onClick={closePreview} className="p-2 text-white/80 hover:bg-white/10 rounded-full transition-colors">
-                  <span className="material-symbols-outlined">close</span>
-                </button>
-              </div>
-            </div>
-            <div className="flex-1 overflow-hidden flex items-center justify-center p-4">
-              <video 
-                controls 
-                autoPlay 
-                controlsList="nodownload" 
-                style={{ width: '100%', maxHeight: '100%' }} 
-                src={`${API_BASE_URL}/api/view/${previewFile.diskName}?token=${token}`} 
-              />
-            </div>
-          </div>
-        ) : (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
-            <div className="bg-surface-container-lowest rounded-xl shadow-lg w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
-              <div className="flex items-center justify-between p-4 border-b border-outline-variant bg-surface">
-                <h3 className="font-title-lg text-on-surface truncate pr-4">{previewFile.name}</h3>
-                <div className="flex items-center gap-2">
-                  <a 
-                    href={`${API_BASE_URL}/api/download/${previewFile.diskName}?token=${token}`} 
-                    download
-                    className="bg-secondary text-on-secondary hover:bg-secondary-container transition-colors p-2 rounded-lg flex items-center justify-center"
-                    title="Download File"
-                  >
-                    <span className="material-symbols-outlined">download</span>
-                  </a>
-                  <button onClick={closePreview} className="p-2 text-on-surface-variant hover:bg-surface-container-high rounded-full transition-colors">
-                    <span className="material-symbols-outlined">close</span>
-                  </button>
-                </div>
-              </div>
-              <div className="flex-1 overflow-auto bg-surface-container p-4 flex items-center justify-center">
-                {(previewFile.type.toLowerCase() === 'png' || previewFile.type.toLowerCase() === 'jpg' || previewFile.type.toLowerCase() === 'jpeg') ? (
-                  <img src={`${API_BASE_URL}/api/view/${previewFile.diskName}?token=${token}`} alt={previewFile.name} className="max-w-full max-h-[70vh] object-contain shadow-sm" />
-                ) : previewFile.type.toLowerCase() === 'pdf' ? (
-                  <iframe src={`${API_BASE_URL}/api/view/${previewFile.diskName}?token=${token}`} className="w-full h-[70vh] border-0" title="PDF Preview" />
-                ) : (previewFile.type.toLowerCase() === 'txt' || previewFile.type.toLowerCase() === 'md') ? (
-                  <pre className="whitespace-pre-wrap p-4 text-sm w-full h-full text-left bg-surface-container-lowest rounded-lg overflow-auto font-mono shadow-inner border border-outline-variant">
-                    {previewText || "Loading..."}
-                  </pre>
-                ) : (
-                  <div className="text-on-surface-variant flex flex-col items-center gap-3">
-                    <span className="material-symbols-outlined text-4xl">visibility_off</span>
-                    <p>Preview not available for this file type.</p>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )
-      )}
+
 
       {/* Delete Confirmation Modal */}
       {fileToDelete && (
