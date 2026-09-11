@@ -17,21 +17,21 @@ function App() {
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showForgotModal, setShowForgotModal] = useState(false);
   const [forgotEmail, setForgotEmail] = useState('');
-  const [forgotMessage, setForgotMessage] = useState('');
+  const [isForgotSuccess, setIsForgotSuccess] = useState(false);
   const [forgotError, setForgotError] = useState('');
   const [isForgotLoading, setIsForgotLoading] = useState(false);
 
   const handleForgotSubmit = async (e) => {
     e.preventDefault();
     setForgotError('');
-    setForgotMessage('');
+    setIsForgotSuccess(false);
     setIsForgotLoading(true);
     try {
       const res = await axios.post(`${API_BASE_URL}/api/auth/forgot-password`, { 
         email: forgotEmail,
         frontendUrl: window.location.origin
       });
-      setForgotMessage(res.data.message);
+      setIsForgotSuccess(true);
     } catch (err) {
       setForgotError(err.response?.data?.error || 'Failed to send reset email');
     } finally {
@@ -574,7 +574,7 @@ function App() {
               <button 
                 onClick={() => {
                   setShowForgotModal(false);
-                  setForgotMessage('');
+                  setIsForgotSuccess(false);
                   setForgotError('');
                   setForgotEmail('');
                 }}
@@ -582,29 +582,55 @@ function App() {
               >
                 <span className="material-symbols-outlined">close</span>
               </button>
-              <h3 className="font-title-lg text-on-surface mb-2">Reset Password</h3>
-              <p className="text-sm text-on-surface-variant mb-6">Enter your email and we'll send you a link to reset your password.</p>
               
-              {forgotError && <div className="mb-4 p-2 bg-error/10 text-error text-sm rounded-lg">{forgotError}</div>}
-              {forgotMessage && <div className="mb-4 p-2 bg-success/10 text-success text-sm rounded-lg">{forgotMessage}</div>}
-
-              <form onSubmit={handleForgotSubmit}>
-                <label className="block text-sm font-medium text-on-surface mb-1">Email address</label>
-                <input 
-                  type="email" 
-                  required 
-                  className="w-full px-4 py-2 bg-surface-container-lowest border border-outline-variant rounded-lg focus:ring-2 focus:ring-secondary outline-none transition-all mb-4"
-                  value={forgotEmail}
-                  onChange={e => setForgotEmail(e.target.value)}
-                />
-                <button 
-                  type="submit" 
-                  disabled={isForgotLoading}
-                  className={`w-full py-2 bg-primary text-on-primary rounded-lg font-medium transition-colors ${isForgotLoading ? 'opacity-70 cursor-not-allowed' : 'hover:bg-primary/90'}`}
-                >
-                  {isForgotLoading ? 'Sending...' : 'Send Reset Link'}
-                </button>
-              </form>
+              {isForgotSuccess ? (
+                <div className="py-4 text-center">
+                  <div className="w-16 h-16 bg-success/10 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <svg className="w-8 h-8 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+                    </svg>
+                  </div>
+                  <h3 className="font-title-lg font-bold text-on-surface mb-2">Check your inbox</h3>
+                  <p className="text-sm text-on-surface-variant mb-6">
+                    We've sent a password reset link to <strong>{forgotEmail}</strong>.
+                  </p>
+                  <button 
+                    onClick={() => {
+                      setShowForgotModal(false);
+                      setIsForgotSuccess(false);
+                      setForgotEmail('');
+                    }}
+                    className="w-full py-2 bg-surface-container-high text-on-surface rounded-lg font-medium transition-colors hover:bg-surface-container-highest"
+                  >
+                    Back to Login
+                  </button>
+                </div>
+              ) : (
+                <div className="text-left">
+                  <h3 className="font-title-lg text-on-surface mb-2">Reset Password</h3>
+                  <p className="text-sm text-on-surface-variant mb-6">Enter your email and we'll send you a link to reset your password.</p>
+                  
+                  {forgotError && <div className="mb-4 p-2 bg-error/10 text-error text-sm rounded-lg">{forgotError}</div>}
+                  
+                  <form onSubmit={handleForgotSubmit}>
+                    <label className="block text-sm font-medium text-on-surface mb-1">Email address</label>
+                    <input 
+                      type="email" 
+                      required 
+                      className="w-full px-4 py-2 bg-surface-container-lowest border border-outline-variant rounded-lg focus:ring-2 focus:ring-secondary outline-none transition-all mb-4"
+                      value={forgotEmail}
+                      onChange={e => setForgotEmail(e.target.value)}
+                    />
+                    <button 
+                      type="submit" 
+                      disabled={isForgotLoading}
+                      className={`w-full py-2 bg-primary text-on-primary rounded-lg font-medium transition-colors ${isForgotLoading ? 'opacity-70 cursor-not-allowed' : 'hover:bg-primary/90'}`}
+                    >
+                      {isForgotLoading ? 'Sending...' : 'Send Reset Link'}
+                    </button>
+                  </form>
+                </div>
+              )}
             </div>
           </div>
         )}
