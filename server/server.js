@@ -10,6 +10,8 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const FormData = require('form-data');
 const crypto = require('crypto');
+const { S3Client, GetObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const multerS3 = require('multer-s3');
 
 const app = express();
 
@@ -24,28 +26,32 @@ app.use(cors({
 
 app.use(express.json());
 
-// Automatically create /uploads and /storage directories if they do not exist
-const tempDir = path.join(__dirname, 'uploads');
-const storageDir = path.join(__dirname, 'storage');
-
-if (!fs.existsSync(tempDir)) {
-  fs.mkdirSync(tempDir, { recursive: true });
-}
-if (!fs.existsSync(storageDir)) {
-  fs.mkdirSync(storageDir, { recursive: true });
-}
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, tempDir),
-  filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
+const s3 = new S3Client({
+  region: process.env.AWS_REGION,
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  }
 });
-const upload = multer({ storage });
+
+const upload = multer({
+  storage: multerS3({
+    s3: s3,
+    bucket: process.env.AWS_BUCKET_NAME,
+    metadata: function (req, file, cb) {
+      cb(null, {fieldName: file.fieldname});
+    },
+    key: function (req, file, cb) {
+      cb(null, Date.now() + '-' + file.originalname);
+    }
+  })
+});
 // File Metadata Schema
 const FileSchema = new mongoose.Schema({
   userId: { type: String, required: true },
   name: String,
   originalName: String,
-  path: String,
+  location: String,
   relativePath: String,
   size: Number,
   mimetype: String,
@@ -127,14 +133,29 @@ app.get('/', (req, res) => {
 });
 
 // Auth Routes
-const usersFilePath = path.join(storageDir, 'users.json');
+const dataDir = path.join(__dirname, 'data');
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+}
+const usersFilePath = path.join(dataDir, 'users.json');
 if (!fs.existsSync(usersFilePath)) {
   fs.writeFileSync(usersFilePath, JSON.stringify([]));
 }
 
+async function getGlobalStorageUsed() {
+  if (isDbConnected || mongoose.connection.readyState === 1) {
+    const result = await FileModel.aggregate([
+      { $match: { securityStatus: 'Safe' } },
+      { $group: { _id: null, totalSize: { $sum: "$size" } } }
+    ]);
+    return result.length > 0 ? result[0].totalSize : 0;
+  }
+  return 0;
+}
+
 app.post('/api/auth/register', async (req, res) => {
   try {
-    const globalUsed = getDirSize(storageDir);
+    const globalUsed = await getGlobalStorageUsed();
     if (globalUsed > GLOBAL_MAX_BYTES) {
       return res.status(503).json({ error: "Registration disabled: CloudGuard global server capacity has been reached." });
     }
@@ -368,10 +389,18 @@ app.delete('/api/auth/account', verifyToken, async (req, res) => {
   try {
     const userId = req.user._id;
 
-    // 1. Delete physical files
-    const userStorageDir = path.join(storageDir, userId);
-    if (fs.existsSync(userStorageDir)) {
-      fs.rmSync(userStorageDir, { recursive: true, force: true });
+    // 1. Delete physical files from S3
+    if (isDbConnected || mongoose.connection.readyState === 1) {
+      const userFiles = await FileModel.find({ userId: userId });
+      for (const file of userFiles) {
+        if (file.s3Key) {
+          try {
+            await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: file.s3Key }));
+          } catch (e) {
+            console.error("Failed to delete from S3 during account removal", e.message);
+          }
+        }
+      }
     }
 
     // 2. Delete user and files from DB / JSON
@@ -390,23 +419,6 @@ app.delete('/api/auth/account', verifyToken, async (req, res) => {
   }
 });
 
-// Storage Helper
-function getDirSize(dirPath) {
-  let size = 0;
-  if (!fs.existsSync(dirPath)) return 0;
-  const files = fs.readdirSync(dirPath);
-  for (const file of files) {
-    const fullPath = path.join(dirPath, file);
-    const stats = fs.statSync(fullPath);
-    if (stats.isDirectory()) {
-      size += getDirSize(fullPath);
-    } else {
-      size += stats.size;
-    }
-  }
-  return size;
-}
-
 // Storage Stats Endpoint
 app.get('/api/storage-stats', verifyToken, async (req, res) => {
   try {
@@ -421,9 +433,6 @@ app.get('/api/storage-stats', verifyToken, async (req, res) => {
       if (result.length > 0) {
         usedBytes = result[0].totalSize;
       }
-    } else {
-      const userStorageDir = path.join(storageDir, userId);
-      usedBytes = getDirSize(userStorageDir);
     }
     
     const totalLimitBytes = 5 * 1024 * 1024 * 1024; // 5 GB
@@ -442,11 +451,11 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
   const incomingSize = req.files.reduce((sum, f) => sum + f.size, 0);
 
   // Global Quota Check
-  const globalUsed = getDirSize(storageDir);
+  const globalUsed = await getGlobalStorageUsed();
   if (globalUsed > GLOBAL_MAX_BYTES) {
-    req.files.forEach(f => {
-      if (fs.existsSync(f.path)) fs.unlinkSync(f.path);
-    });
+    for (const f of req.files) {
+      if (f.key) await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: f.key }));
+    }
     return res.status(503).json({ error: "Upload failed: The server has reached its maximum global capacity limit." });
   }
 
@@ -460,15 +469,12 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
     if (result.length > 0) {
       currentStorageUsed = result[0].totalSize;
     }
-  } else {
-    const userStorageDir = path.join(storageDir, userId);
-    currentStorageUsed = getDirSize(userStorageDir);
   }
 
   if (currentStorageUsed + incomingSize > 5368709120) {
-    req.files.forEach(f => {
-      if (fs.existsSync(f.path)) fs.unlinkSync(f.path);
-    });
+    for (const f of req.files) {
+      if (f.key) await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: f.key }));
+    }
     return res.status(400).json({ error: "Upload Failed: Insufficient storage space. This file exceeds your 5 GB account limit." });
   }
 
@@ -478,20 +484,14 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
 
   for (let i = 0; i < req.files.length; i++) {
     const file = req.files[i];
-    const tempFilePath = file.path;
     const originalName = Buffer.from(file.originalname, 'latin1').toString('utf8');
 
     try {
       // Call AI Microservice
       const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
-      const form = new FormData();
-      form.append('file', fs.createReadStream(tempFilePath));
-
       let scanResult = 'Unknown';
       try {
-        const aiResponse = await axios.post(`${aiServiceUrl}/scan`, form, {
-          headers: { ...form.getHeaders() }
-        });
+        const aiResponse = await axios.post(`${aiServiceUrl}/scan`, { file_url: file.location });
         scanResult = aiResponse.data.status;
       } catch (scanErr) {
         console.error("Scanner error:", scanErr.message);
@@ -501,39 +501,26 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
       const isMalware = (scanResult === 'malware' || scanResult === 'malicious');
       const securityStatus = isMalware ? 'Malicious' : (scanResult === 'safe' ? 'Safe' : 'Pending');
 
-      const diskName = file.filename;
       let relativePath = '';
       if (req.body.relativePaths) {
         relativePath = Array.isArray(req.body.relativePaths) ? req.body.relativePaths[i] : req.body.relativePaths;
       }
       
-      const userStorageDir = path.join(storageDir, userId);
-      if (!fs.existsSync(userStorageDir)) fs.mkdirSync(userStorageDir, { recursive: true });
-
-      let permanentPath = path.join(userStorageDir, diskName);
-      let nestedRelativePath = diskName;
-
+      let nestedRelativePath = file.originalname;
       if (relativePath) {
         const relativeDir = path.dirname(relativePath);
         if (relativeDir && relativeDir !== '.') {
-          const targetDir = path.join(userStorageDir, relativeDir);
-          if (!fs.existsSync(targetDir)) {
-            fs.mkdirSync(targetDir, { recursive: true });
-          }
-          permanentPath = path.join(targetDir, diskName);
-          nestedRelativePath = path.posix.join(relativeDir.split(path.sep).join('/'), diskName);
+          nestedRelativePath = path.posix.join(relativeDir.split(path.sep).join('/'), file.originalname);
         }
       }
-      
-      // Move file to permanent storage (we save it even if malware, but it is flagged in DB)
-      fs.renameSync(tempFilePath, permanentPath);
 
       const fileData = {
         userId: userId,
-        name: file.filename,
+        name: file.originalname,
         diskName: nestedRelativePath,
         originalName: originalName,
-        path: permanentPath,
+        location: file.location,
+        s3Key: file.key,
         relativePath: relativePath,
         size: file.size,
         mimetype: file.mimetype,
@@ -541,20 +528,15 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
         securityStatus: securityStatus
       };
 
-      // Handle MongoDB save errors as 500 errors
       if (isDbConnected || mongoose.connection.readyState === 1) {
         try {
           const newFile = new FileModel(fileData);
           await newFile.save();
-          if (!isMalware) {
-            results.push(newFile);
-          }
+          if (!isMalware) results.push(newFile);
         } catch (dbError) {
           console.error('MongoDB save error:', dbError);
           return res.status(500).json({ error: 'Database error while saving file metadata.' });
         }
-      } else {
-        if (!isMalware) results.push(fileData);
       }
 
       if (isMalware) {
@@ -564,8 +546,8 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
 
     } catch (error) {
       console.error('File processing error:', error);
-      if (fs.existsSync(tempFilePath)) {
-        try { fs.unlinkSync(tempFilePath); } catch (e) {}
+      if (file.key) {
+        try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: file.key })); } catch (e) {}
       }
       return res.status(500).json({ error: 'Internal server error during file processing.' });
     }
@@ -590,85 +572,46 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
 });
 
 // View Endpoint (Inline)
-app.get('/api/view/:filename(*)', verifyToken, (req, res) => {
+app.get('/api/view/:filename(*)', verifyToken, async (req, res) => {
   const filename = req.params.filename;
-  const userStorageDir = path.join(storageDir, req.user._id);
-  const filePath = path.join(userStorageDir, filename);
-
-  if (fs.existsSync(filePath)) {
-    const stats = fs.statSync(filePath);
-    const range = req.headers.range;
-
-    if (range) {
-      const parts = range.replace(/bytes=/, "").split("-");
-      const start = parseInt(parts[0], 10);
-      const end = parts[1] ? parseInt(parts[1], 10) : stats.size - 1;
-      
-      if (start >= stats.size || end >= stats.size) {
-        res.status(416).send('Requested range not satisfiable\n' + start + ' >= ' + stats.size);
-        return;
-      }
-
-      const chunksize = (end - start) + 1;
-      const file = fs.createReadStream(filePath, { start, end });
-      
-      let contentType = 'video/mp4';
-      const ext = path.extname(filename).toLowerCase();
-      if (ext === '.webm') contentType = 'video/webm';
-      else if (ext === '.mov') contentType = 'video/quicktime';
-      else if (ext === '.mkv') contentType = 'video/x-matroska';
-      else if (ext === '.ogg') contentType = 'video/ogg';
-
-      const head = {
-        'Content-Range': `bytes ${start}-${end}/${stats.size}`,
-        'Accept-Ranges': 'bytes',
-        'Content-Length': chunksize,
-        'Content-Type': contentType,
-      };
-
-      res.writeHead(206, head);
-      file.pipe(res);
-    } else {
-      res.setHeader('Content-Disposition', 'inline');
-      res.sendFile(filePath);
-    }
-  } else {
-    res.status(404).json({ error: 'File not found' });
+  try {
+    const fileRecord = await FileModel.findOne({ userId: req.user._id, diskName: filename });
+    if (!fileRecord || !fileRecord.s3Key) return res.status(404).json({ error: 'File not found' });
+    
+    const command = new GetObjectCommand({
+      Bucket: process.env.AWS_BUCKET_NAME,
+      Key: fileRecord.s3Key,
+    });
+    
+    const response = await s3.send(command);
+    res.setHeader('Content-Type', response.ContentType);
+    res.setHeader('Content-Disposition', 'inline');
+    response.Body.pipe(res);
+  } catch (error) {
+    console.error('S3 View Error:', error);
+    res.status(500).json({ error: 'Failed to fetch file' });
   }
 });
 
 // Download Endpoint (Attachment)
 app.get('/api/download/:filename(*)', verifyToken, async (req, res) => {
   const filename = req.params.filename;
-  const userStorageDir = path.join(storageDir, req.user._id);
-  const filePath = path.join(userStorageDir, filename);
-
-  if (fs.existsSync(filePath)) {
-    const stats = fs.statSync(filePath);
-    if (stats.isDirectory()) {
-      res.setHeader('Content-Disposition', `attachment; filename="${path.basename(filePath)}.zip"`);
-      res.setHeader('Content-Type', 'application/zip');
-      const archive = archiver('zip', { zlib: { level: 9 } });
-      archive.pipe(res);
-      archive.directory(filePath, false);
-      archive.finalize();
-      return;
-    }
-
-    let originalName = path.basename(filename);
-    try {
-      if (isDbConnected || mongoose.connection.readyState === 1) {
-        const fileRecord = await FileModel.findOne({ path: filePath });
-        if (fileRecord && fileRecord.originalName) {
-          originalName = fileRecord.originalName;
-        }
-      }
-    } catch (e) {
-      console.warn("Could not fetch original name from DB", e.message);
-    }
-    res.download(filePath, originalName);
-  } else {
-    res.status(404).json({ error: 'File not found' });
+  try {
+    const fileRecord = await FileModel.findOne({ userId: req.user._id, diskName: filename });
+    if (!fileRecord || !fileRecord.s3Key) return res.status(404).json({ error: 'File not found' });
+    
+    const command = new GetObjectCommand({
+      Bucket: process.env.AWS_BUCKET_NAME,
+      Key: fileRecord.s3Key,
+    });
+    
+    const response = await s3.send(command);
+    res.setHeader('Content-Type', response.ContentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${fileRecord.originalName}"`);
+    response.Body.pipe(res);
+  } catch (error) {
+    console.error('S3 Download Error:', error);
+    res.status(500).json({ error: 'Failed to fetch file' });
   }
 });
 
@@ -732,45 +675,8 @@ app.get('/api/files', verifyToken, async (req, res) => {
       mappedFiles.sort((a, b) => b.mtimeMs - a.mtimeMs);
       return res.json(mappedFiles);
     }
-
-    // Fallback to local FS if DB is not connected
-    const userStorageDir = path.join(storageDir, req.user._id);
-    const targetDir = path.join(userStorageDir, queryPath);
-
-    if (!targetDir.startsWith(userStorageDir)) {
-      return res.status(403).json({ error: 'Access denied' });
-    }
-
-    if (!fs.existsSync(targetDir)) {
-      return res.json([]);
-    }
-
-    const items = fs.readdirSync(targetDir);
-    const mappedFiles = items.map(item => {
-      const itemPath = path.join(targetDir, item);
-      const stats = fs.statSync(itemPath);
-      const relativePath = path.relative(userStorageDir, itemPath).split(path.sep).join('/');
-      const isFolder = stats.isDirectory();
-      
-      let originalName = item;
-      if (!isFolder && originalName.includes('-')) {
-        originalName = originalName.substring(originalName.indexOf('-') + 1);
-      }
-
-      return {
-        id: relativePath,
-        name: isFolder ? item : originalName,
-        diskName: relativePath,
-        isFolder: isFolder,
-        date: new Date(stats.mtime).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-        mtimeMs: stats.mtimeMs,
-        size: isFolder ? '--' : (stats.size / (1024 * 1024)).toFixed(1) + ' MB',
-        status: 'Safe', // Local fallback doesn't have securityStatus DB info readily available here
-        type: isFolder ? 'folder' : originalName.split('.').pop()
-      };
-    }).sort((a, b) => new Date(b.date) - new Date(a.date));
     
-    return res.json(mappedFiles);
+    return res.json([]);
   } catch (error) {
     console.error('Error listing files:', error.message);
     return res.status(500).json({ error: 'Internal server error' });
@@ -798,13 +704,9 @@ app.delete('/api/files/:id', verifyToken, async (req, res) => {
       res.status(200).json({ message: "File deleted successfully", id: req.params.id });
 
       // 5. Attempt physical deletion in the background (DO NOT AWAIT, DO NOT CRASH)
-      try {
-          const fs = require('fs');
-          if (file.path && fs.existsSync(file.path)) {
-              fs.unlinkSync(file.path);
-          }
-      } catch (fsError) {
-          console.log("Physical deletion skipped/failed, ignoring:", fsError.message);
+      if (file.s3Key) {
+        s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: file.s3Key }))
+          .catch(err => console.log("Physical deletion skipped/failed, ignoring:", err.message));
       }
 
   } catch (error) {

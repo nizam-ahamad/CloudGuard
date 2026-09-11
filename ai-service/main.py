@@ -101,19 +101,28 @@ def analyze_executable(file_path):
     prediction = rf_model.predict(df)[0]
     return {"status": "malware" if prediction == 1 else "safe"}
 
-@app.post("/scan")
-async def scan_file(file: UploadFile = File(...)):
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="No file provided")
+class ScanRequest(BaseModel):
+    file_url: str
 
-    ext = os.path.splitext(file.filename)[1].lower()
-    
+@app.post("/scan")
+async def scan_file(request: ScanRequest):
+    file_url = request.file_url
+    if not file_url:
+        raise HTTPException(status_code=400, detail="No file URL provided")
+
     try:
+        response = requests.get(file_url, stream=True)
+        response.raise_for_status()
+        
+        ext = os.path.splitext(file_url.split('?')[0])[1].lower()
+        
         with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
-            shutil.copyfileobj(file.file, tmp)
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    tmp.write(chunk)
             tmp_path = tmp.name
     except Exception as e:
-        raise HTTPException(status_code=500, detail="Could not save file")
+        raise HTTPException(status_code=500, detail="Could not download file from S3")
         
     try:
         is_executable = ext in ['.exe', '.dll']
