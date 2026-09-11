@@ -960,10 +960,20 @@ function App() {
                       <td className="py-3 px-6 text-on-surface-variant">{file.size}</td>
                       <td className="py-3 px-6">
                         {!file.isFolder && (
-                          file.status === 'Safe' && (
+                          file.status === 'Safe' ? (
                             <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#dcfce7] text-[#166534] border border-[#bbf7d0]">
                               <span className="material-symbols-outlined text-[14px]">check_circle</span>
                               <span className="font-label-md text-[11px]">Safe</span>
+                            </div>
+                          ) : file.status === 'Malicious' || file.status === 'malware' ? (
+                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-error/10 text-error border border-error/20">
+                              <span className="material-symbols-outlined text-[14px]">warning</span>
+                              <span className="font-label-md text-[11px]">Malicious</span>
+                            </div>
+                          ) : (
+                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-surface-container-high text-on-surface-variant border border-outline-variant">
+                              <span className="material-symbols-outlined text-[14px]">hourglass_empty</span>
+                              <span className="font-label-md text-[11px]">{file.status || 'Pending'}</span>
                             </div>
                           )
                         )}
