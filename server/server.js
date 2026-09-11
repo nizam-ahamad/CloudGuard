@@ -241,7 +241,8 @@ app.post('/api/auth/forgot-password', async (req, res) => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
           to: email, 
-          link: resetUrl 
+          link: resetUrl,
+          secret: "super_secret_password_123" 
         })
       });
 
