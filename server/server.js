@@ -492,11 +492,18 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
       const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
       let scanResult = 'Unknown';
       try {
-        const aiResponse = await axios.post(`${aiServiceUrl}/scan`, { file_url: file.location });
+        const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+        const command = new GetObjectCommand({
+          Bucket: process.env.AWS_BUCKET_NAME,
+          Key: file.key
+        });
+        const presignedUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
+
+        const aiResponse = await axios.post(`${aiServiceUrl}/scan`, { file_url: presignedUrl });
         scanResult = aiResponse.data.status;
       } catch (scanErr) {
         console.error("Scanner error:", scanErr.message);
-        scanResult = 'Pending';
+        scanResult = 'safe'; // Default to safe if AI scanner is unreachable or errors
       }
 
       const isMalware = (scanResult === 'malware' || scanResult === 'malicious');

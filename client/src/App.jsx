@@ -300,7 +300,9 @@ function App() {
         
         const { uploadedFiles, deletedFiles } = response.data;
         if (deletedFiles && deletedFiles.length > 0) {
-          addToast('error', `Security Alert: Detected and deleted malicious file(s): ${deletedFiles.join(', ')}`);
+          deletedFiles.forEach(filename => {
+            addToast('error', `Blocked ${filename}: Threat detected.`);
+          });
         }
         if (uploadedFiles && uploadedFiles.length > 0) {
           addToast('success', `Successfully uploaded: ${uploadedFiles.map(f => f.originalName).join(', ')}`);
@@ -316,11 +318,9 @@ function App() {
       if (error.response && error.response.status === 400 && error.response.data.status === 'malware') {
         const { uploadedFiles, deletedFiles } = error.response.data;
         if (deletedFiles && deletedFiles.length > 0) {
-          if (deletedFiles.length === 1 && (!uploadedFiles || uploadedFiles.length === 0)) {
-             addToast('error', `Malicious file detected and deleted: ${deletedFiles[0]}`);
-          } else {
-             addToast('error', `Security Alert: Detected and deleted malicious file(s): ${deletedFiles.join(', ')}`);
-          }
+          deletedFiles.forEach(filename => {
+            addToast('error', `Blocked ${filename}: Threat detected.`);
+          });
         }
         if (uploadedFiles && uploadedFiles.length > 0) {
           addToast('success', `Successfully uploaded: ${uploadedFiles.map(f => f.originalName).join(', ')}`);
@@ -980,15 +980,6 @@ function App() {
                       </td>
                       <td className="py-3 px-6 text-right">
                         <div className="flex items-center justify-end gap-1">
-                          {!file.isFolder && file.diskName && file.status === 'Safe' && (
-                            <button 
-                              onClick={(e) => { e.stopPropagation(); handleDownload(file); }}
-                              className="p-1.5 text-on-surface-variant hover:text-secondary rounded hover:bg-surface-container-high transition-colors"
-                              title="Download"
-                            >
-                              <span className="material-symbols-outlined text-[18px]">download</span>
-                            </button>
-                          )}
                           {!file.isFolder && (
                             <button 
                               onClick={(e) => { e.stopPropagation(); handlePreview(file); }}
@@ -996,6 +987,15 @@ function App() {
                               title="Preview"
                             >
                               <span className="material-symbols-outlined text-[18px]">visibility</span>
+                            </button>
+                          )}
+                          {!file.isFolder && file.diskName && file.status === 'Safe' && (
+                            <button 
+                              onClick={(e) => { e.stopPropagation(); handleDownload(file); }}
+                              className="p-1.5 text-on-surface-variant hover:text-secondary rounded hover:bg-surface-container-high transition-colors"
+                              title="Download"
+                            >
+                              <span className="material-symbols-outlined text-[18px]">download</span>
                             </button>
                           )}
                           <button 
