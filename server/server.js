@@ -66,9 +66,17 @@ const FileModel = mongoose.model('File', FileSchema);
 let isDbConnected = false;
 const mongoURI = process.env.MONGO_URI || 'mongodb://localhost:27017/cloudguard';
 mongoose.connect(mongoURI, { serverSelectionTimeoutMS: 5000 })
-  .then(() => {
+  .then(async () => {
     console.log('Connected to MongoDB');
     isDbConnected = true;
+    
+    // DB Cleanup: Clear pending files from earlier crashes
+    try {
+      const deleted = await FileModel.deleteMany({ securityStatus: 'Pending' });
+      console.log(`Cleaned up ${deleted.deletedCount} pending files from DB.`);
+    } catch(err) {
+      console.error("Cleanup error:", err.message);
+    }
   })
   .catch(err => {
     console.error('MongoDB connection warning: Database is offline. Files will still be processed and saved locally.', err.message);
@@ -539,8 +547,10 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
       if (isDbConnected || mongoose.connection.readyState === 1) {
         try {
           const newFile = new FileModel(fileData);
-          await newFile.save();
-          if (!isMalware) results.push(newFile);
+          if (!isMalware) {
+            await newFile.save();
+            results.push(newFile);
+          }
         } catch (dbError) {
           console.error('MongoDB save error:', dbError);
           return res.status(500).json({ error: 'Database error while saving file metadata.' });
@@ -699,11 +709,21 @@ app.get('/api/files/:id/access', verifyToken, async (req, res) => {
       return res.status(403).json({ error: 'Access denied' });
     }
 
-    if (!file.s3Key) return res.status(400).json({ error: 'S3 Key missing' });
+    let targetKey = file.s3Key;
+    if (!targetKey && file.location) {
+      try {
+        const urlObj = new URL(file.location);
+        targetKey = decodeURIComponent(urlObj.pathname.substring(1));
+      } catch (e) {
+        console.error("URL parsing failed for location:", file.location);
+      }
+    }
+
+    if (!targetKey) return res.status(400).json({ error: 'S3 Key missing and cannot be parsed from location' });
 
     const command = new GetObjectCommand({
       Bucket: process.env.AWS_BUCKET_NAME,
-      Key: file.s3Key
+      Key: targetKey
     });
 
     const url = await getSignedUrl(s3, command, { expiresIn: 60 });
