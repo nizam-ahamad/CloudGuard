@@ -129,8 +129,6 @@ function App() {
 
   const [files, setFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
-  const [previewFile, setPreviewFile] = useState(null);
-  const [previewText, setPreviewText] = useState("");
   const [sortOrder, setSortOrder] = useState('newest');
   const [activeMenu, setActiveMenu] = useState(null);
   const [fileToDelete, setFileToDelete] = useState(null);
