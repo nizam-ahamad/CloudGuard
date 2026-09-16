@@ -725,10 +725,11 @@ app.get('/api/files/:id/access', verifyToken, async (req, res) => {
 
     if (!targetKey) return res.status(400).json({ error: 'S3 Key missing and cannot be parsed from location' });
 
+    const isDownload = req.query.download === 'true';
     const command = new GetObjectCommand({
       Bucket: process.env.AWS_BUCKET_NAME,
       Key: targetKey,
-      ResponseContentDisposition: 'inline'
+      ResponseContentDisposition: isDownload ? `attachment; filename="${encodeURIComponent(file.name)}"` : 'inline'
     });
 
     const url = await getSignedUrl(s3, command, { expiresIn: 60 });

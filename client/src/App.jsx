@@ -41,6 +41,15 @@ function App() {
   const [storageStats, setStorageStats] = useState({ usedBytes: 0, totalLimitBytes: 1, usedPercentage: 0 });
   const [searchQuery, setSearchQuery] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [previewFile, setPreviewFile] = useState(null);
+  const [previewUrl, setPreviewUrl] = useState("");
+  const [previewText, setPreviewText] = useState("");
+
+  const closePreview = () => {
+    setPreviewFile(null);
+    setPreviewUrl("");
+    setPreviewText("");
+  };
 
   const formatBytes = (bytes, decimals = 1) => {
     if (bytes === 0) return '0 Bytes';
@@ -433,14 +442,25 @@ function App() {
     if (!file.diskName || file.status !== 'Safe') return;
     
     try {
+      setPreviewFile(file);
+      setPreviewText('Loading...');
       const response = await fetch(`${API_BASE_URL}/api/files/${file._id}/access`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (!response.ok) throw new Error("Could not fetch secure access URL");
       const { url } = await response.json();
-      window.open(url, '_blank');
+      setPreviewUrl(url);
+
+      const type = file.type.toLowerCase();
+      if (type === 'txt' || type === 'md') {
+        const textResponse = await fetch(url);
+        if (!textResponse.ok) throw new Error("Failed to fetch file content");
+        const text = await textResponse.text();
+        setPreviewText(text);
+      }
     } catch (err) {
       addToast('error', "Preview failed: " + err.message);
+      closePreview();
     }
   };
 
@@ -448,7 +468,7 @@ function App() {
     if (file.isFolder || !file.diskName || file.status !== 'Safe') return;
     
     try {
-      const response = await fetch(`${API_BASE_URL}/api/files/${file._id}/access`, {
+      const response = await fetch(`${API_BASE_URL}/api/files/${file._id}/access?download=true`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (!response.ok) throw new Error("Could not fetch secure access URL");
@@ -1018,7 +1038,72 @@ function App() {
         )}
       </main>
 
-
+      {/* Preview Modal */}
+      {previewFile && (
+        ['mp4', 'webm', 'ogg', 'mov', 'mkv'].includes(previewFile.type.toLowerCase()) ? (
+          <div className="fixed inset-0 z-50 flex flex-col bg-black/95 backdrop-blur-md">
+            <div className="flex items-center justify-between p-4 bg-transparent text-white w-full">
+              <div className="flex items-center gap-3">
+                <span className="material-symbols-outlined text-white">movie</span>
+                <h3 className="font-title-md text-title-md font-medium truncate">{previewFile.name}</h3>
+              </div>
+              <div className="flex items-center gap-2">
+                <button onClick={() => handleDownload(previewFile)} className="p-2 text-white/80 hover:bg-white/10 rounded-full transition-colors flex items-center">
+                  <span className="material-symbols-outlined">download</span>
+                </button>
+                <button onClick={closePreview} className="p-2 text-white/80 hover:bg-white/10 rounded-full transition-colors">
+                  <span className="material-symbols-outlined">close</span>
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden flex items-center justify-center p-4">
+              <video 
+                controls 
+                autoPlay 
+                controlsList="nodownload" 
+                style={{ width: '100%', maxHeight: '100%' }} 
+                src={previewUrl} 
+              />
+            </div>
+          </div>
+        ) : (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
+            <div className="bg-surface-container-lowest rounded-xl shadow-lg w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
+              <div className="flex items-center justify-between p-4 border-b border-outline-variant bg-surface">
+                <h3 className="font-title-lg text-on-surface truncate pr-4">{previewFile.name}</h3>
+                <div className="flex items-center gap-2">
+                  <button 
+                    onClick={() => handleDownload(previewFile)}
+                    className="bg-secondary text-on-secondary hover:bg-secondary-container transition-colors p-2 rounded-lg flex items-center justify-center"
+                    title="Download File"
+                  >
+                    <span className="material-symbols-outlined">download</span>
+                  </button>
+                  <button onClick={closePreview} className="p-2 text-on-surface-variant hover:bg-surface-container-high rounded-full transition-colors">
+                    <span className="material-symbols-outlined">close</span>
+                  </button>
+                </div>
+              </div>
+              <div className="flex-1 overflow-auto bg-surface-container p-4 flex items-center justify-center">
+                {(previewFile.type.toLowerCase() === 'png' || previewFile.type.toLowerCase() === 'jpg' || previewFile.type.toLowerCase() === 'jpeg') ? (
+                  <img src={previewUrl} alt={previewFile.name} className="max-w-full max-h-[70vh] object-contain shadow-sm" />
+                ) : previewFile.type.toLowerCase() === 'pdf' ? (
+                  <iframe src={previewUrl} className="w-full h-[70vh] border-0" title="PDF Preview" />
+                ) : (previewFile.type.toLowerCase() === 'txt' || previewFile.type.toLowerCase() === 'md') ? (
+                  <pre className="w-full h-full text-left bg-surface-container-lowest p-6 rounded-lg overflow-auto text-sm font-mono whitespace-pre-wrap shadow-inner border border-outline-variant">
+                    {previewText || "Loading..."}
+                  </pre>
+                ) : (
+                  <div className="text-on-surface-variant flex flex-col items-center gap-3">
+                    <span className="material-symbols-outlined text-4xl">visibility_off</span>
+                    <p>Preview not available for this file type.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )
+      )}
 
       {/* Delete Confirmation Modal */}
       {fileToDelete && (
