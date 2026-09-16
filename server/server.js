@@ -563,12 +563,16 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
 
           if (process.env.VT_API_KEY) {
             try {
+              console.log(`[Security] Checking VirusTotal for: ${file.originalname}`);
               const vtResponse = await axios.get(`https://www.virustotal.com/api/v3/files/${sha256}`, {
                 headers: { 'x-apikey': process.env.VT_API_KEY },
                 timeout: 15000
               });
               const stats = vtResponse.data.data.attributes.last_analysis_stats;
-              if (stats.malicious > 0) {
+              console.log(`[Security] VT Stats for ${file.originalname}:`, stats);
+
+              if (stats.malicious > 0 || stats.suspicious > 0) {
+                 console.log(`[Security] MALWARE DETECTED in ${file.originalname}! Deleting from S3...`);
                  scanResult = 'malicious';
                  if (file.key) {
                    try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: file.key })); } catch (e) {}
@@ -578,32 +582,20 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
                      try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: f.key })); } catch (e) {}
                    }
                  }
-                 return res.status(400).json({ error: "Malware detected by VirusTotal." });
+                 return res.status(403).json({ error: "Malware detected by VirusTotal." });
               }
-            } catch (vtErr) {
-              if (vtErr.response && vtErr.response.status === 429) {
-                 console.error("VT API Rate Limit Hit (429)");
-                 if (file.key) {
-                   try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: file.key })); } catch (e) {}
+            } catch (error) {
+               console.error(`[Security] API Error or Unknown Hash for ${file.originalname}:`, error.message);
+               console.log(`[Security] Enforcing Zero Trust. Deleting unverified file from S3...`);
+               if (file.key) {
+                 try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: file.key })); } catch (e) {}
+               }
+               for (const f of req.files) {
+                 if (f.key && f.key !== file.key) {
+                   try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: f.key })); } catch (e) {}
                  }
-                 for (const f of req.files) {
-                   if (f.key && f.key !== file.key) {
-                     try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: f.key })); } catch (e) {}
-                   }
-                 }
-                 return res.status(429).json({ error: "Scanner busy. Try again in a minute." });
-              } else {
-                 console.error("VT API Error:", vtErr.message);
-                 if (file.key) {
-                   try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: file.key })); } catch (e) {}
-                 }
-                 for (const f of req.files) {
-                   if (f.key && f.key !== file.key) {
-                     try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: f.key })); } catch (e) {}
-                   }
-                 }
-                 return res.status(500).json({ error: "Security verification failed or rate limit reached. File blocked." });
-              }
+               }
+               return res.status(400).json({ error: "File unverified or scanner busy. Upload blocked." });
             }
           }
         } catch (s3Err) {
