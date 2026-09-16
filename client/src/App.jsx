@@ -307,9 +307,7 @@ function App() {
         
         const { uploadedFiles, deletedFiles } = response.data;
         if (deletedFiles && deletedFiles.length > 0) {
-          deletedFiles.forEach(filename => {
-            addToast('error', `Threat detected: File deleted`);
-          });
+          addToast('error', `Security Alert: Detected and deleted malicious file(s): ${deletedFiles.join(', ')}`);
         }
         if (uploadedFiles && uploadedFiles.length > 0) {
           addToast('success', `Successfully uploaded: ${uploadedFiles.map(f => f.originalName).join(', ')}`);
@@ -325,9 +323,7 @@ function App() {
       if (error.response && error.response.status === 400 && error.response.data.status === 'malware') {
         const { uploadedFiles, deletedFiles } = error.response.data;
         if (deletedFiles && deletedFiles.length > 0) {
-          deletedFiles.forEach(filename => {
-            addToast('error', `Threat detected: File deleted`);
-          });
+          addToast('error', `Security Alert: Detected and deleted malicious file(s): ${deletedFiles.join(', ')}`);
         }
         if (uploadedFiles && uploadedFiles.length > 0) {
           addToast('success', `Successfully uploaded: ${uploadedFiles.map(f => f.originalName).join(', ')}`);
@@ -440,7 +436,6 @@ function App() {
     if (!file.diskName || file.status !== 'Safe') return;
     
     try {
-      setPreviewFile(file);
       setPreviewText('Loading...');
       const response = await fetch(`${API_BASE_URL}/api/files/${file._id}/access`, {
         headers: { Authorization: `Bearer ${token}` }
@@ -448,6 +443,7 @@ function App() {
       if (!response.ok) throw new Error("Could not fetch secure access URL");
       const { url } = await response.json();
       setPreviewUrl(url);
+      setPreviewFile(file);
 
       const type = file.type.toLowerCase();
       if (type === 'txt' || type === 'md') {
