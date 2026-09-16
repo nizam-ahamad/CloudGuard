@@ -717,7 +717,7 @@ app.get('/api/files/:id/access', verifyToken, async (req, res) => {
     if (!targetKey && file.location) {
       try {
         const urlObj = new URL(file.location);
-        targetKey = decodeURIComponent(urlObj.pathname.substring(1));
+        targetKey = decodeURIComponent(urlObj.pathname.substring(1).replace(/\+/g, '%20'));
       } catch (e) {
         console.error("URL parsing failed for location:", file.location);
       }
