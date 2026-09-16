@@ -301,7 +301,7 @@ function App() {
         const { uploadedFiles, deletedFiles } = response.data;
         if (deletedFiles && deletedFiles.length > 0) {
           deletedFiles.forEach(filename => {
-            addToast('error', `Threat detected: File blocked (${filename})`);
+            addToast('error', `Threat detected: File deleted`);
           });
         }
         if (uploadedFiles && uploadedFiles.length > 0) {
@@ -319,7 +319,7 @@ function App() {
         const { uploadedFiles, deletedFiles } = error.response.data;
         if (deletedFiles && deletedFiles.length > 0) {
           deletedFiles.forEach(filename => {
-            addToast('error', `Blocked ${filename}: Threat detected.`);
+            addToast('error', `Threat detected: File deleted`);
           });
         }
         if (uploadedFiles && uploadedFiles.length > 0) {
