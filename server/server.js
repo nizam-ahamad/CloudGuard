@@ -505,7 +505,11 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
       let securityStatus = 'Pending';
       let isMalware = false;
 
-      if (isPEExecutable) {
+      if (file.size === 0) {
+        scanResult = 'safe';
+        securityStatus = 'Safe';
+        isMalware = false;
+      } else if (isPEExecutable) {
         try {
           const command = new GetObjectCommand({
             Bucket: process.env.AWS_BUCKET_NAME,
@@ -524,7 +528,7 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
             headers: {
               ...formData.getHeaders()
             },
-            timeout: 60000 
+            timeout: 15000 
           });
           
           scanResult = aiResponse.data.status;
@@ -560,14 +564,24 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
           if (process.env.VT_API_KEY) {
             try {
               const vtResponse = await axios.get(`https://www.virustotal.com/api/v3/files/${sha256}`, {
-                headers: { 'x-apikey': process.env.VT_API_KEY }
+                headers: { 'x-apikey': process.env.VT_API_KEY },
+                timeout: 15000
               });
               const stats = vtResponse.data.data.attributes.last_analysis_stats;
-              if (stats.malicious > 0) scanResult = 'malicious';
+              if (stats.malicious > 0) {
+                 scanResult = 'malicious';
+                 if (file.key) {
+                   try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: file.key })); } catch (e) {}
+                 }
+                 for (const f of req.files) {
+                   if (f.key && f.key !== file.key) {
+                     try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: f.key })); } catch (e) {}
+                   }
+                 }
+                 return res.status(400).json({ error: "Malware detected by VirusTotal." });
+              }
             } catch (vtErr) {
-              if (vtErr.response && vtErr.response.status === 404) {
-                 scanResult = 'safe';
-              } else if (vtErr.response && vtErr.response.status === 429) {
+              if (vtErr.response && vtErr.response.status === 429) {
                  console.error("VT API Rate Limit Hit (429)");
                  if (file.key) {
                    try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: file.key })); } catch (e) {}
@@ -580,11 +594,29 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
                  return res.status(429).json({ error: "Scanner busy. Try again in a minute." });
               } else {
                  console.error("VT API Error:", vtErr.message);
+                 if (file.key) {
+                   try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: file.key })); } catch (e) {}
+                 }
+                 for (const f of req.files) {
+                   if (f.key && f.key !== file.key) {
+                     try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: f.key })); } catch (e) {}
+                   }
+                 }
+                 return res.status(500).json({ error: "Security verification failed or rate limit reached. File blocked." });
               }
             }
           }
         } catch (s3Err) {
           console.error("Error hashing file from S3:", s3Err.message);
+          if (file.key) {
+            try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: file.key })); } catch (e) {}
+          }
+          for (const f of req.files) {
+            if (f.key && f.key !== file.key) {
+              try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: f.key })); } catch (e) {}
+            }
+          }
+          return res.status(500).json({ error: "Security verification failed or rate limit reached. File blocked." });
         }
         
         isMalware = (scanResult === 'malware' || scanResult === 'malicious');
