@@ -729,7 +729,7 @@ app.get('/api/files/:id/access', verifyToken, async (req, res) => {
     const command = new GetObjectCommand({
       Bucket: process.env.AWS_BUCKET_NAME,
       Key: targetKey,
-      ResponseContentDisposition: isDownload ? `attachment; filename="${encodeURIComponent(file.name)}"` : 'inline'
+      ResponseContentDisposition: isDownload ? `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}` : 'inline'
     });
 
     const url = await getSignedUrl(s3, command, { expiresIn: 60 });
