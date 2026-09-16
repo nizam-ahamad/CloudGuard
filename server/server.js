@@ -774,6 +774,38 @@ app.delete('/api/files/:id', verifyToken, async (req, res) => {
   }
 });
 
+// Bulk Delete Files Endpoint
+app.post('/api/files/bulk-delete', verifyToken, async (req, res) => {
+  try {
+    const { fileIds } = req.body;
+    if (!fileIds || !Array.isArray(fileIds) || fileIds.length === 0) {
+      return res.status(400).json({ error: 'No file IDs provided' });
+    }
+
+    const files = await FileModel.find({ _id: { $in: fileIds }, userId: req.user._id });
+    if (files.length === 0) {
+      return res.status(404).json({ message: "No files found to delete" });
+    }
+
+    const s3KeysToDelete = files.map(f => f.s3Key).filter(key => key);
+
+    await FileModel.deleteMany({ _id: { $in: fileIds }, userId: req.user._id });
+    await recalculateStorage(req.user._id);
+
+    res.status(200).json({ message: "Files deleted successfully" });
+
+    // Background deletion from S3
+    s3KeysToDelete.forEach(key => {
+      s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: key }))
+        .catch(err => console.log("Physical deletion skipped/failed, ignoring:", err.message));
+    });
+
+  } catch (error) {
+    console.error("Bulk deletion error:", error.message);
+    res.status(500).json({ error: "Server error during bulk deletion" });
+  }
+});
+
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);
