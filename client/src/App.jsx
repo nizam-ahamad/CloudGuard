@@ -252,8 +252,8 @@ function App() {
       });
       if (response.status === 200) {
         addToast('success', 'Selected files deleted successfully.');
+        setFiles(prevFiles => prevFiles.filter(file => !selectedFiles.includes(file._id)));
         setSelectedFiles([]);
-        await fetchFiles();
         await fetchStorageStats();
       }
     } catch (error) {
@@ -367,6 +367,7 @@ function App() {
       console.error(error);
     } finally {
       setUploading(false);
+      setUploadProgress(0);
     }
   };
 

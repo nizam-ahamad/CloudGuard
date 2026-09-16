@@ -67,8 +67,8 @@ def analyze_executable(file_path):
         with open(file_path, 'rb') as f:
             return scan_with_virustotal(get_file_hash(f.read()))
 
-    features = {}
     try:
+        features = {}
         pe = pefile.PE(file_path)
         features['SizeOfOptionalHeader'] = pe.FILE_HEADER.SizeOfOptionalHeader
         features['Characteristics'] = pe.FILE_HEADER.Characteristics
@@ -79,19 +79,19 @@ def analyze_executable(file_path):
         with open(file_path, 'rb') as f:
             data = f.read()
         features['Entropy'] = calculate_entropy(data)
+
+        df = pd.DataFrame([features])
+        
+        # Ensure column order matches training data
+        columns = ['SizeOfOptionalHeader', 'Characteristics', 'MajorLinkerVersion', 'SizeOfInitializedData', 'Entropy']
+        df = df[columns]
+
+        # Make prediction
+        prediction = int(rf_model.predict(df)[0])
+        return {"status": "malware" if prediction == 1 else "safe"}
             
     except Exception as e:
-        return {"status": "safe", "message": "Non-executable file bypass"}
-
-    df = pd.DataFrame([features])
-    
-    # Ensure column order matches training data
-    columns = ['SizeOfOptionalHeader', 'Characteristics', 'MajorLinkerVersion', 'SizeOfInitializedData', 'Entropy']
-    df = df[columns]
-
-    # Make prediction
-    prediction = int(rf_model.predict(df)[0])
-    return {"status": "malware" if prediction == 1 else "safe"}
+        return {"status": "safe", "message": "Non-executable or unparseable file bypass"}
 
 class ScanRequest(BaseModel):
     file_url: str
