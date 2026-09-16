@@ -524,7 +524,7 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
             headers: {
               ...formData.getHeaders()
             },
-            timeout: 10000 
+            timeout: 60000 
           });
           
           scanResult = aiResponse.data.status;
