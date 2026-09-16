@@ -135,6 +135,7 @@ function App() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadStats, setUploadStats] = useState({ loaded: 0, total: 0 });
   const [toasts, setToasts] = useState([]);
@@ -245,7 +246,6 @@ function App() {
 
   const handleBulkDelete = async () => {
     if (selectedFiles.length === 0) return;
-    if (!window.confirm("Are you sure you want to delete the selected files? This action cannot be undone.")) return;
     setIsBulkDeleting(true);
     try {
       const response = await axios.post(`${API_BASE_URL}/api/files/bulk-delete`, { fileIds: selectedFiles }, {
@@ -255,6 +255,7 @@ function App() {
         addToast('success', 'Selected files deleted successfully.');
         setFiles(prevFiles => prevFiles.filter(file => !selectedFiles.includes(file._id)));
         setSelectedFiles([]);
+        setShowBulkDeleteModal(false);
         await fetchStorageStats();
       }
     } catch (error) {
@@ -948,7 +949,7 @@ function App() {
               </button>
               {selectedFiles.length > 0 && (
                 <button 
-                  onClick={handleBulkDelete}
+                  onClick={() => setShowBulkDeleteModal(true)}
                   disabled={isBulkDeleting}
                   className={`text-error hover:text-[#b91c1c] flex items-center gap-1 font-label-md ml-4 cursor-pointer ${isBulkDeleting ? 'opacity-70 cursor-not-allowed' : ''}`}
                 >
@@ -1175,26 +1176,30 @@ function App() {
       )}
 
       {/* Delete Confirmation Modal */}
-      {fileToDelete && (
+      {(fileToDelete || showBulkDeleteModal) && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
           <div className="bg-surface-container-lowest rounded-xl shadow-xl border border-outline-variant w-full max-w-md p-6 flex flex-col gap-4">
             <h3 className="font-title-lg text-on-surface">Confirm Delete</h3>
             <p className="font-body-md text-on-surface-variant">
-              Are you sure you want to permanently delete <strong className="break-all text-on-surface">{fileToDelete.name}</strong>?
+              {showBulkDeleteModal ? (
+                <>Are you sure you want to permanently delete the <strong className="break-all text-on-surface">{selectedFiles.length}</strong> selected files?</>
+              ) : (
+                <>Are you sure you want to permanently delete <strong className="break-all text-on-surface">{fileToDelete?.name}</strong>?</>
+              )}
             </p>
             <div className="flex justify-end gap-3 mt-4">
               <button 
-                onClick={() => setFileToDelete(null)}
+                onClick={() => { setFileToDelete(null); setShowBulkDeleteModal(false); }}
                 className="px-4 py-2 font-label-md text-on-surface-variant hover:bg-surface-container-high rounded-lg transition-colors"
               >
                 Cancel
               </button>
               <button 
-                onClick={confirmDelete}
-                disabled={isDeleting}
-                className={`px-4 py-2 font-label-md bg-error text-on-error rounded-lg transition-colors ${isDeleting ? 'opacity-70 cursor-not-allowed' : 'hover:bg-[#b91c1c]'}`}
+                onClick={showBulkDeleteModal ? handleBulkDelete : confirmDelete}
+                disabled={isDeleting || isBulkDeleting}
+                className={`px-4 py-2 font-label-md bg-error text-on-error rounded-lg transition-colors ${(isDeleting || isBulkDeleting) ? 'opacity-70 cursor-not-allowed' : 'hover:bg-[#b91c1c]'}`}
               >
-                {isDeleting ? (
+                {(isDeleting || isBulkDeleting) ? (
                   <span className="flex items-center justify-center gap-2">
                     <span className="animate-spin inline-block w-4 h-4 border-[2px] border-current border-t-transparent rounded-full" role="status" aria-label="loading"></span>
                     Deleting...

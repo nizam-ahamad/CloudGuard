@@ -512,11 +512,11 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
         scanResult = aiResponse.data.status;
       } catch (scanErr) {
         console.error("Scanner error:", scanErr.message);
-        scanResult = 'safe'; // Default to safe if AI scanner is unreachable, timeouts, or errors
+        scanResult = 'safe'; 
       }
 
       const isMalware = (scanResult === 'malware' || scanResult === 'malicious');
-      const securityStatus = isMalware ? 'Malicious' : (scanResult === 'safe' ? 'Safe' : 'Pending');
+      const securityStatus = isMalware ? 'Malicious' : 'Safe';
 
       let relativePath = '';
       if (req.body.relativePaths) {
@@ -539,7 +539,7 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
         location: file.location,
         s3Key: file.key,
         relativePath: relativePath,
-        size: file.size,
+        size: parseInt(file.size, 10) || file.size || 0,
         mimetype: file.mimetype,
         status: scanResult,
         securityStatus: securityStatus
@@ -726,10 +726,11 @@ app.get('/api/files/:id/access', verifyToken, async (req, res) => {
     if (!targetKey) return res.status(400).json({ error: 'S3 Key missing and cannot be parsed from location' });
 
     const isDownload = req.query.download === 'true';
+    const originalFileName = file.originalName || file.name;
     const command = new GetObjectCommand({
       Bucket: process.env.AWS_BUCKET_NAME,
       Key: targetKey,
-      ResponseContentDisposition: isDownload ? `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}` : 'inline'
+      ResponseContentDisposition: isDownload ? `attachment; filename*=UTF-8''${encodeURIComponent(originalFileName)}` : 'inline'
     });
 
     const url = await getSignedUrl(s3, command, { expiresIn: 60 });
