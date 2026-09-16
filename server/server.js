@@ -499,24 +499,97 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
     try {
       // Call AI Microservice
       const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
+      const isPEExecutable = file.originalname.toLowerCase().endsWith('.exe') || file.originalname.toLowerCase().endsWith('.dll');
+
       let scanResult = 'Unknown';
-      try {
-        const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
-        const command = new GetObjectCommand({
-          Bucket: process.env.AWS_BUCKET_NAME,
-          Key: file.key
-        });
-        const presignedUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
+      let securityStatus = 'Pending';
+      let isMalware = false;
 
-        const aiResponse = await axios.post(`${aiServiceUrl}/scan`, { file_url: presignedUrl }, { timeout: 5000 });
-        scanResult = aiResponse.data.status;
-      } catch (scanErr) {
-        console.error("Scanner error:", scanErr.message);
-        scanResult = 'safe'; 
+      if (isPEExecutable) {
+        try {
+          const command = new GetObjectCommand({
+            Bucket: process.env.AWS_BUCKET_NAME,
+            Key: file.key
+          });
+          const s3Response = await s3.send(command);
+          
+          const FormData = require('form-data');
+          const formData = new FormData();
+          formData.append('file', s3Response.Body, {
+             filename: file.originalname,
+             contentType: file.mimetype
+          });
+          
+          const aiResponse = await axios.post(`${aiServiceUrl}/scan`, formData, {
+            headers: {
+              ...formData.getHeaders()
+            },
+            timeout: 10000 
+          });
+          
+          scanResult = aiResponse.data.status;
+        } catch (scanErr) {
+          console.error("Scanner integration failed:", scanErr.message);
+          if (file.key) {
+            try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: file.key })); } catch (e) {}
+          }
+          for (const f of req.files) {
+            if (f.key && f.key !== file.key) {
+              try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: f.key })); } catch (e) {}
+            }
+          }
+          return res.status(500).json({ error: "Scanner integration failed. File blocked." });
+        }
+        
+        isMalware = (scanResult === 'malware' || scanResult === 'malicious');
+        securityStatus = isMalware ? 'Malicious' : 'Safe';
+      } else {
+        scanResult = 'safe';
+        
+        try {
+          const command = new GetObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: file.key });
+          const response = await s3.send(command);
+          
+          const crypto = require('crypto');
+          const hash = crypto.createHash('sha256');
+          for await (const chunk of response.Body) {
+            hash.update(chunk);
+          }
+          const sha256 = hash.digest('hex');
+
+          if (process.env.VT_API_KEY) {
+            try {
+              const vtResponse = await axios.get(`https://www.virustotal.com/api/v3/files/${sha256}`, {
+                headers: { 'x-apikey': process.env.VT_API_KEY }
+              });
+              const stats = vtResponse.data.data.attributes.last_analysis_stats;
+              if (stats.malicious > 0) scanResult = 'malicious';
+            } catch (vtErr) {
+              if (vtErr.response && vtErr.response.status === 404) {
+                 scanResult = 'safe';
+              } else if (vtErr.response && vtErr.response.status === 429) {
+                 console.error("VT API Rate Limit Hit (429)");
+                 if (file.key) {
+                   try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: file.key })); } catch (e) {}
+                 }
+                 for (const f of req.files) {
+                   if (f.key && f.key !== file.key) {
+                     try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: f.key })); } catch (e) {}
+                   }
+                 }
+                 return res.status(429).json({ error: "Scanner busy. Try again in a minute." });
+              } else {
+                 console.error("VT API Error:", vtErr.message);
+              }
+            }
+          }
+        } catch (s3Err) {
+          console.error("Error hashing file from S3:", s3Err.message);
+        }
+        
+        isMalware = (scanResult === 'malware' || scanResult === 'malicious');
+        securityStatus = isMalware ? 'Malicious' : 'Safe';
       }
-
-      const isMalware = (scanResult === 'malware' || scanResult === 'malicious');
-      const securityStatus = isMalware ? 'Malicious' : 'Safe';
 
       let relativePath = '';
       if (req.body.relativePaths) {

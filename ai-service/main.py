@@ -61,24 +61,21 @@ def scan_with_virustotal(file_hash):
     except Exception:
         return {"status": "safe"}
 
-def analyze_executable(file_path):
+def analyze_executable(file_bytes):
     if rf_model is None:
         # Graceful fallback to VT if ML model fails to load
-        with open(file_path, 'rb') as f:
-            return scan_with_virustotal(get_file_hash(f.read()))
+        return scan_with_virustotal(get_file_hash(file_bytes))
 
     try:
         features = {}
-        pe = pefile.PE(file_path)
+        pe = pefile.PE(data=file_bytes)
         features['SizeOfOptionalHeader'] = pe.FILE_HEADER.SizeOfOptionalHeader
         features['Characteristics'] = pe.FILE_HEADER.Characteristics
         features['MajorLinkerVersion'] = pe.OPTIONAL_HEADER.MajorLinkerVersion
         features['SizeOfInitializedData'] = pe.OPTIONAL_HEADER.SizeOfInitializedData
         pe.close()
         
-        with open(file_path, 'rb') as f:
-            data = f.read()
-        features['Entropy'] = calculate_entropy(data)
+        features['Entropy'] = calculate_entropy(file_bytes)
 
         df = pd.DataFrame([features])
         
@@ -93,33 +90,21 @@ def analyze_executable(file_path):
     except Exception as e:
         return {"status": "safe", "message": "Non-executable or unparseable file bypass"}
 
-class ScanRequest(BaseModel):
-    file_url: str
-
 @app.post("/scan")
-async def scan_file(request: ScanRequest):
-    file_url = request.file_url
-    if not file_url:
-        raise HTTPException(status_code=400, detail="No file URL provided")
-
+async def scan_file(file: UploadFile = File(...)):
     try:
-        response = requests.get(file_url, stream=True)
-        response.raise_for_status()
+        file_bytes = await file.read()
         
-        ext = os.path.splitext(file_url.split('?')[0])[1].lower()
+        filename = file.filename or ""
+        ext = os.path.splitext(filename)[1].lower()
         
-        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    tmp.write(chunk)
-            tmp_path = tmp.name
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Could not download file from S3: {str(e)}")
-        
-    try:
         is_executable = ext in ['.exe', '.dll']
 
         if ext == '.zip':
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp:
+                tmp.write(file_bytes)
+                tmp_path = tmp.name
+            
             extract_dir = tempfile.mkdtemp()
             try:
                 with zipfile.ZipFile(tmp_path, 'r') as zip_ref:
@@ -130,11 +115,13 @@ async def scan_file(request: ScanRequest):
                         file_path = os.path.join(root, extracted_file)
                         extracted_ext = os.path.splitext(extracted_file)[1].lower()
                         
+                        with open(file_path, 'rb') as f:
+                            extracted_bytes = f.read()
+                        
                         if extracted_ext in ['.exe', '.dll']:
-                            scan_res = analyze_executable(file_path)
+                            scan_res = analyze_executable(extracted_bytes)
                         else:
-                            with open(file_path, 'rb') as f:
-                                file_hash = get_file_hash(f.read())
+                            file_hash = get_file_hash(extracted_bytes)
                             scan_res = scan_with_virustotal(file_hash)
                             
                         if scan_res.get("status") in ["malware", "malicious"]:
@@ -146,15 +133,14 @@ async def scan_file(request: ScanRequest):
                 return {"status": "safe", "error": str(e)}
             finally:
                 shutil.rmtree(extract_dir, ignore_errors=True)
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
 
         if is_executable:
-            return analyze_executable(tmp_path)
+            return analyze_executable(file_bytes)
             
         else:
-            with open(tmp_path, 'rb') as f:
-                file_bytes = f.read()
             file_hash = get_file_hash(file_bytes)
             return scan_with_virustotal(file_hash)
-    finally:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
