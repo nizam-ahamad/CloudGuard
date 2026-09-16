@@ -508,11 +508,11 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
         });
         const presignedUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
 
-        const aiResponse = await axios.post(`${aiServiceUrl}/scan`, { file_url: presignedUrl });
+        const aiResponse = await axios.post(`${aiServiceUrl}/scan`, { file_url: presignedUrl }, { timeout: 5000 });
         scanResult = aiResponse.data.status;
       } catch (scanErr) {
         console.error("Scanner error:", scanErr.message);
-        scanResult = 'safe'; // Default to safe if AI scanner is unreachable or errors
+        scanResult = 'safe'; // Default to safe if AI scanner is unreachable, timeouts, or errors
       }
 
       const isMalware = (scanResult === 'malware' || scanResult === 'malicious');

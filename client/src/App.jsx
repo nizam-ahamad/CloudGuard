@@ -245,6 +245,7 @@ function App() {
 
   const handleBulkDelete = async () => {
     if (selectedFiles.length === 0) return;
+    if (!window.confirm("Are you sure you want to delete the selected files? This action cannot be undone.")) return;
     setIsBulkDeleting(true);
     try {
       const response = await axios.post(`${API_BASE_URL}/api/files/bulk-delete`, { fileIds: selectedFiles }, {
@@ -949,7 +950,7 @@ function App() {
                 <button 
                   onClick={handleBulkDelete}
                   disabled={isBulkDeleting}
-                  className={`text-error hover:text-[#b91c1c] flex items-center gap-1 font-label-md ml-4 ${isBulkDeleting ? 'opacity-70 cursor-not-allowed' : ''}`}
+                  className={`text-error hover:text-[#b91c1c] flex items-center gap-1 font-label-md ml-4 cursor-pointer ${isBulkDeleting ? 'opacity-70 cursor-not-allowed' : ''}`}
                 >
                   {isBulkDeleting ? (
                     <span className="animate-spin inline-block w-4 h-4 border-[2px] border-current border-t-transparent rounded-full" role="status" aria-label="loading"></span>
