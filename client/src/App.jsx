@@ -60,6 +60,13 @@ function App() {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
   };
 
+  const formatSize = (bytes) => {
+    if (bytes === '--') return '--';
+    if (bytes === 0) return '0 B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  };
+
   const fetchStorageStats = async () => {
     try {
       const res = await axios.get(`${API_BASE_URL}/api/storage-stats`);
@@ -1047,7 +1054,7 @@ function App() {
                         </div>
                       </td>
                       <td className="py-3 px-6 text-on-surface-variant">{file.date}</td>
-                      <td className="py-3 px-6 text-on-surface-variant">{file.size}</td>
+                      <td className="py-3 px-6 text-on-surface-variant">{formatSize(file.size)}</td>
                       <td className="py-3 px-6">
                         {!file.isFolder && (
                           file.status === 'Safe' ? (

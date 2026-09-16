@@ -10,7 +10,7 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const FormData = require('form-data');
 const crypto = require('crypto');
-const { S3Client, GetObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const multerS3 = require('multer-s3');
 
@@ -531,6 +531,16 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
         }
       }
 
+      let finalSize = parseInt(file.size, 10) || file.size || 0;
+      if (!finalSize || finalSize === 0) {
+        try {
+          const headData = await s3.send(new HeadObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: file.key }));
+          finalSize = headData.ContentLength || 0;
+        } catch (err) {
+          console.error("Error fetching file size from S3:", err);
+        }
+      }
+
       const fileData = {
         userId: userId,
         name: file.originalname,
@@ -539,7 +549,7 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
         location: file.location,
         s3Key: file.key,
         relativePath: relativePath,
-        size: parseInt(file.size, 10) || file.size || 0,
+        size: finalSize,
         mimetype: file.mimetype,
         status: scanResult,
         securityStatus: securityStatus
@@ -670,7 +680,7 @@ app.get('/api/files', verifyToken, async (req, res) => {
                isFolder: false,
                date: new Date(file.uploadedAt || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
                mtimeMs: new Date(file.uploadedAt || Date.now()).getTime(),
-               size: (file.size / (1024 * 1024)).toFixed(1) + ' MB',
+               size: file.size,
                status: file.securityStatus || 'Safe',
                type: (file.originalName || file.name).split('.').pop()
              });
