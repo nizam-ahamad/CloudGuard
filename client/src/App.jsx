@@ -133,6 +133,8 @@ function App() {
   const [activeMenu, setActiveMenu] = useState(null);
   const [fileToDelete, setFileToDelete] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [selectedFiles, setSelectedFiles] = useState([]);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadStats, setUploadStats] = useState({ loaded: 0, total: 0 });
   const [toasts, setToasts] = useState([]);
@@ -206,8 +208,7 @@ function App() {
     const newOrder = sortOrder === 'newest' ? 'oldest' : 'newest';
     setSortOrder(newOrder);
 
-    const sortedFiles = [...files];
-    sortedFiles.sort((a, b) => {
+    const sortedFiles = [...files].sort((a, b) => {
       const timeA = a.mtimeMs || new Date(a.date).getTime();
       const timeB = b.mtimeMs || new Date(b.date).getTime();
       return newOrder === 'newest' ? timeB - timeA : timeA - timeB;
@@ -223,6 +224,7 @@ function App() {
       const response = await axios.delete(`${API_BASE_URL}/api/files/${encodeURIComponent(deleteId)}`);
       if (response.status === 200) {
         setFiles(prev => prev.filter(f => f._id !== fileToDelete._id && f.diskName !== fileToDelete.diskName));
+        setSelectedFiles(prev => prev.filter(id => id !== fileToDelete._id));
         await fetchStorageStats();
         setFileToDelete(null);
         addToast('success', 'File deleted successfully.');
@@ -238,6 +240,33 @@ function App() {
       addToast('error', 'Error deleting file.');
     } finally {
       setIsDeleting(false);
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedFiles.length === 0) return;
+    setIsBulkDeleting(true);
+    try {
+      const response = await axios.post(`${API_BASE_URL}/api/files/bulk-delete`, { fileIds: selectedFiles }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (response.status === 200) {
+        addToast('success', 'Selected files deleted successfully.');
+        setSelectedFiles([]);
+        await fetchFiles();
+        await fetchStorageStats();
+      }
+    } catch (error) {
+      if (error.response && error.response.status === 401) {
+        localStorage.clear();
+        sessionStorage.clear();
+        window.location.href = '/';
+        return;
+      }
+      console.error('Error bulk deleting files:', error);
+      addToast('error', 'Error deleting selected files.');
+    } finally {
+      setIsBulkDeleting(false);
     }
   };
 
@@ -915,6 +944,20 @@ function App() {
                 <span className="material-symbols-outlined text-sm">sort</span>
                 Sort: {sortOrder === 'newest' ? 'Newest First' : 'Oldest First'}
               </button>
+              {selectedFiles.length > 0 && (
+                <button 
+                  onClick={handleBulkDelete}
+                  disabled={isBulkDeleting}
+                  className={`text-error hover:text-[#b91c1c] flex items-center gap-1 font-label-md ml-4 ${isBulkDeleting ? 'opacity-70 cursor-not-allowed' : ''}`}
+                >
+                  {isBulkDeleting ? (
+                    <span className="animate-spin inline-block w-4 h-4 border-[2px] border-current border-t-transparent rounded-full" role="status" aria-label="loading"></span>
+                  ) : (
+                    <span className="material-symbols-outlined text-sm">delete</span>
+                  )}
+                  Delete Selected ({selectedFiles.length})
+                </button>
+              )}
             </div>
           </div>
 
@@ -941,6 +984,20 @@ function App() {
               <table className="w-full text-left border-collapse min-w-[800px]">
                 <thead>
                   <tr className="border-b border-outline-variant bg-surface-container-low text-on-surface-variant font-label-md text-label-md uppercase tracking-wider">
+                    <th className="py-4 px-6 font-medium w-12 text-center">
+                      <input 
+                        type="checkbox" 
+                        className="cursor-pointer w-4 h-4 rounded border-outline-variant text-primary focus:ring-primary focus:ring-offset-surface"
+                        checked={filteredFiles.length > 0 && selectedFiles.length === filteredFiles.filter(f => !f.isFolder).length}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedFiles(filteredFiles.filter(f => !f.isFolder).map(f => f._id));
+                          } else {
+                            setSelectedFiles([]);
+                          }
+                        }}
+                      />
+                    </th>
                     <th className="py-4 px-6 font-medium">File Name</th>
                     <th className="py-4 px-6 font-medium">Date Modified</th>
                     <th className="py-4 px-6 font-medium">Size</th>
@@ -951,7 +1008,7 @@ function App() {
                 <tbody className="font-body-md text-body-md text-on-surface divide-y divide-outline-variant/50">
                   {filteredFiles.length === 0 ? (
                     <tr>
-                      <td colSpan="5" className="py-8 text-center text-on-surface-variant">
+                      <td colSpan="6" className="py-8 text-center text-on-surface-variant">
                         {files.length === 0 ? "No files have been uploaded yet." : "No files match your search."}
                       </td>
                     </tr>
@@ -962,6 +1019,22 @@ function App() {
                       onClick={() => file.isFolder ? setCurrentDirectory(file.diskName) : handlePreview(file)}
                       className={`hover:bg-surface-bright transition-colors group h-14 ${file.isFolder || (file.diskName && file.status === 'Safe') ? 'cursor-pointer' : ''}`}
                     >
+                      <td className="py-3 px-6 w-12 text-center" onClick={(e) => e.stopPropagation()}>
+                        {!file.isFolder && (
+                          <input 
+                            type="checkbox" 
+                            className="cursor-pointer w-4 h-4 rounded border-outline-variant text-primary focus:ring-primary focus:ring-offset-surface"
+                            checked={selectedFiles.includes(file._id)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedFiles(prev => [...prev, file._id]);
+                              } else {
+                                setSelectedFiles(prev => prev.filter(id => id !== file._id));
+                              }
+                            }}
+                          />
+                        )}
+                      </td>
                       <td className="py-3 px-6">
                         <div className="flex items-center gap-3">
                           <div className="w-8 h-8 rounded flex items-center justify-center shrink-0 bg-surface-dim text-on-surface-variant">
