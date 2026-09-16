@@ -560,6 +560,9 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
       if (isMalware) {
         hasMalware = true;
         deletedFiles.push(originalName);
+        if (file.key) {
+           try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: file.key })); } catch (e) { console.error('S3 delete failed', e); }
+        }
       }
 
     } catch (error) {
@@ -723,7 +726,8 @@ app.get('/api/files/:id/access', verifyToken, async (req, res) => {
 
     const command = new GetObjectCommand({
       Bucket: process.env.AWS_BUCKET_NAME,
-      Key: targetKey
+      Key: targetKey,
+      ResponseContentDisposition: 'inline'
     });
 
     const url = await getSignedUrl(s3, command, { expiresIn: 60 });
