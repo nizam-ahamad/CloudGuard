@@ -548,8 +548,6 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
         isMalware = (scanResult === 'malware' || scanResult === 'malicious');
         securityStatus = isMalware ? 'Malicious' : 'Safe';
       } else {
-        scanResult = 'safe';
-        
         try {
           const command = new GetObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: file.key });
           const response = await s3.send(command);
@@ -561,58 +559,45 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
           }
           const sha256 = hash.digest('hex');
 
-          if (process.env.VT_API_KEY) {
-            try {
-              console.log(`[Security] Checking VirusTotal for: ${file.originalname}`);
-              const vtResponse = await axios.get(`https://www.virustotal.com/api/v3/files/${sha256}`, {
-                headers: { 'x-apikey': process.env.VT_API_KEY },
-                timeout: 15000
-              });
-              const stats = vtResponse.data.data.attributes.last_analysis_stats;
-              console.log(`[Security] VT Stats for ${file.originalname}:`, stats);
+          console.log(`[Security] Checking VirusTotal for: ${file.originalname}`);
+          const vtResponse = await axios.get(`https://www.virustotal.com/api/v3/files/${sha256}`, {
+            headers: { 'x-apikey': process.env.VT_API_KEY },
+            timeout: 15000
+          });
+          const stats = vtResponse.data.data.attributes.last_analysis_stats;
+          console.log(`[Security] VT Stats for ${file.originalname}:`, stats);
 
-              if (stats.malicious > 0 || stats.suspicious > 0) {
-                 console.log(`[Security] MALWARE DETECTED in ${file.originalname}! Deleting from S3...`);
-                 scanResult = 'malicious';
-                 if (file.key) {
-                   try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: file.key })); } catch (e) {}
-                 }
-                 for (const f of req.files) {
-                   if (f.key && f.key !== file.key) {
-                     try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: f.key })); } catch (e) {}
-                   }
-                 }
-                 return res.status(403).json({ error: "Malware detected by VirusTotal." });
-              }
-            } catch (error) {
-               console.error(`[Security] API Error or Unknown Hash for ${file.originalname}:`, error.message);
-               console.log(`[Security] Enforcing Zero Trust. Deleting unverified file from S3...`);
-               if (file.key) {
-                 try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: file.key })); } catch (e) {}
+          if (stats.malicious > 0 || stats.suspicious > 0) {
+             console.log(`[Security] MALWARE DETECTED in ${file.originalname}! Deleting from S3...`);
+             scanResult = 'malicious';
+             if (file.key) {
+               try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: file.key })); } catch (e) {}
+             }
+             for (const f of req.files) {
+               if (f.key && f.key !== file.key) {
+                 try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: f.key })); } catch (e) {}
                }
-               for (const f of req.files) {
-                 if (f.key && f.key !== file.key) {
-                   try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: f.key })); } catch (e) {}
-                 }
-               }
-               return res.status(400).json({ error: "File unverified or scanner busy. Upload blocked." });
-            }
+             }
+             return res.status(403).json({ error: "Malware detected by VirusTotal." });
           }
-        } catch (s3Err) {
-          console.error("Error hashing file from S3:", s3Err.message);
-          if (file.key) {
-            try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: file.key })); } catch (e) {}
-          }
-          for (const f of req.files) {
-            if (f.key && f.key !== file.key) {
-              try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: f.key })); } catch (e) {}
-            }
-          }
-          return res.status(500).json({ error: "Security verification failed or rate limit reached. File blocked." });
+          
+          scanResult = 'safe';
+          isMalware = false;
+          securityStatus = 'Safe';
+          
+        } catch (error) {
+           console.error(`[Security] API Error or Unknown Hash for ${file.originalname}:`, error.message);
+           console.log(`[Security] Enforcing Zero Trust. Deleting unverified file from S3...`);
+           if (file.key) {
+             try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: file.key })); } catch (e) {}
+           }
+           for (const f of req.files) {
+             if (f.key && f.key !== file.key) {
+               try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: f.key })); } catch (e) {}
+             }
+           }
+           return res.status(400).json({ error: "File unverified or scanner busy. Upload blocked." });
         }
-        
-        isMalware = (scanResult === 'malware' || scanResult === 'malicious');
-        securityStatus = isMalware ? 'Malicious' : 'Safe';
       }
 
       let relativePath = '';
