@@ -545,6 +545,19 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
           return res.status(500).json({ error: "Scanner integration failed. File blocked." });
         }
         
+        if (scanResult === 'unverified') {
+           console.log(`[Security] Enforcing Zero Trust for unverified PE file: ${file.originalname}`);
+           if (file.key) {
+             try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: file.key })); } catch (e) {}
+           }
+           for (const f of req.files) {
+             if (f.key && f.key !== file.key) {
+               try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: f.key })); } catch (e) {}
+             }
+           }
+           return res.status(400).json({ error: `Security Alert: Detected and deleted malicious file(s): ${file.originalname}` });
+        }
+
         isMalware = (scanResult === 'malware' || scanResult === 'malicious');
         securityStatus = isMalware ? 'Malicious' : 'Safe';
       } else {
