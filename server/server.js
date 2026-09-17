@@ -500,6 +500,8 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
       // Call AI Microservice
       const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
       const isPEExecutable = file.originalname.toLowerCase().endsWith('.exe') || file.originalname.toLowerCase().endsWith('.dll');
+      const isZipFile = file.originalname.toLowerCase().endsWith('.zip');
+      const useAIScanner = isPEExecutable || isZipFile;
 
       let scanResult = 'Unknown';
       let securityStatus = 'Pending';
@@ -509,8 +511,8 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
         scanResult = 'safe';
         securityStatus = 'Safe';
         isMalware = false;
-      } else if (file.originalname.toLowerCase().endsWith('.exe')) {
-        console.log(`[Routing] Detected executable ${file.originalname}. Sending to AI Service...`);
+      } else if (useAIScanner) {
+        console.log(`[Routing] Detected scannable file ${file.originalname}. Sending to AI Service...`);
         try {
           const command = new GetObjectCommand({
             Bucket: process.env.AWS_BUCKET_NAME,
