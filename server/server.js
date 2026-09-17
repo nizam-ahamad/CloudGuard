@@ -787,6 +787,9 @@ app.get('/api/download/:filename(*)', verifyToken, async (req, res) => {
 
 // List Files Endpoint
 app.get('/api/files', verifyToken, async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
   try {
     const queryPath = req.query.path || '';
     const userId = req.user._id;

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import ResetPassword from './ResetPassword';
 
@@ -67,7 +67,7 @@ function App() {
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   };
 
-  const fetchStorageStats = async () => {
+  const fetchStorageStats = useCallback(async () => {
     try {
       const res = await axios.get(`${API_BASE_URL}/api/storage-stats`);
       setStorageStats(res.data);
@@ -80,7 +80,7 @@ function App() {
       }
       console.error('Error fetching storage stats:', err);
     }
-  };
+  }, []);
 
   useEffect(() => {
     if (token) {
@@ -90,7 +90,7 @@ function App() {
     } else {
       delete axios.defaults.headers.common['Authorization'];
     }
-  }, [token]);
+  }, [token, fetchStorageStats, fetchFiles]);
 
   const handleAuthSubmit = async (e) => {
     e.preventDefault();
@@ -137,7 +137,6 @@ function App() {
   const [files, setFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [sortOrder, setSortOrder] = useState('newest');
-  const [activeMenu, setActiveMenu] = useState(null);
   const [fileToDelete, setFileToDelete] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState([]);
@@ -149,7 +148,6 @@ function App() {
   const [viewMode, setViewMode] = useState('all');
   const [currentDirectory, setCurrentDirectory] = useState('');
   const fileInputRef = useRef(null);
-  const folderInputRef = useRef(null);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
@@ -184,14 +182,14 @@ function App() {
       localStorage.clear();
       sessionStorage.clear();
       window.location.href = '/login';
-    } catch (err) {
+    } catch {
       addToast('error', 'Failed to delete account.');
     } finally {
       setIsDeletingAccount(false);
     }
   };
 
-  const fetchFiles = async () => {
+  const fetchFiles = useCallback(async () => {
     try {
       const response = await axios.get(`${API_BASE_URL}/api/files?path=${encodeURIComponent(currentDirectory)}`);
       setFiles(response.data);
@@ -204,7 +202,7 @@ function App() {
       }
       console.error('Error fetching files:', error);
     }
-  };
+  }, [currentDirectory]);
 
   const toggleSort = () => {
     const newOrder = sortOrder === 'newest' ? 'oldest' : 'newest';
@@ -268,7 +266,7 @@ function App() {
 
   useEffect(() => {
     if (token) fetchFiles();
-  }, [currentDirectory, token]);
+  }, [currentDirectory, token, fetchFiles]);
 
   const addToast = (type, message) => {
     const id = Date.now() + Math.random();
