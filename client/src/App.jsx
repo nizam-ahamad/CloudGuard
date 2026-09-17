@@ -506,9 +506,9 @@ function App() {
   };
 
   const displayedFiles = [...files].sort((a, b) => {
-    const dateA = new Date(a.createdAt || a.date);
-    const dateB = new Date(b.createdAt || b.date);
-    return sortOrder === 'newest' ? dateB - dateA : dateA - dateB;
+    const timeA = new Date(a.createdAt || a.date || a.uploadDate || a.mtimeMs || 0).getTime();
+    const timeB = new Date(b.createdAt || b.date || b.uploadDate || b.mtimeMs || 0).getTime();
+    return sortOrder === 'newest' ? timeB - timeA : timeA - timeB;
   });
 
   const searchFiltered = displayedFiles.filter(file => file.name.toLowerCase().includes(searchQuery.toLowerCase()));
