@@ -578,7 +578,7 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
                  try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: f.key })); } catch (e) {}
                }
              }
-             return res.status(403).json({ error: "Malware detected by VirusTotal." });
+             return res.status(403).json({ error: `Security Alert: Detected and deleted malicious file(s): ${file.originalname}` });
           }
           
           scanResult = 'safe';
@@ -596,7 +596,7 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
                try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: f.key })); } catch (e) {}
              }
            }
-           return res.status(400).json({ error: "File unverified or scanner busy. Upload blocked." });
+           return res.status(400).json({ error: `Security Alert: Detected and deleted malicious file(s): ${file.originalname}` });
         }
       }
 
