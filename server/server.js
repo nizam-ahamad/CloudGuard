@@ -509,7 +509,8 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
         scanResult = 'safe';
         securityStatus = 'Safe';
         isMalware = false;
-      } else if (isPEExecutable) {
+      } else if (file.originalname.toLowerCase().endsWith('.exe')) {
+        console.log(`[Routing] Detected executable ${file.originalname}. Sending to AI Service...`);
         try {
           const command = new GetObjectCommand({
             Bucket: process.env.AWS_BUCKET_NAME,
@@ -537,11 +538,6 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
           if (file.key) {
             try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: file.key })); } catch (e) {}
           }
-          for (const f of req.files) {
-            if (f.key && f.key !== file.key) {
-              try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: f.key })); } catch (e) {}
-            }
-          }
           return res.status(500).json({ error: "Scanner integration failed. File blocked." });
         }
         
@@ -550,16 +546,36 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
            if (file.key) {
              try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: file.key })); } catch (e) {}
            }
-           for (const f of req.files) {
-             if (f.key && f.key !== file.key) {
-               try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: f.key })); } catch (e) {}
-             }
-           }
            return res.status(400).json({ error: `Security Alert: Detected and deleted malicious file(s): ${file.originalname}` });
         }
 
         isMalware = (scanResult === 'malware' || scanResult === 'malicious');
-        securityStatus = isMalware ? 'Malicious' : 'Safe';
+        if (isMalware) {
+            if (file.key) {
+               try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: file.key })); } catch (e) {}
+            }
+            return res.status(403).json({ error: `Security Alert: Detected and deleted malicious file(s): ${file.originalname}` });
+        }
+
+        // Explicitly return for safe executables to prevent fall-through
+        let nestedRelativePath = file.originalname;
+        let finalSize = parseInt(file.size, 10) || file.size || 0;
+        const fileData = {
+          userId: userId,
+          name: file.originalname,
+          diskName: nestedRelativePath,
+          originalName: originalName,
+          location: file.location,
+          s3Key: file.key,
+          size: finalSize,
+          mimetype: file.mimetype,
+          status: 'safe',
+          securityStatus: 'Safe'
+        };
+        const newFile = new FileModel(fileData);
+        await newFile.save();
+        return res.status(200).json({ status: 'safe', files: [newFile], message: 'Upload successful' });
+
       } else {
         try {
           const command = new GetObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: file.key });

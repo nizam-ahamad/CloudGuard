@@ -505,13 +505,13 @@ function App() {
     }
   };
 
-  const sortedFilesList = [...files].sort((a, b) => {
-    const timeA = a.mtimeMs || new Date(a.createdAt || a.uploadDate || a.date).getTime();
-    const timeB = b.mtimeMs || new Date(b.createdAt || b.uploadDate || b.date).getTime();
-    return sortOrder === 'newest' ? timeB - timeA : timeA - timeB;
+  const displayedFiles = [...files].sort((a, b) => {
+    const dateA = new Date(a.createdAt || a.date);
+    const dateB = new Date(b.createdAt || b.date);
+    return sortOrder === 'newest' ? dateB - dateA : dateA - dateB;
   });
 
-  const searchFiltered = sortedFilesList.filter(file => file.name.toLowerCase().includes(searchQuery.toLowerCase()));
+  const searchFiltered = displayedFiles.filter(file => file.name.toLowerCase().includes(searchQuery.toLowerCase()));
   const filteredFiles = viewMode === 'recent' ? searchFiltered.slice(0, 5) : searchFiltered;
 
   if (!token) {
