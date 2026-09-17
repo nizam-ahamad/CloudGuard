@@ -586,17 +586,34 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
           securityStatus = 'Safe';
           
         } catch (error) {
-           console.error(`[Security] API Error or Unknown Hash for ${file.originalname}:`, error.message);
-           console.log(`[Security] Enforcing Zero Trust. Deleting unverified file from S3...`);
-           if (file.key) {
-             try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: file.key })); } catch (e) {}
+           if (error.response && error.response.status === 404) {
+               console.log(`[Security] File hash not found in VT database (new file). Marking as Safe: ${file.originalname}`);
+               scanResult = 'safe';
+               isMalware = false;
+               securityStatus = 'Safe';
+           } else if (error.response && error.response.status === 429) {
+               if (file.key) {
+                 try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: file.key })); } catch (e) {}
+               }
+               for (const f of req.files) {
+                 if (f.key && f.key !== file.key) {
+                   try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: f.key })); } catch (e) {}
+                 }
+               }
+               return res.status(429).json({ error: "Scanner busy. Please try uploading again in a minute." });
+           } else {
+               console.error(`[Security] API Error or Unknown Hash for ${file.originalname}:`, error.message);
+               console.log(`[Security] Enforcing Zero Trust. Deleting unverified file from S3...`);
+               if (file.key) {
+                 try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: file.key })); } catch (e) {}
+               }
+               for (const f of req.files) {
+                 if (f.key && f.key !== file.key) {
+                   try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: f.key })); } catch (e) {}
+                 }
+               }
+               return res.status(500).json({ error: "Security scan failed. Please try again." });
            }
-           for (const f of req.files) {
-             if (f.key && f.key !== file.key) {
-               try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: f.key })); } catch (e) {}
-             }
-           }
-           return res.status(400).json({ error: `Security Alert: Detected and deleted malicious file(s): ${file.originalname}` });
         }
       }
 
