@@ -247,9 +247,9 @@ function App() {
       });
       if (response.status === 200) {
         addToast('success', 'Selected files deleted successfully.');
-        setFiles(prevFiles => prevFiles.filter(file => !selectedFiles.includes(file._id)));
         setSelectedFiles([]);
         setShowBulkDeleteModal(false);
+        await fetchFiles();
         await fetchStorageStats();
       }
     } catch (error) {
@@ -505,13 +505,13 @@ function App() {
     }
   };
 
-  const displayedFiles = [...files].sort((a, b) => {
-    const timeA = new Date(a.createdAt || a.date || a.uploadDate || a.mtimeMs || 0).getTime();
-    const timeB = new Date(b.createdAt || b.date || b.uploadDate || b.mtimeMs || 0).getTime();
+  const sortedFiles = [...files].sort((a, b) => {
+    const timeA = a.mtimeMs || new Date(a.createdAt || a.uploadDate || 0).getTime();
+    const timeB = b.mtimeMs || new Date(b.createdAt || b.uploadDate || 0).getTime();
     return sortOrder === 'newest' ? timeB - timeA : timeA - timeB;
   });
 
-  const searchFiltered = displayedFiles.filter(file => file.name.toLowerCase().includes(searchQuery.toLowerCase()));
+  const searchFiltered = sortedFiles.filter(file => file.name.toLowerCase().includes(searchQuery.toLowerCase()));
   const filteredFiles = viewMode === 'recent' ? searchFiltered.slice(0, 5) : searchFiltered;
 
   if (!token) {
