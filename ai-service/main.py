@@ -61,7 +61,7 @@ def scan_with_virustotal(file_hash):
     except Exception:
         return {"status": "safe"}
 
-def analyze_executable(file_bytes):
+def analyze_executable(file_bytes, filename="unknown"):
     if rf_model is None:
         # Graceful fallback to VT if ML model fails to load
         return scan_with_virustotal(get_file_hash(file_bytes))
@@ -83,12 +83,19 @@ def analyze_executable(file_bytes):
         columns = ['SizeOfOptionalHeader', 'Characteristics', 'MajorLinkerVersion', 'SizeOfInitializedData', 'Entropy']
         df = df[columns]
 
-        # Make prediction
-        prediction = int(rf_model.predict(df)[0])
-        return {"status": "malware" if prediction == 1 else "safe"}
+        # Get prediction probability
+        prob = float(rf_model.predict_proba(df)[0][1])
+        
+        print(f"[AI Scanner] Executable: {filename} | Malicious Probability: {prob:.4f} | Features extracted: {len(features)}")
+        
+        if prob >= 0.5:
+            return {"status": "malicious"}
+        else:
+            return {"status": "safe"}
             
     except Exception as e:
-        return {"status": "safe", "message": "Non-executable or unparseable file bypass"}
+        print(f"[AI Scanner] Extraction failure for {filename}: {str(e)}")
+        return {"status": "unverified", "message": "Non-executable or unparseable file bypass"}
 
 @app.post("/scan")
 async def scan_file(file: UploadFile = File(...)):
@@ -119,7 +126,7 @@ async def scan_file(file: UploadFile = File(...)):
                             extracted_bytes = f.read()
                         
                         if extracted_ext in ['.exe', '.dll']:
-                            scan_res = analyze_executable(extracted_bytes)
+                            scan_res = analyze_executable(extracted_bytes, extracted_file)
                         else:
                             file_hash = get_file_hash(extracted_bytes)
                             scan_res = scan_with_virustotal(file_hash)
@@ -137,7 +144,7 @@ async def scan_file(file: UploadFile = File(...)):
                     os.remove(tmp_path)
 
         if is_executable:
-            return analyze_executable(file_bytes)
+            return analyze_executable(file_bytes, filename)
             
         else:
             file_hash = get_file_hash(file_bytes)
