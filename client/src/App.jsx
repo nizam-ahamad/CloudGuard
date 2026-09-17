@@ -194,13 +194,7 @@ function App() {
   const fetchFiles = async () => {
     try {
       const response = await axios.get(`${API_BASE_URL}/api/files?path=${encodeURIComponent(currentDirectory)}`);
-      const sortedFiles = [...response.data];
-      sortedFiles.sort((a, b) => {
-        const timeA = a.mtimeMs || new Date(a.date).getTime();
-        const timeB = b.mtimeMs || new Date(b.date).getTime();
-        return sortOrder === 'newest' ? timeB - timeA : timeA - timeB;
-      });
-      setFiles(sortedFiles);
+      setFiles(response.data);
     } catch (error) {
       if (error.response && error.response.status === 401) {
         localStorage.clear();
@@ -215,13 +209,6 @@ function App() {
   const toggleSort = () => {
     const newOrder = sortOrder === 'newest' ? 'oldest' : 'newest';
     setSortOrder(newOrder);
-
-    const sortedFiles = [...files].sort((a, b) => {
-      const timeA = a.mtimeMs || new Date(a.date).getTime();
-      const timeB = b.mtimeMs || new Date(b.date).getTime();
-      return newOrder === 'newest' ? timeB - timeA : timeA - timeB;
-    });
-    setFiles(sortedFiles);
   };
 
   const confirmDelete = async () => {
@@ -518,7 +505,13 @@ function App() {
     }
   };
 
-  const searchFiltered = files.filter(file => file.name.toLowerCase().includes(searchQuery.toLowerCase()));
+  const sortedFilesList = [...files].sort((a, b) => {
+    const timeA = a.mtimeMs || new Date(a.createdAt || a.uploadDate || a.date).getTime();
+    const timeB = b.mtimeMs || new Date(b.createdAt || b.uploadDate || b.date).getTime();
+    return sortOrder === 'newest' ? timeB - timeA : timeA - timeB;
+  });
+
+  const searchFiltered = sortedFilesList.filter(file => file.name.toLowerCase().includes(searchQuery.toLowerCase()));
   const filteredFiles = viewMode === 'recent' ? searchFiltered.slice(0, 5) : searchFiltered;
 
   if (!token) {
