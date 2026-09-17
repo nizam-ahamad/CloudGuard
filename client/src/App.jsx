@@ -1018,7 +1018,7 @@ function App() {
                   ) : 
                     filteredFiles.map(file => (
                     <tr 
-                      key={file.id} 
+                      key={file._id || file.id} 
                       onClick={() => file.isFolder ? setCurrentDirectory(file.diskName) : handlePreview(file)}
                       className={`hover:bg-surface-bright transition-colors group h-14 ${file.isFolder || (file.diskName && file.status === 'Safe') ? 'cursor-pointer' : ''}`}
                     >

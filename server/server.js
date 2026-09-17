@@ -520,20 +520,28 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
           });
           const s3Response = await s3.send(command);
           
+          // Buffer the entire S3 stream into memory for reliable FormData serialization
+          const chunks = [];
+          for await (const chunk of s3Response.Body) {
+            chunks.push(chunk);
+          }
+          const fileBuffer = Buffer.concat(chunks);
+          
           const FormData = require('form-data');
           const formData = new FormData();
-          formData.append('file', s3Response.Body, {
+          formData.append('file', fileBuffer, {
              filename: file.originalname,
              contentType: file.mimetype
           });
-          console.log(`[Routing] Sending ${file.originalname} to AI Service at ${aiServiceUrl}/scan`);
+          console.log(`[Routing] Sending ${file.originalname} (${fileBuffer.length} bytes) to AI Service at ${aiServiceUrl}/scan`);
           const aiResponse = await axios.post(`${aiServiceUrl}/scan`, formData, {
             headers: {
               ...formData.getHeaders()
             },
-            timeout: 15000 
+            timeout: 60000 
           });
           
+          console.log(`[AI Scanner] Response for ${file.originalname}: ${JSON.stringify(aiResponse.data)}`);
           scanResult = aiResponse.data.status;
         } catch (scanErr) {
           console.error('[AI Connection Error]:', scanErr.message);
