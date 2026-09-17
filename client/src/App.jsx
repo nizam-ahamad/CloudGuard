@@ -82,15 +82,6 @@ function App() {
     }
   }, []);
 
-  useEffect(() => {
-    if (token) {
-      axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-      fetchStorageStats();
-      fetchFiles();
-    } else {
-      delete axios.defaults.headers.common['Authorization'];
-    }
-  }, [token, fetchStorageStats, fetchFiles]);
 
   const handleAuthSubmit = async (e) => {
     e.preventDefault();
@@ -203,6 +194,16 @@ function App() {
       console.error('Error fetching files:', error);
     }
   }, [currentDirectory]);
+
+  useEffect(() => {
+    if (token) {
+      axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+      fetchStorageStats();
+      fetchFiles();
+    } else {
+      delete axios.defaults.headers.common['Authorization'];
+    }
+  }, [token, fetchStorageStats, fetchFiles]);
 
   const toggleSort = () => {
     const newOrder = sortOrder === 'newest' ? 'oldest' : 'newest';
