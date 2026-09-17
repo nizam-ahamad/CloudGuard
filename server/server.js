@@ -523,7 +523,7 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
              filename: file.originalname,
              contentType: file.mimetype
           });
-          
+          console.log(`[Routing] Sending ${file.originalname} to AI Service at ${aiServiceUrl}/scan`);
           const aiResponse = await axios.post(`${aiServiceUrl}/scan`, formData, {
             headers: {
               ...formData.getHeaders()
@@ -533,7 +533,7 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
           
           scanResult = aiResponse.data.status;
         } catch (scanErr) {
-          console.error("Scanner integration failed:", scanErr.message);
+          console.error('[AI Connection Error]:', scanErr.message);
           if (file.key) {
             try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: file.key })); } catch (e) {}
           }
