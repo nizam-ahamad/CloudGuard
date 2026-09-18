@@ -499,9 +499,8 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
     try {
       // Call AI Microservice
       const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
-      const isPEExecutable = file.originalname.toLowerCase().endsWith('.exe') || file.originalname.toLowerCase().endsWith('.dll');
-      const isZipFile = file.originalname.toLowerCase().endsWith('.zip');
-      const useAIScanner = isPEExecutable || isZipFile;
+      const filename = file.originalname.toLowerCase();
+      const useAIScanner = filename.endsWith('.exe') || filename.endsWith('.dll') || filename.endsWith('.zip');
 
       let scanResult = 'Unknown';
       let securityStatus = 'Pending';
@@ -512,7 +511,7 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
         securityStatus = 'Safe';
         isMalware = false;
       } else if (useAIScanner) {
-        console.log(`[Routing] Detected scannable file ${file.originalname}. Sending to AI Service...`);
+        console.log(`[Routing] Extension matched. Sending ${file.originalname} to AI Scanner...`);
         try {
           const command = new GetObjectCommand({
             Bucket: process.env.AWS_BUCKET_NAME,
@@ -530,8 +529,7 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
           const FormData = require('form-data');
           const formData = new FormData();
           formData.append('file', fileBuffer, {
-             filename: file.originalname,
-             contentType: file.mimetype
+             filename: file.originalname
           });
           console.log(`[Routing] Sending ${file.originalname} (${fileBuffer.length} bytes) to AI Service at ${aiServiceUrl}/scan`);
           const aiResponse = await axios.post(`${aiServiceUrl}/scan`, formData, {
@@ -543,6 +541,41 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
           
           console.log(`[AI Scanner] Response for ${file.originalname}: ${JSON.stringify(aiResponse.data)}`);
           scanResult = aiResponse.data.status;
+
+          if (scanResult === 'unverified') {
+             console.log(`[Security] Enforcing Zero Trust for unverified PE file: ${file.originalname}`);
+             if (file.key) {
+               try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: file.key })); } catch (e) {}
+             }
+             return res.status(400).json({ error: `Security Alert: Detected and deleted malicious file(s): ${file.originalname}` });
+          }
+
+          isMalware = (scanResult === 'malware' || scanResult === 'malicious');
+          if (isMalware) {
+              if (file.key) {
+                 try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: file.key })); } catch (e) {}
+              }
+              return res.status(403).json({ error: `Security Alert: Detected and deleted malicious file(s): ${file.originalname}` });
+          }
+
+          // Explicitly return for safe executables to prevent fall-through
+          let nestedRelativePath = file.originalname;
+          let finalSize = parseInt(file.size, 10) || file.size || 0;
+          const fileData = {
+            userId: userId,
+            name: file.originalname,
+            diskName: nestedRelativePath,
+            originalName: originalName,
+            location: file.location,
+            s3Key: file.key,
+            size: finalSize,
+            mimetype: file.mimetype,
+            status: 'safe',
+            securityStatus: 'Safe'
+          };
+          const newFile = new FileModel(fileData);
+          await newFile.save();
+          return res.status(200).json({ status: 'safe', files: [newFile], message: 'Upload successful' });
         } catch (scanErr) {
           console.error('[AI Connection Error]:', scanErr.message);
           if (file.key) {
@@ -550,41 +583,6 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
           }
           return res.status(500).json({ error: "Scanner integration failed. File blocked." });
         }
-        
-        if (scanResult === 'unverified') {
-           console.log(`[Security] Enforcing Zero Trust for unverified PE file: ${file.originalname}`);
-           if (file.key) {
-             try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: file.key })); } catch (e) {}
-           }
-           return res.status(400).json({ error: `Security Alert: Detected and deleted malicious file(s): ${file.originalname}` });
-        }
-
-        isMalware = (scanResult === 'malware' || scanResult === 'malicious');
-        if (isMalware) {
-            if (file.key) {
-               try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: file.key })); } catch (e) {}
-            }
-            return res.status(403).json({ error: `Security Alert: Detected and deleted malicious file(s): ${file.originalname}` });
-        }
-
-        // Explicitly return for safe executables to prevent fall-through
-        let nestedRelativePath = file.originalname;
-        let finalSize = parseInt(file.size, 10) || file.size || 0;
-        const fileData = {
-          userId: userId,
-          name: file.originalname,
-          diskName: nestedRelativePath,
-          originalName: originalName,
-          location: file.location,
-          s3Key: file.key,
-          size: finalSize,
-          mimetype: file.mimetype,
-          status: 'safe',
-          securityStatus: 'Safe'
-        };
-        const newFile = new FileModel(fileData);
-        await newFile.save();
-        return res.status(200).json({ status: 'safe', files: [newFile], message: 'Upload successful' });
 
       } else {
         try {
