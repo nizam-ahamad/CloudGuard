@@ -51,15 +51,16 @@ const upload = multer({
 // File Metadata Schema
 const FileSchema = new mongoose.Schema({
   userId: { type: String, required: true },
-  name: String,
-  originalName: String,
-  location: String,
-  relativePath: String,
-  size: Number,
-  mimetype: String,
-  uploadedAt: { type: Date, default: Date.now },
-  status: String,
-  securityStatus: { type: String, default: 'Pending' },
+  name: { type: String, required: true },
+  originalName: { type: String },
+  s3Key: { type: String, required: true },
+  location: { type: String },
+  relativePath: { type: String },
+  size: { type: Number },
+  mimetype: { type: String },
+  status: { type: String, default: 'safe' },
+  securityStatus: { type: String, default: 'Safe' },
+  uploadedAt: { type: Date, default: Date.now }
 });
 const FileModel = mongoose.model('File', FileSchema);
 
@@ -566,7 +567,7 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
             diskName: nestedRelativePath,
             originalName: originalName,
             location: targetFile.location,
-            s3Key: targetFile.key,
+            s3Key: targetFile.key || `${userId}/${targetFile.originalname}`,
             relativePath: relativePath,
             size: finalSize,
             mimetype: targetFile.mimetype,
@@ -629,7 +630,7 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
             diskName: nestedRelativePath,
             originalName: originalName,
             location: targetFile.location,
-            s3Key: targetFile.key,
+            s3Key: targetFile.key || `${userId}/${targetFile.originalname}`,
             relativePath: relativePath,
             size: finalSize,
             mimetype: targetFile.mimetype,
@@ -660,7 +661,7 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
                  diskName: nestedRelativePath,
                  originalName: originalName,
                  location: targetFile.location,
-                 s3Key: targetFile.key,
+                 s3Key: targetFile.key || `${userId}/${targetFile.originalname}`,
                  relativePath: relativePath,
                  size: finalSize,
                  mimetype: targetFile.mimetype,
@@ -744,6 +745,45 @@ app.get('/api/download/:filename(*)', verifyToken, async (req, res) => {
 });
 
 // List Files Endpoint
+// Sync DB with S3
+app.get('/api/files/sync', verifyToken, async (req, res) => {
+  try {
+    const files = await FileModel.find({ userId: req.user._id });
+    const removedIds = [];
+
+    for (const file of files) {
+      const keyToCheck = file.s3Key || (file.location ? new URL(file.location).pathname.slice(1) : null);
+      if (keyToCheck) {
+        try {
+          await s3.send(new HeadObjectCommand({
+            Bucket: process.env.AWS_BUCKET_NAME,
+            Key: keyToCheck
+          }));
+        } catch (s3Err) {
+          if (s3Err.name === 'NotFound' || s3Err.$metadata?.httpStatusCode === 404) {
+            console.log(`[Sync] S3 object missing for DB file ${file._id}, deleting from DB...`);
+            await FileModel.deleteOne({ _id: file._id });
+            removedIds.push(file._id);
+          }
+        }
+      }
+    }
+
+    if (removedIds.length > 0) {
+      await recalculateStorage(req.user._id);
+    }
+
+    return res.status(200).json({
+      message: "Sync complete",
+      removedMissingFiles: removedIds.length,
+      removedIds
+    });
+  } catch (err) {
+    console.error('[Sync Error]:', err);
+    return res.status(500).json({ error: "Failed to sync files" });
+  }
+});
+
 app.get('/api/files', verifyToken, async (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.setHeader('Pragma', 'no-cache');
@@ -853,25 +893,31 @@ app.get('/api/files/:id/access', verifyToken, async (req, res) => {
 // Delete File Endpoint
 app.delete('/api/files/:id', verifyToken, async (req, res) => {
   try {
-      const file = await FileModel.findOne({ _id: req.params.id, userId: req.user._id });
-      if (!file) {
-          return res.status(404).json({ message: "File not found" });
-      }
+    const file = await FileModel.findOne({ _id: req.params.id, userId: req.user._id });
+    if (!file) return res.status(404).json({ error: "File not found" });
 
-      if (file.s3Key) {
-          await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: file.s3Key }));
-      }
+    // Determine target S3 key
+    const keyToDelete = file.s3Key || (file.location ? new URL(file.location).pathname.slice(1) : null);
 
-      await FileModel.deleteOne({ _id: req.params.id });
-      await recalculateStorage(file.userId);
+    if (keyToDelete) {
+      console.log('[S3 Deleting Key]:', keyToDelete);
+      await s3.send(new DeleteObjectCommand({
+        Bucket: process.env.AWS_BUCKET_NAME,
+        Key: keyToDelete
+      }));
+    }
 
-      res.status(200).json({ message: "File deleted successfully", id: req.params.id });
+    await FileModel.deleteOne({ _id: req.params.id });
+    const exactStorageUsed = await recalculateStorage(req.user._id);
 
-  } catch (error) {
-      console.error("Deletion error:", error.message);
-      if (!res.headersSent) {
-          res.status(500).json({ message: "Internal server error during deletion" });
-      }
+    return res.status(200).json({
+      message: "File deleted successfully from DB and S3",
+      deletedId: req.params.id,
+      storageUsed: exactStorageUsed
+    });
+  } catch (err) {
+    console.error('[Delete Error]:', err);
+    return res.status(500).json({ error: "Failed to delete file" });
   }
 });
 
