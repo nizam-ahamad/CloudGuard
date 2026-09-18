@@ -511,7 +511,7 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
     let isMalware = false;
 
     if (isAI) {
-      console.log("[Routing] AI Target: $targetFile.originalname");
+      console.log('[Routing] AI Target: ' + targetFile.originalname);
       const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
       try {
         const command = new GetObjectCommand({
@@ -531,7 +531,7 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
         formData.append('file', fileBuffer, {
            filename: targetFile.originalname
         });
-        const aiResponse = await axios.post("$aiServiceUrl/scan", formData, {
+        const aiResponse = await axios.post(aiServiceUrl + '/scan', formData, {
           headers: { ...formData.getHeaders() },
           timeout: 60000 
         });
@@ -542,7 +542,7 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
            if (targetFile.key) {
              try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key })); } catch (e) {}
            }
-           return res.status(400).json({ error: "Security Alert: Detected and deleted malicious file(s): $targetFile.originalname" });
+           return res.status(400).json({ error: "Security Alert: Detected and deleted malicious file(s): " + targetFile.originalname });
         }
 
         isMalware = (scanResult === 'malware' || scanResult === 'malicious');
@@ -550,7 +550,7 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
             if (targetFile.key) {
                try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key })); } catch (e) {}
             }
-            return res.status(403).json({ error: "Security Alert: Detected and deleted malicious file(s): $targetFile.originalname" });
+            return res.status(403).json({ error: "Security Alert: Detected and deleted malicious file(s): " + targetFile.originalname });
         }
 
         let nestedRelativePath = targetFile.originalname;
@@ -588,7 +588,7 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
         return res.status(500).json({ error: "Scanner integration failed. File blocked." });
       }
     } else {
-      console.log("[Routing] Standard File: $targetFile.originalname");
+      console.log('[Routing] Standard File: ' + targetFile.originalname);
       try {
         const command = new GetObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key });
         const response = await s3.send(command);
@@ -600,7 +600,7 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
         }
         const sha256 = hash.digest('hex');
 
-        const vtResponse = await axios.get("https://www.virustotal.com/api/v3/files/$sha256", {
+        const vtResponse = await axios.get("https://www.virustotal.com/api/v3/files/" + sha256, {
           headers: { 'x-apikey': process.env.VT_API_KEY },
           timeout: 15000
         });
@@ -617,7 +617,7 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
                }
              }
            }
-           return res.status(403).json({ error: "Security Alert: Detected and deleted malicious file(s): $targetFile.originalname" });
+           return res.status(403).json({ error: "Security Alert: Detected and deleted malicious file(s): " + targetFile.originalname });
         }
         
         let relativePath = '';
