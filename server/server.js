@@ -561,7 +561,19 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
             }
           }
 
-          let finalSize = parseInt(targetFile.size, 10) || targetFile.size || 0;
+          let exactFileSize = targetFile.size;
+          if (!exactFileSize) {
+              try {
+                  const headData = await s3.send(new HeadObjectCommand({
+                      Bucket: process.env.AWS_BUCKET_NAME,
+                      Key: targetFile.key || targetFile.s3Key
+                  }));
+                  exactFileSize = headData.ContentLength;
+              } catch (err) {
+                  console.error("[S3 Size Check Error]:", err);
+                  exactFileSize = 0;
+              }
+          }
           const fileData = {
             userId: userId,
             name: targetFile.originalname,
@@ -570,7 +582,7 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
             location: targetFile.location,
             s3Key: targetFile.key || `${userId}/${targetFile.originalname}`,
             relativePath: relativePath,
-            size: finalSize,
+            size: exactFileSize,
             mimetype: targetFile.mimetype,
             status: 'safe',
             securityStatus: 'Safe'
@@ -624,7 +636,19 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
               nestedRelativePath = path.posix.join(relativeDir.split(path.sep).join('/'), targetFile.originalname);
             }
           }
-          let finalSize = parseInt(targetFile.size, 10) || targetFile.size || 0;
+          let exactFileSize = targetFile.size;
+          if (!exactFileSize) {
+              try {
+                  const headData = await s3.send(new HeadObjectCommand({
+                      Bucket: process.env.AWS_BUCKET_NAME,
+                      Key: targetFile.key || targetFile.s3Key
+                  }));
+                  exactFileSize = headData.ContentLength;
+              } catch (err) {
+                  console.error("[S3 Size Check Error]:", err);
+                  exactFileSize = 0;
+              }
+          }
           const fileData = {
             userId: userId,
             name: targetFile.originalname,
@@ -633,7 +657,7 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
             location: targetFile.location,
             s3Key: targetFile.key || `${userId}/${targetFile.originalname}`,
             relativePath: relativePath,
-            size: finalSize,
+            size: exactFileSize,
             mimetype: targetFile.mimetype,
             status: 'safe',
             securityStatus: 'Safe'
@@ -655,7 +679,19 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
                    nestedRelativePath = path.posix.join(relativeDir.split(path.sep).join('/'), targetFile.originalname);
                  }
                }
-               let finalSize = parseInt(targetFile.size, 10) || targetFile.size || 0;
+               let exactFileSize = targetFile.size;
+               if (!exactFileSize) {
+                   try {
+                       const headData = await s3.send(new HeadObjectCommand({
+                           Bucket: process.env.AWS_BUCKET_NAME,
+                           Key: targetFile.key || targetFile.s3Key
+                       }));
+                       exactFileSize = headData.ContentLength;
+                   } catch (err) {
+                       console.error("[S3 Size Check Error]:", err);
+                       exactFileSize = 0;
+                   }
+               }
                const fileData = {
                  userId: userId,
                  name: targetFile.originalname,
@@ -664,7 +700,7 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
                  location: targetFile.location,
                  s3Key: targetFile.key || `${userId}/${targetFile.originalname}`,
                  relativePath: relativePath,
-                 size: finalSize,
+                 size: exactFileSize,
                  mimetype: targetFile.mimetype,
                  status: 'safe',
                  securityStatus: 'Safe'
