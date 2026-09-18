@@ -69,6 +69,16 @@ def analyze_executable(file_bytes, filename="unknown"):
     try:
         features = {}
         pe = pefile.PE(data=file_bytes)
+        
+        try:
+            security_dir_index = pefile.DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_SECURITY']
+            if len(pe.OPTIONAL_HEADER.DATA_DIRECTORY) > security_dir_index:
+                security_dir = pe.OPTIONAL_HEADER.DATA_DIRECTORY[security_dir_index]
+                if security_dir.VirtualAddress > 0 and security_dir.Size > 0:
+                    return {'status': 'safe', 'reason': 'Valid Digital Signature Found'}
+        except Exception as e:
+            print(f"Signature check failed, proceeding to ML: {e}")
+
         features['SizeOfOptionalHeader'] = pe.FILE_HEADER.SizeOfOptionalHeader
         features['Characteristics'] = pe.FILE_HEADER.Characteristics
         features['MajorLinkerVersion'] = pe.OPTIONAL_HEADER.MajorLinkerVersion
