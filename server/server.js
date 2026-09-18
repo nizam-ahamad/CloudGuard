@@ -10,7 +10,7 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const FormData = require('form-data');
 const crypto = require('crypto');
-const { S3Client, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand, ListObjectsV2Command, DeleteObjectsCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const multerS3 = require('multer-s3');
 
@@ -44,7 +44,7 @@ const upload = multer({
       cb(null, {fieldName: file.fieldname});
     },
     key: function (req, file, cb) {
-      cb(null, Date.now() + '-' + file.originalname);
+      cb(null, `${req.user._id}/${Date.now()}-${file.originalname}`);
     }
   })
 });
@@ -400,17 +400,20 @@ app.delete('/api/auth/account', verifyToken, async (req, res) => {
     const userId = req.user._id;
 
     // 1. Delete physical files from S3
-    if (isDbConnected || mongoose.connection.readyState === 1) {
-      const userFiles = await FileModel.find({ userId: userId });
-      for (const file of userFiles) {
-        if (file.s3Key) {
-          try {
-            await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: file.s3Key }));
-          } catch (e) {
-            console.error("Failed to delete from S3 during account removal", e.message);
-          }
-        }
+    try {
+      const listedObjects = await s3.send(new ListObjectsV2Command({ 
+          Bucket: process.env.AWS_BUCKET_NAME, 
+          Prefix: `${userId}/` 
+      }));
+      if (listedObjects.Contents && listedObjects.Contents.length > 0) {
+          const deleteParams = {
+              Bucket: process.env.AWS_BUCKET_NAME,
+              Delete: { Objects: listedObjects.Contents.map(obj => ({ Key: obj.Key })) }
+          };
+          await s3.send(new DeleteObjectsCommand(deleteParams));
       }
+    } catch (e) {
+      console.error("Failed to delete from S3 during account removal", e.message);
     }
 
     // 2. Delete user and files from DB / JSON
@@ -850,28 +853,19 @@ app.get('/api/files/:id/access', verifyToken, async (req, res) => {
 // Delete File Endpoint
 app.delete('/api/files/:id', verifyToken, async (req, res) => {
   try {
-      // 1. Find the file first to get its size and path
-      const file = await FileModel.findById(req.params.id);
+      const file = await FileModel.findOne({ _id: req.params.id, userId: req.user._id });
       if (!file) {
           return res.status(404).json({ message: "File not found" });
       }
 
-      // 2. Storage used is dynamically aggregated in our schema, so we skip explicit decrement here.
-      // (The storage stats endpoint will naturally return the lowered amount on its next call).
+      if (file.s3Key) {
+          await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: file.s3Key }));
+      }
 
-      // 3. Delete the record from MongoDB
-      await FileModel.findByIdAndDelete(req.params.id);
-
+      await FileModel.deleteOne({ _id: req.params.id });
       await recalculateStorage(file.userId);
 
-      // 4. Send the success response to the frontend IMMEDIATELY
       res.status(200).json({ message: "File deleted successfully", id: req.params.id });
-
-      // 5. Attempt physical deletion in the background (DO NOT AWAIT, DO NOT CRASH)
-      if (file.s3Key) {
-        s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: file.s3Key }))
-          .catch(err => console.log("Physical deletion skipped/failed, ignoring:", err.message));
-      }
 
   } catch (error) {
       console.error("Deletion error:", error.message);
