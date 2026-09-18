@@ -523,20 +523,20 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
           });
           const s3Response = await s3.send(command);
           
-          const chunks = [];
-          for await (const chunk of s3Response.Body) {
-            chunks.push(chunk);
-          }
-          const fileBuffer = Buffer.concat(chunks);
-          
           const FormData = require('form-data');
           const formData = new FormData();
-          formData.append('file', fileBuffer, {
-             filename: targetFile.originalname
+
+          // s3Response.Body is a Node.js Readable stream
+          formData.append('file', s3Response.Body, {
+              filename: targetFile.originalname,
+              knownLength: targetFile.size // Required by some versions of axios/form-data for streams
           });
-          const aiResponse = await axios.post(aiServiceUrl + '/scan', formData, {
-            headers: { ...formData.getHeaders() },
-            timeout: 60000 
+
+          const aiResponse = await axios.post(`${aiServiceUrl}/scan`, formData, {
+              headers: { ...formData.getHeaders() },
+              timeout: 120000, // Increased to 2 minutes for large file transfers
+              maxContentLength: Infinity,
+              maxBodyLength: Infinity
           });
           
           scanResult = aiResponse.data.status;
