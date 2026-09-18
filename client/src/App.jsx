@@ -325,16 +325,18 @@ function App() {
         }
       });
       
-      if (response.data.status === 'safe' || response.data.hasMalware) {
+      if (response.data.status === 'success' || response.data.status === 'safe') {
         await fetchFiles();
         await fetchStorageStats();
         
-        const { uploadedFiles, deletedFiles } = response.data;
-        if (deletedFiles && deletedFiles.length > 0) {
-          addToast('error', `Security Alert: Detected and deleted malicious file(s): ${deletedFiles.join(', ')}`);
+        const { uploadedFiles, blockedFiles } = response.data;
+        if (blockedFiles && blockedFiles.length > 0) {
+          const blockedNames = blockedFiles.join(', ');
+          addToast('error', `Security Alert: Blocked threats: ${blockedNames}`);
         }
         if (uploadedFiles && uploadedFiles.length > 0) {
-          addToast('success', `Successfully uploaded: ${uploadedFiles.map(f => f.originalName).join(', ')}`);
+          const fileNames = uploadedFiles.map(f => f.originalName || f.name).join(', ');
+          addToast('success', `Successfully uploaded: ${fileNames}`);
         }
       }
     } catch (error) {
@@ -344,13 +346,15 @@ function App() {
         window.location.href = '/';
         return;
       }
-      if (error.response && error.response.status === 400 && error.response.data.status === 'malware') {
-        const { uploadedFiles, deletedFiles } = error.response.data;
-        if (deletedFiles && deletedFiles.length > 0) {
-          addToast('error', `Security Alert: Detected and deleted malicious file(s): ${deletedFiles.join(', ')}`);
+      if (error.response && error.response.status === 403 && error.response.data.status === 'blocked') {
+        const { uploadedFiles, blockedFiles } = error.response.data;
+        if (blockedFiles && blockedFiles.length > 0) {
+          const blockedNames = blockedFiles.join(', ');
+          addToast('error', `Security Alert: Blocked threats: ${blockedNames}`);
         }
         if (uploadedFiles && uploadedFiles.length > 0) {
-          addToast('success', `Successfully uploaded: ${uploadedFiles.map(f => f.originalName).join(', ')}`);
+          const fileNames = uploadedFiles.map(f => f.originalName || f.name).join(', ');
+          addToast('success', `Successfully uploaded: ${fileNames}`);
         }
       } else if (error.response && error.response.data && error.response.data.error) {
         addToast('error', error.response.data.error);

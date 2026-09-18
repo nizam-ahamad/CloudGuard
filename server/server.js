@@ -455,24 +455,21 @@ app.get('/api/storage-stats', verifyToken, async (req, res) => {
 
 // Upload Endpoint
 // Upload Endpoint
+// Upload Endpoint
 app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => {
-  console.log('[Upload Hit] File data:', req.file ? req.file.originalname : (req.files ? 'Array of files' : 'No file detected'));
-
-  const targetFile = req.file || (req.files && req.files[0]);
-  if (!targetFile) return res.status(400).json({ error: "No file uploaded" });
+  const filesToProcess = req.files || (req.file ? [req.file] : []);
+  console.log('[Upload Hit] File data:', filesToProcess.length ? `${filesToProcess.length} file(s)` : 'No file detected');
+  
+  if (!filesToProcess.length) return res.status(400).json({ error: "No file uploaded" });
 
   const userId = req.user._id;
-  const incomingSize = targetFile.size;
+  const incomingSize = filesToProcess.reduce((sum, f) => sum + f.size, 0);
 
   // Global Quota Check
   const globalUsed = await getGlobalStorageUsed();
   if (globalUsed > GLOBAL_MAX_BYTES) {
-    if (req.files) {
-      for (const f of req.files) {
-        if (f.key) await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: f.key }));
-      }
-    } else if (targetFile && targetFile.key) {
-      await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key }));
+    for (const f of filesToProcess) {
+      if (f.key) await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: f.key }));
     }
     return res.status(503).json({ error: "Upload failed: The server has reached its maximum global capacity limit." });
   }
@@ -490,249 +487,213 @@ app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => 
   }
 
   if (currentStorageUsed + incomingSize > 5368709120) {
-    if (req.files) {
-      for (const f of req.files) {
-        if (f.key) await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: f.key }));
-      }
-    } else if (targetFile && targetFile.key) {
-      await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key }));
+    for (const f of filesToProcess) {
+      if (f.key) await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: f.key }));
     }
     return res.status(400).json({ error: "Upload Failed: Insufficient storage space. This file exceeds your 5 GB account limit." });
   }
 
-  const originalName = Buffer.from(targetFile.originalname, 'latin1').toString('utf8');
-  
-  try {
-    const ext = targetFile.originalname.split('.').pop().toLowerCase();
-    const isAI = ['exe', 'dll', 'zip'].includes(ext);
+  const uploadedFiles = [];
+  const blockedFiles = [];
 
-    let scanResult = 'Unknown';
-    let securityStatus = 'Pending';
-    let isMalware = false;
+  for (let i = 0; i < filesToProcess.length; i++) {
+    const targetFile = filesToProcess[i];
+    const originalName = Buffer.from(targetFile.originalname, 'latin1').toString('utf8');
+    
+    try {
+      const ext = targetFile.originalname.split('.').pop().toLowerCase();
+      const isAI = ['exe', 'dll', 'zip'].includes(ext);
 
-    if (isAI) {
-      console.log('[Routing] AI Target: ' + targetFile.originalname);
-      const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
-      try {
-        const command = new GetObjectCommand({
-          Bucket: process.env.AWS_BUCKET_NAME,
-          Key: targetFile.key
-        });
-        const s3Response = await s3.send(command);
-        
-        const chunks = [];
-        for await (const chunk of s3Response.Body) {
-          chunks.push(chunk);
-        }
-        const fileBuffer = Buffer.concat(chunks);
-        
-        const FormData = require('form-data');
-        const formData = new FormData();
-        formData.append('file', fileBuffer, {
-           filename: targetFile.originalname
-        });
-        const aiResponse = await axios.post(aiServiceUrl + '/scan', formData, {
-          headers: { ...formData.getHeaders() },
-          timeout: 60000 
-        });
-        
-        scanResult = aiResponse.data.status;
+      let scanResult = 'Unknown';
+      let securityStatus = 'Pending';
+      let isMalware = false;
 
-        if (scanResult === 'unverified') {
-           if (targetFile.key) {
-             try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key })); } catch (e) {}
-           }
-           return res.status(400).json({ error: "Security Alert: Detected and deleted malicious file(s): " + targetFile.originalname });
-        }
-
-        isMalware = (scanResult === 'malware' || scanResult === 'malicious');
-        if (isMalware) {
-            if (targetFile.key) {
-               try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key })); } catch (e) {}
-            }
-            return res.status(403).json({ error: "Security Alert: Detected and deleted malicious file(s): " + targetFile.originalname });
-        }
-
-        let nestedRelativePath = targetFile.originalname;
-        let finalSize = parseInt(targetFile.size, 10) || targetFile.size || 0;
-        const fileData = {
-          userId: userId,
-          name: targetFile.originalname,
-          diskName: nestedRelativePath,
-          originalName: originalName,
-          location: targetFile.location,
-          s3Key: targetFile.key,
-          size: finalSize,
-          mimetype: targetFile.mimetype,
-          status: 'safe',
-          securityStatus: 'Safe'
-        };
-        const newFile = new FileModel(fileData);
-        await newFile.save();
-        
-        const exactStorageUsed = await recalculateStorage(userId);
-        return res.status(200).json({ 
-          status: 'safe', 
-          files: [newFile], 
-          uploadedFiles: [newFile],
-          deletedFiles: [],
-          message: 'Upload successful',
-          hasMalware: false,
-          storageUsed: exactStorageUsed
-        });
-      } catch (scanErr) {
-        console.error('[AI Connection Error]:', scanErr.message);
-        if (targetFile.key) {
-          try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key })); } catch (e) {}
-        }
-        return res.status(500).json({ error: "Scanner integration failed. File blocked." });
-      }
-    } else {
-      console.log('[Routing] Standard File: ' + targetFile.originalname);
-      try {
-        const command = new GetObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key });
-        const response = await s3.send(command);
-        
-        const crypto = require('crypto');
-        const hash = crypto.createHash('sha256');
-        for await (const chunk of response.Body) {
-          hash.update(chunk);
-        }
-        const sha256 = hash.digest('hex');
-
-        const vtResponse = await axios.get("https://www.virustotal.com/api/v3/files/" + sha256, {
-          headers: { 'x-apikey': process.env.VT_API_KEY },
-          timeout: 15000
-        });
-        const stats = vtResponse.data.data.attributes.last_analysis_stats;
-
-        if (stats.malicious > 0 || stats.suspicious > 0) {
-           if (targetFile.key) {
-             try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key })); } catch (e) {}
-           }
-           if (req.files) {
-             for (const f of req.files) {
-               if (f.key && f.key !== targetFile.key) {
-                 try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: f.key })); } catch (e) {}
-               }
-             }
-           }
-           return res.status(403).json({ error: "Security Alert: Detected and deleted malicious file(s): " + targetFile.originalname });
-        }
-        
-        let relativePath = '';
-        if (req.body.relativePaths) {
-          relativePath = Array.isArray(req.body.relativePaths) ? req.body.relativePaths[0] : req.body.relativePaths;
-        }
-        let nestedRelativePath = targetFile.originalname;
-        if (relativePath) {
-          const relativeDir = path.dirname(relativePath);
-          if (relativeDir && relativeDir !== '.') {
-            nestedRelativePath = path.posix.join(relativeDir.split(path.sep).join('/'), targetFile.originalname);
+      if (isAI) {
+        console.log('[Routing] AI Target: ' + targetFile.originalname);
+        const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
+        try {
+          const command = new GetObjectCommand({
+            Bucket: process.env.AWS_BUCKET_NAME,
+            Key: targetFile.key
+          });
+          const s3Response = await s3.send(command);
+          
+          const chunks = [];
+          for await (const chunk of s3Response.Body) {
+            chunks.push(chunk);
           }
+          const fileBuffer = Buffer.concat(chunks);
+          
+          const FormData = require('form-data');
+          const formData = new FormData();
+          formData.append('file', fileBuffer, {
+             filename: targetFile.originalname
+          });
+          const aiResponse = await axios.post(aiServiceUrl + '/scan', formData, {
+            headers: { ...formData.getHeaders() },
+            timeout: 60000 
+          });
+          
+          scanResult = aiResponse.data.status;
+
+          if (scanResult === 'unverified' || scanResult === 'malware' || scanResult === 'malicious') {
+             if (targetFile.key) {
+               try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key })); } catch (e) {}
+             }
+             blockedFiles.push(targetFile.originalname);
+             continue;
+          }
+
+          let relativePath = '';
+          if (req.body.relativePaths) {
+            relativePath = Array.isArray(req.body.relativePaths) ? req.body.relativePaths[i] : req.body.relativePaths;
+          }
+          let nestedRelativePath = targetFile.originalname;
+          if (relativePath) {
+            const relativeDir = path.dirname(relativePath);
+            if (relativeDir && relativeDir !== '.') {
+              nestedRelativePath = path.posix.join(relativeDir.split(path.sep).join('/'), targetFile.originalname);
+            }
+          }
+
+          let finalSize = parseInt(targetFile.size, 10) || targetFile.size || 0;
+          const fileData = {
+            userId: userId,
+            name: targetFile.originalname,
+            diskName: nestedRelativePath,
+            originalName: originalName,
+            location: targetFile.location,
+            s3Key: targetFile.key,
+            relativePath: relativePath,
+            size: finalSize,
+            mimetype: targetFile.mimetype,
+            status: 'safe',
+            securityStatus: 'Safe'
+          };
+          const newFile = new FileModel(fileData);
+          await newFile.save();
+          uploadedFiles.push(newFile);
+          
+        } catch (scanErr) {
+          console.error('[AI Connection Error]:', scanErr.message);
+          if (targetFile.key) {
+            try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key })); } catch (e) {}
+          }
+          blockedFiles.push(targetFile.originalname);
         }
-        let finalSize = parseInt(targetFile.size, 10) || targetFile.size || 0;
-        const fileData = {
-          userId: userId,
-          name: targetFile.originalname,
-          diskName: nestedRelativePath,
-          originalName: originalName,
-          location: targetFile.location,
-          s3Key: targetFile.key,
-          relativePath: relativePath,
-          size: finalSize,
-          mimetype: targetFile.mimetype,
-          status: 'safe',
-          securityStatus: 'Safe'
-        };
-        const newFile = new FileModel(fileData);
-        await newFile.save();
-        
-        const exactStorageUsed = await recalculateStorage(userId);
-        return res.status(200).json({ 
-          status: 'safe', 
-          files: [newFile], 
-          uploadedFiles: [newFile],
-          deletedFiles: [],
-          message: 'Upload successful',
-          hasMalware: false,
-          storageUsed: exactStorageUsed
-        });
-        
-      } catch (error) {
-         if (error.response && error.response.status === 404) {
-             let relativePath = '';
-             if (req.body.relativePaths) {
-               relativePath = Array.isArray(req.body.relativePaths) ? req.body.relativePaths[0] : req.body.relativePaths;
-             }
-             let nestedRelativePath = targetFile.originalname;
-             if (relativePath) {
-               const relativeDir = path.dirname(relativePath);
-               if (relativeDir && relativeDir !== '.') {
-                 nestedRelativePath = path.posix.join(relativeDir.split(path.sep).join('/'), targetFile.originalname);
-               }
-             }
-             let finalSize = parseInt(targetFile.size, 10) || targetFile.size || 0;
-             const fileData = {
-               userId: userId,
-               name: targetFile.originalname,
-               diskName: nestedRelativePath,
-               originalName: originalName,
-               location: targetFile.location,
-               s3Key: targetFile.key,
-               relativePath: relativePath,
-               size: finalSize,
-               mimetype: targetFile.mimetype,
-               status: 'safe',
-               securityStatus: 'Safe'
-             };
-             const newFile = new FileModel(fileData);
-             await newFile.save();
-             const exactStorageUsed = await recalculateStorage(userId);
-             return res.status(200).json({ 
-               status: 'safe', 
-               files: [newFile], 
-               uploadedFiles: [newFile],
-               deletedFiles: [],
-               message: 'Upload successful',
-               hasMalware: false,
-               storageUsed: exactStorageUsed
-             });
-         } else if (error.response && error.response.status === 429) {
+      } else {
+        console.log('[Routing] Standard File: ' + targetFile.originalname);
+        try {
+          const command = new GetObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key });
+          const response = await s3.send(command);
+          
+          const crypto = require('crypto');
+          const hash = crypto.createHash('sha256');
+          for await (const chunk of response.Body) {
+            hash.update(chunk);
+          }
+          const sha256 = hash.digest('hex');
+
+          const vtResponse = await axios.get("https://www.virustotal.com/api/v3/files/" + sha256, {
+            headers: { 'x-apikey': process.env.VT_API_KEY },
+            timeout: 15000
+          });
+          const stats = vtResponse.data.data.attributes.last_analysis_stats;
+
+          if (stats.malicious > 0 || stats.suspicious > 0) {
              if (targetFile.key) {
                try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key })); } catch (e) {}
              }
-             if (req.files) {
-               for (const f of req.files) {
-                 if (f.key && f.key !== targetFile.key) {
-                   try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: f.key })); } catch (e) {}
+             blockedFiles.push(targetFile.originalname);
+             continue;
+          }
+          
+          let relativePath = '';
+          if (req.body.relativePaths) {
+            relativePath = Array.isArray(req.body.relativePaths) ? req.body.relativePaths[i] : req.body.relativePaths;
+          }
+          let nestedRelativePath = targetFile.originalname;
+          if (relativePath) {
+            const relativeDir = path.dirname(relativePath);
+            if (relativeDir && relativeDir !== '.') {
+              nestedRelativePath = path.posix.join(relativeDir.split(path.sep).join('/'), targetFile.originalname);
+            }
+          }
+          let finalSize = parseInt(targetFile.size, 10) || targetFile.size || 0;
+          const fileData = {
+            userId: userId,
+            name: targetFile.originalname,
+            diskName: nestedRelativePath,
+            originalName: originalName,
+            location: targetFile.location,
+            s3Key: targetFile.key,
+            relativePath: relativePath,
+            size: finalSize,
+            mimetype: targetFile.mimetype,
+            status: 'safe',
+            securityStatus: 'Safe'
+          };
+          const newFile = new FileModel(fileData);
+          await newFile.save();
+          uploadedFiles.push(newFile);
+          
+        } catch (error) {
+           if (error.response && error.response.status === 404) {
+               let relativePath = '';
+               if (req.body.relativePaths) {
+                 relativePath = Array.isArray(req.body.relativePaths) ? req.body.relativePaths[i] : req.body.relativePaths;
+               }
+               let nestedRelativePath = targetFile.originalname;
+               if (relativePath) {
+                 const relativeDir = path.dirname(relativePath);
+                 if (relativeDir && relativeDir !== '.') {
+                   nestedRelativePath = path.posix.join(relativeDir.split(path.sep).join('/'), targetFile.originalname);
                  }
                }
-             }
-             return res.status(429).json({ error: "Scanner busy. Please try uploading again in a minute." });
-         } else {
-             if (targetFile.key) {
-               try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key })); } catch (e) {}
-             }
-             if (req.files) {
-               for (const f of req.files) {
-                 if (f.key && f.key !== targetFile.key) {
-                   try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: f.key })); } catch (e) {}
-                 }
+               let finalSize = parseInt(targetFile.size, 10) || targetFile.size || 0;
+               const fileData = {
+                 userId: userId,
+                 name: targetFile.originalname,
+                 diskName: nestedRelativePath,
+                 originalName: originalName,
+                 location: targetFile.location,
+                 s3Key: targetFile.key,
+                 relativePath: relativePath,
+                 size: finalSize,
+                 mimetype: targetFile.mimetype,
+                 status: 'safe',
+                 securityStatus: 'Safe'
+               };
+               const newFile = new FileModel(fileData);
+               await newFile.save();
+               uploadedFiles.push(newFile);
+           } else {
+               if (targetFile.key) {
+                 try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key })); } catch (e) {}
                }
-             }
-             return res.status(500).json({ error: "Security scan failed. Please try again." });
-         }
+               blockedFiles.push(targetFile.originalname);
+           }
+        }
       }
+    } catch (error) {
+      console.error('File processing error:', error);
+      if (targetFile.key) {
+        try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key })); } catch (e) {}
+      }
+      blockedFiles.push(targetFile.originalname);
     }
-  } catch (error) {
-    console.error('File processing error:', error);
-    if (targetFile.key) {
-      try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key })); } catch (e) {}
-    }
-    return res.status(500).json({ error: 'Internal server error during file processing.' });
   }
+  
+  const exactStorageUsed = await recalculateStorage(userId);
+  return res.status(uploadedFiles.length > 0 ? 200 : 403).json({
+    status: uploadedFiles.length > 0 ? 'success' : 'blocked',
+    uploadedFiles,
+    blockedFiles,
+    message: uploadedFiles.length > 0 ? 'Upload processed' : 'All files blocked',
+    storageUsed: exactStorageUsed
+  });
 });
+
 
 
 // View Endpoint (Inline)
