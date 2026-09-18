@@ -44,7 +44,8 @@ const upload = multer({
       cb(null, {fieldName: file.fieldname});
     },
     key: function (req, file, cb) {
-      cb(null, `${req.user._id}/${Date.now()}-${file.originalname}`);
+      const decodedName = Buffer.from(file.originalname, 'latin1').toString('utf8');
+      cb(null, `${req.user._id}/${Date.now()}-${decodedName}`);
     }
   })
 });
