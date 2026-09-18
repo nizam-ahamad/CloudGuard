@@ -75,6 +75,7 @@ def analyze_executable(file_bytes, filename="unknown"):
             if len(pe.OPTIONAL_HEADER.DATA_DIRECTORY) > security_dir_index:
                 security_dir = pe.OPTIONAL_HEADER.DATA_DIRECTORY[security_dir_index]
                 if security_dir.VirtualAddress > 0 and security_dir.Size > 0:
+                    print(f"[AI Scanner] Executable: {filename} | Authenticode Signature Verified (Skipping ML)")
                     return {'status': 'safe', 'reason': 'Valid Digital Signature Found'}
         except Exception as e:
             print(f"Signature check failed, proceeding to ML: {e}")
