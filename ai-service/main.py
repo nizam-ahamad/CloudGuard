@@ -8,6 +8,7 @@ import hashlib
 import tempfile
 import shutil
 import zipfile
+from collections import Counter
 from fastapi import FastAPI, HTTPException, File, UploadFile
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
@@ -31,18 +32,27 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 
-def calculate_entropy(data):
-    if not data:
+def get_file_entropy(filepath):
+    byte_counts = Counter()
+    total_bytes = 0
+    with open(filepath, 'rb') as f:
+        while chunk := f.read(65536):
+            byte_counts.update(chunk)
+            total_bytes += len(chunk)
+    if total_bytes == 0:
         return 0.0
-    entropy = 0
-    for x in range(256):
-        p_x = float(data.count(x)) / len(data)
-        if p_x > 0:
-            entropy += - p_x * math.log(p_x, 2)
+    entropy = 0.0
+    for count in byte_counts.values():
+        p = count / total_bytes
+        entropy -= p * math.log2(p)
     return entropy
 
-def get_file_hash(file_bytes):
-    return hashlib.sha256(file_bytes).hexdigest()
+def get_file_hash(filepath):
+    hasher = hashlib.sha256()
+    with open(filepath, 'rb') as f:
+        while chunk := f.read(65536):
+            hasher.update(chunk)
+    return hasher.hexdigest()
 
 def scan_with_virustotal(file_hash):
     url = f"https://www.virustotal.com/api/v3/files/{file_hash}"
@@ -61,21 +71,23 @@ def scan_with_virustotal(file_hash):
     except Exception:
         return {"status": "safe"}
 
-def analyze_executable(file_bytes, filename="unknown"):
+def analyze_executable(filepath, filename="unknown"):
     if rf_model is None:
         # Graceful fallback to VT if ML model fails to load
-        return scan_with_virustotal(get_file_hash(file_bytes))
+        return scan_with_virustotal(get_file_hash(filepath))
 
     try:
         features = {}
-        pe = pefile.PE(data=file_bytes)
+        pe = pefile.PE(filepath, fast_load=True)
         
         try:
-            security_dir_index = pefile.DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_SECURITY']
-            if len(pe.OPTIONAL_HEADER.DATA_DIRECTORY) > security_dir_index:
-                security_dir = pe.OPTIONAL_HEADER.DATA_DIRECTORY[security_dir_index]
-                if security_dir.VirtualAddress > 0 and security_dir.Size > 0:
+            sec_idx = pefile.DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_SECURITY']
+            pe.parse_data_directories(directories=[sec_idx])
+            if len(pe.OPTIONAL_HEADER.DATA_DIRECTORY) > sec_idx:
+                sec_dir = pe.OPTIONAL_HEADER.DATA_DIRECTORY[sec_idx]
+                if sec_dir.VirtualAddress > 0 and sec_dir.Size > 0:
                     print(f"[AI Scanner] Executable: {filename} | Authenticode Signature Verified (Skipping ML)")
+                    pe.close()
                     return {'status': 'safe', 'reason': 'Valid Digital Signature Found'}
         except Exception as e:
             print(f"Signature check failed, proceeding to ML: {e}")
@@ -86,7 +98,7 @@ def analyze_executable(file_bytes, filename="unknown"):
         features['SizeOfInitializedData'] = pe.OPTIONAL_HEADER.SizeOfInitializedData
         pe.close()
         
-        features['Entropy'] = calculate_entropy(file_bytes)
+        features['Entropy'] = get_file_entropy(filepath)
 
         df = pd.DataFrame([features])
         
@@ -111,54 +123,50 @@ def analyze_executable(file_bytes, filename="unknown"):
 @app.post("/scan")
 async def scan_file(file: UploadFile = File(...)):
     try:
-        file_bytes = await file.read()
-        
         filename = file.filename or ""
         ext = os.path.splitext(filename)[1].lower()
-        
         is_executable = ext in ['.exe', '.dll']
 
-        if ext == '.zip':
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp:
-                tmp.write(file_bytes)
-                tmp_path = tmp.name
-            
-            extract_dir = tempfile.mkdtemp()
-            try:
-                with zipfile.ZipFile(tmp_path, 'r') as zip_ref:
-                    zip_ref.extractall(extract_dir)
-                
-                for root, _, files in os.walk(extract_dir):
-                    for extracted_file in files:
-                        file_path = os.path.join(root, extracted_file)
-                        extracted_ext = os.path.splitext(extracted_file)[1].lower()
-                        
-                        with open(file_path, 'rb') as f:
-                            extracted_bytes = f.read()
-                        
-                        if extracted_ext in ['.exe', '.dll']:
-                            scan_res = analyze_executable(extracted_bytes, extracted_file)
-                        else:
-                            file_hash = get_file_hash(extracted_bytes)
-                            scan_res = scan_with_virustotal(file_hash)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+            shutil.copyfileobj(file.file, tmp)
+            tmp_path = tmp.name
+        
+        try:
+            if ext == '.zip':
+                extract_dir = tempfile.mkdtemp()
+                try:
+                    with zipfile.ZipFile(tmp_path, 'r') as zip_ref:
+                        zip_ref.extractall(extract_dir)
+                    
+                    for root, _, files in os.walk(extract_dir):
+                        for extracted_file in files:
+                            file_path = os.path.join(root, extracted_file)
+                            extracted_ext = os.path.splitext(extracted_file)[1].lower()
                             
-                        if scan_res.get("status") in ["malware", "malicious"]:
-                            return {"status": "malware"}
-                return {"status": "safe"}
-            except zipfile.BadZipFile:
-                return {"status": "safe", "error": "BadZipFile"}
-            except Exception as e:
-                return {"status": "safe", "error": str(e)}
-            finally:
-                shutil.rmtree(extract_dir, ignore_errors=True)
-                if os.path.exists(tmp_path):
-                    os.remove(tmp_path)
+                            if extracted_ext in ['.exe', '.dll']:
+                                scan_res = analyze_executable(file_path, extracted_file)
+                            else:
+                                file_hash = get_file_hash(file_path)
+                                scan_res = scan_with_virustotal(file_hash)
+                                
+                            if scan_res.get("status") in ["malware", "malicious"]:
+                                return {"status": "malware"}
+                    return {"status": "safe"}
+                except zipfile.BadZipFile:
+                    return {"status": "safe", "error": "BadZipFile"}
+                except Exception as e:
+                    return {"status": "safe", "error": str(e)}
+                finally:
+                    shutil.rmtree(extract_dir, ignore_errors=True)
 
-        if is_executable:
-            return analyze_executable(file_bytes, filename)
-            
-        else:
-            file_hash = get_file_hash(file_bytes)
-            return scan_with_virustotal(file_hash)
+            if is_executable:
+                return analyze_executable(tmp_path, filename)
+                
+            else:
+                file_hash = get_file_hash(tmp_path)
+                return scan_with_virustotal(file_hash)
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
