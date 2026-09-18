@@ -127,8 +127,11 @@ async def scan_file(file: UploadFile = File(...)):
         ext = os.path.splitext(filename)[1].lower()
         is_executable = ext in ['.exe', '.dll']
 
+        tmp_path = ""
         with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
             shutil.copyfileobj(file.file, tmp)
+            tmp.flush()
+            os.fsync(tmp.fileno())
             tmp_path = tmp.name
         
         try:
