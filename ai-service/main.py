@@ -55,6 +55,13 @@ def get_file_hash(filepath):
             hasher.update(chunk)
     return hasher.hexdigest()
 
+def get_sha256(filepath):
+    sha256 = hashlib.sha256()
+    with open(filepath, "rb") as f:
+        while chunk := f.read(1048576): # 1MB chunks
+            sha256.update(chunk)
+    return sha256.hexdigest().upper()
+
 def scan_with_virustotal(file_hash):
     url = f"https://www.virustotal.com/api/v3/files/{file_hash}"
     headers = {"x-apikey": VT_API_KEY}
@@ -136,6 +143,20 @@ async def scan_file(file: UploadFile = File(...)):
             tmp_path = tmp.name
         
         try:
+            file_hash = get_sha256(tmp_path)
+
+            # Query CIRCL Hashlookup API
+            circl_response = requests.get(
+                f"https://hashlookup.circl.lu/lookup/sha256/{file_hash}",
+                headers={"accept": "application/json"},
+                timeout=5
+            )
+
+            # A 200 return code means the hash is present in at least one known-good database
+            if circl_response.status_code == 200:
+                print(f"[AI Scanner] Executable: {file.filename} | Known safe file verified via CIRCL/NSRL")
+                return {"status": "safe", "reason": "Verified known safe application via global NSRL database"}
+
             if ext == '.zip':
                 extract_dir = tempfile.mkdtemp()
                 try:
