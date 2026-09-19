@@ -36,7 +36,8 @@ def get_file_entropy(filepath):
     byte_counts = Counter()
     total_bytes = 0
     with open(filepath, 'rb') as f:
-        while chunk := f.read(65536):
+        # Read the file in 1 MB chunks to drastically improve I/O speed
+        while chunk := f.read(1048576):
             byte_counts.update(chunk)
             total_bytes += len(chunk)
     if total_bytes == 0:
