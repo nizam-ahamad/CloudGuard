@@ -10,7 +10,7 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const FormData = require('form-data');
 const crypto = require('crypto');
-const { S3Client, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand, ListObjectsV2Command, DeleteObjectsCommand } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand, ListObjectsV2Command, DeleteObjectsCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const multerS3 = require('multer-s3');
 
@@ -460,12 +460,36 @@ app.get('/api/storage-stats', verifyToken, async (req, res) => {
 
 // Upload Endpoint
 // Upload Endpoint
+// Presign Endpoint
+app.post('/api/presign', verifyToken, async (req, res) => {
+  try {
+    const { filename, contentType } = req.body;
+    if (!filename) return res.status(400).json({ error: 'Filename is required' });
+
+    const fileKey = `${req.user._id}/${Date.now()}-${filename}`;
+    
+    const command = new PutObjectCommand({
+      Bucket: process.env.AWS_BUCKET_NAME,
+      Key: fileKey,
+      ContentType: contentType || 'application/octet-stream'
+    });
+
+    const signedUrl = await getSignedUrl(s3, command, { expiresIn: 60 });
+    
+    res.json({ signedUrl, fileKey });
+  } catch (err) {
+    console.error('Presign Error:', err);
+    res.status(500).json({ error: 'Failed to generate pre-signed URL' });
+  }
+});
+
 // Upload Endpoint
-app.post('/api/upload', verifyToken, upload.array('files'), async (req, res) => {
-  const filesToProcess = req.files || (req.file ? [req.file] : []);
-  console.log('[Upload Hit] File data:', filesToProcess.length ? `${filesToProcess.length} file(s)` : 'No file detected');
-  
-  if (!filesToProcess.length) return res.status(400).json({ error: "No file uploaded" });
+app.post('/api/upload', verifyToken, async (req, res) => {
+  const { fileKey, originalName, fileSize } = req.body;
+  if (!fileKey || !originalName) return res.status(400).json({ error: "No file data provided" });
+
+  const filesToProcess = [{ key: fileKey, originalname: originalName, size: fileSize || 0 }];
+  console.log('[Upload Hit] File data for direct upload:', originalName);
 
   const userId = req.user._id;
   const incomingSize = filesToProcess.reduce((sum, f) => sum + f.size, 0);

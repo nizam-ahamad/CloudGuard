@@ -306,39 +306,73 @@ function App() {
     try {
       setUploading(true);
       setUploadProgress(0);
-      setUploadStats({ loaded: 0, total: 0 });
-      const formData = new FormData();
+      setUploadStats({ loaded: 0, total: (totalUploadSize / (1024 * 1024)).toFixed(1) });
+      
+      const allUploadedFiles = [];
+      const allBlockedFiles = [];
+      let totalLoaded = 0;
+      
+      const s3Axios = axios.create();
+
       for (const file of filesToUpload) {
-        formData.append('files', file);
-        formData.append('relativePaths', file.webkitRelativePath || file.customPath || '');
+        try {
+          // 1. Presign
+          const presignRes = await axios.post(`${API_BASE_URL}/api/presign`, {
+            filename: file.name,
+            contentType: file.type || 'application/octet-stream'
+          });
+          const { signedUrl, fileKey } = presignRes.data;
+
+          // 2. Direct Upload to S3
+          await s3Axios.put(signedUrl, file, {
+            headers: { 'Content-Type': file.type || 'application/octet-stream' },
+            onUploadProgress: (progressEvent) => {
+              const currentLoaded = progressEvent.loaded;
+              const overallLoaded = totalLoaded + currentLoaded;
+              setUploadProgress(Math.round((overallLoaded * 100) / totalUploadSize));
+              setUploadStats({
+                loaded: (overallLoaded / (1024 * 1024)).toFixed(1),
+                total: (totalUploadSize / (1024 * 1024)).toFixed(1)
+              });
+            }
+          });
+          totalLoaded += file.size;
+
+          // 3. Trigger Scan
+          const uploadRes = await axios.post(`${API_BASE_URL}/api/upload`, {
+            fileKey,
+            originalName: file.name,
+            fileSize: file.size,
+            relativePaths: file.webkitRelativePath || file.customPath || ''
+          });
+
+          const { uploadedFiles, blockedFiles } = uploadRes.data;
+          if (uploadedFiles) allUploadedFiles.push(...uploadedFiles);
+          if (blockedFiles) allBlockedFiles.push(...blockedFiles);
+
+        } catch (err) {
+           if (err.response && err.response.status === 403 && err.response.data.status === 'blocked') {
+             const { uploadedFiles, blockedFiles } = err.response.data;
+             if (uploadedFiles) allUploadedFiles.push(...uploadedFiles);
+             if (blockedFiles) allBlockedFiles.push(...blockedFiles);
+           } else {
+             throw err;
+           }
+        }
       }
 
-      const response = await axios.post(`${API_BASE_URL}/api/upload`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-        onUploadProgress: (progressEvent) => {
-          const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-          setUploadProgress(percentCompleted);
-          setUploadStats({
-            loaded: (progressEvent.loaded / (1024 * 1024)).toFixed(1),
-            total: (progressEvent.total / (1024 * 1024)).toFixed(1)
-          });
-        }
-      });
+      await fetchFiles();
+      await fetchStorageStats();
       
-      if (response.data.status === 'success' || response.data.status === 'safe') {
-        await fetchFiles();
-        await fetchStorageStats();
-        
-        const { uploadedFiles, blockedFiles } = response.data;
-        if (blockedFiles && blockedFiles.length > 0) {
-          const blockedNames = blockedFiles.join(', ');
-          addToast('error', `Security Alert: Blocked threats: ${blockedNames}`);
-        }
-        if (uploadedFiles && uploadedFiles.length > 0) {
-          const fileNames = uploadedFiles.map(f => f.originalName || f.name).join(', ');
-          addToast('success', `Successfully uploaded: ${fileNames}`);
-        }
+      if (allBlockedFiles.length > 0) {
+        const blockedNames = allBlockedFiles.join(', ');
+        addToast('error', `Security Alert: Blocked threats: ${blockedNames}`);
       }
+      if (allUploadedFiles.length > 0) {
+        const fileNames = allUploadedFiles.map(f => f.originalName || f.name).join(', ');
+        addToast('success', `Successfully uploaded: ${fileNames}`);
+      }
+
     } catch (error) {
       if (error.response && error.response.status === 401) {
         localStorage.clear();
@@ -346,17 +380,7 @@ function App() {
         window.location.href = '/';
         return;
       }
-      if (error.response && error.response.status === 403 && error.response.data.status === 'blocked') {
-        const { uploadedFiles, blockedFiles } = error.response.data;
-        if (blockedFiles && blockedFiles.length > 0) {
-          const blockedNames = blockedFiles.join(', ');
-          addToast('error', `Security Alert: Blocked threats: ${blockedNames}`);
-        }
-        if (uploadedFiles && uploadedFiles.length > 0) {
-          const fileNames = uploadedFiles.map(f => f.originalName || f.name).join(', ');
-          addToast('success', `Successfully uploaded: ${fileNames}`);
-        }
-      } else if (error.response && error.response.data && error.response.data.error) {
+      if (error.response && error.response.data && error.response.data.error) {
         addToast('error', error.response.data.error);
       } else if (!error.response) {
         addToast('error', 'Upload failed: File blocked locally or network error.');
