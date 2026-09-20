@@ -325,7 +325,10 @@ function App() {
 
           // 2. Direct Upload to S3
           await s3Axios.put(signedUrl, file, {
-            headers: { 'Content-Type': file.type || 'application/octet-stream' },
+            headers: { 
+              'Content-Type': file.type || 'application/octet-stream',
+              'Authorization': undefined
+            },
             onUploadProgress: (progressEvent) => {
               const currentLoaded = progressEvent.loaded;
               const overallLoaded = totalLoaded + currentLoaded;
