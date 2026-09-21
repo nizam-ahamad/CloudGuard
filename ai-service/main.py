@@ -169,13 +169,23 @@ async def scan_file(file: UploadFile = File(...)):
                             extracted_ext = os.path.splitext(extracted_file)[1].lower()
                             
                             if extracted_ext in ['.exe', '.dll']:
+                                inner_hash = get_sha256(file_path)
+                                circl_response = requests.get(
+                                    f"https://hashlookup.circl.lu/lookup/sha256/{inner_hash}",
+                                    headers={"accept": "application/json"},
+                                    timeout=5
+                                )
+                                if circl_response.status_code == 200:
+                                    print(f"[AI Scanner] Inner Executable: {extracted_file} | Known safe file verified via CIRCL/NSRL")
+                                    continue
+                                
                                 scan_res = analyze_executable(file_path, extracted_file)
                             else:
                                 file_hash = get_file_hash(file_path)
                                 scan_res = scan_with_virustotal(file_hash)
                                 
                             if scan_res.get("status") in ["malware", "malicious"]:
-                                return {"status": "malware"}
+                                return {"status": "malicious"}
                     return {"status": "safe"}
                 except zipfile.BadZipFile:
                     return {"status": "safe", "error": "BadZipFile"}
