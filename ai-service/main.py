@@ -179,7 +179,7 @@ async def scan_file(file: UploadFile = File(...)):
                                 
                             extracted_ext = os.path.splitext(extracted_file)[1].lower()
                             
-                            if extracted_ext in ['.exe', '.dll']:
+                            if extracted_ext in ['.exe', '.dll', '.txt', '.com']:
                                 file_data = zip_ref.read(extracted_file)
                                 inner_hash = get_sha256(data=file_data)
                                 circl_response = requests.get(
