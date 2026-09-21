@@ -80,7 +80,7 @@ def scan_with_virustotal(file_hash):
         if response.status_code == 200:
             stats = response.json().get('data', {}).get('attributes', {}).get('last_analysis_stats', {})
             malicious_count = stats.get('malicious', 0)
-            return {"status": "malware" if malicious_count > 0 else "safe"}
+            return {"status": "malicious" if malicious_count > 0 else "safe"}
         elif response.status_code == 404:
             return {"status": "safe"}
         else:
@@ -145,7 +145,7 @@ async def scan_file(file: UploadFile = File(...)):
     try:
         filename = file.filename or ""
         ext = os.path.splitext(filename)[1].lower()
-        is_executable = ext in ['.exe', '.dll']
+        is_executable = ext in ['.exe', '.dll', '.com']
 
         tmp_path = ""
         with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
@@ -157,47 +157,29 @@ async def scan_file(file: UploadFile = File(...)):
         try:
             file_hash = get_sha256(tmp_path)
 
-            # Query CIRCL Hashlookup API
-            circl_response = requests.get(
-                f"https://hashlookup.circl.lu/lookup/sha256/{file_hash}",
-                headers={"accept": "application/json"},
-                timeout=5
-            )
-
-            # A 200 return code means the hash is present in at least one known-good database
-            if circl_response.status_code == 200:
-                print(f"[AI Scanner] Executable: {file.filename} | Known safe file verified via CIRCL/NSRL")
-                return {"status": "safe", "reason": "Verified known safe application via global NSRL database"}
+            vt_res = scan_with_virustotal(file_hash)
+            if vt_res.get("status") == "malicious":
+                return {"status": "malicious"}
 
             if ext == '.zip':
                 try:
                     with zipfile.ZipFile(tmp_path, 'r') as zip_ref:
                         for extracted_file in zip_ref.namelist():
-                            # Skip directories
                             if extracted_file.endswith('/'):
                                 continue
                                 
-                            extracted_ext = os.path.splitext(extracted_file)[1].lower()
                             file_data = zip_ref.read(extracted_file)
+                            inner_hash = get_sha256(data=file_data)
                             
-                            if extracted_ext in ['.exe', '.dll', '.com']:
-                                inner_hash = get_sha256(data=file_data)
-                                circl_response = requests.get(
-                                    f"https://hashlookup.circl.lu/lookup/sha256/{inner_hash}",
-                                    headers={"accept": "application/json"},
-                                    timeout=5
-                                )
-                                if circl_response.status_code == 200:
-                                    print(f"[AI Scanner] Inner File: {extracted_file} | Known safe file verified via CIRCL/NSRL")
-                                    continue
-                                
-                                scan_res = analyze_executable(data=file_data, filename=extracted_file)
-                            else:
-                                file_hash = get_file_hash(data=file_data)
-                                scan_res = scan_with_virustotal(file_hash)
-
-                            if scan_res.get("status") in ["malware", "malicious"]:
+                            inner_vt_res = scan_with_virustotal(inner_hash)
+                            if inner_vt_res.get("status") == "malicious":
                                 return {"status": "malicious"}
+                            
+                            extracted_ext = os.path.splitext(extracted_file)[1].lower()
+                            if extracted_ext in ['.exe', '.dll', '.com']:
+                                scan_res = analyze_executable(data=file_data, filename=extracted_file)
+                                if scan_res.get("status") in ["malicious", "malware"]:
+                                    return {"status": "malicious"}
                     return {"status": "safe"}
                 except zipfile.BadZipFile:
                     return {"status": "safe", "error": "BadZipFile"}
@@ -205,11 +187,11 @@ async def scan_file(file: UploadFile = File(...)):
                     return {"status": "safe", "error": str(e)}
 
             if is_executable:
-                return analyze_executable(tmp_path, filename)
-                
-            else:
-                file_hash = get_file_hash(tmp_path)
-                return scan_with_virustotal(file_hash)
+                scan_res = analyze_executable(filepath=tmp_path, filename=filename)
+                if scan_res.get("status") in ["malicious", "malware"]:
+                    return {"status": "malicious"}
+                    
+            return {"status": "safe"}
         finally:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
