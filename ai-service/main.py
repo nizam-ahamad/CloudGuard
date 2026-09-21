@@ -32,14 +32,17 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 
-def get_file_entropy(filepath):
+def get_file_entropy(filepath=None, data=None):
     byte_counts = Counter()
     total_bytes = 0
-    with open(filepath, 'rb') as f:
-        # Read the file in 1 MB chunks to drastically improve I/O speed
-        while chunk := f.read(1048576):
-            byte_counts.update(chunk)
-            total_bytes += len(chunk)
+    if data is not None:
+        byte_counts.update(data)
+        total_bytes = len(data)
+    else:
+        with open(filepath, 'rb') as f:
+            while chunk := f.read(1048576):
+                byte_counts.update(chunk)
+                total_bytes += len(chunk)
     if total_bytes == 0:
         return 0.0
     entropy = 0.0
@@ -48,18 +51,24 @@ def get_file_entropy(filepath):
         entropy -= p * math.log2(p)
     return entropy
 
-def get_file_hash(filepath):
+def get_file_hash(filepath=None, data=None):
     hasher = hashlib.sha256()
-    with open(filepath, 'rb') as f:
-        while chunk := f.read(65536):
-            hasher.update(chunk)
+    if data is not None:
+        hasher.update(data)
+    else:
+        with open(filepath, 'rb') as f:
+            while chunk := f.read(65536):
+                hasher.update(chunk)
     return hasher.hexdigest()
 
-def get_sha256(filepath):
+def get_sha256(filepath=None, data=None):
     sha256 = hashlib.sha256()
-    with open(filepath, "rb") as f:
-        while chunk := f.read(1048576): # 1MB chunks
-            sha256.update(chunk)
+    if data is not None:
+        sha256.update(data)
+    else:
+        with open(filepath, "rb") as f:
+            while chunk := f.read(1048576): # 1MB chunks
+                sha256.update(chunk)
     return sha256.hexdigest().upper()
 
 def scan_with_virustotal(file_hash):
@@ -79,14 +88,17 @@ def scan_with_virustotal(file_hash):
     except Exception:
         return {"status": "safe"}
 
-def analyze_executable(filepath, filename="unknown"):
+def analyze_executable(filepath=None, data=None, filename="unknown"):
     if rf_model is None:
         # Graceful fallback to VT if ML model fails to load
-        return scan_with_virustotal(get_file_hash(filepath))
+        return scan_with_virustotal(get_file_hash(filepath, data))
 
     try:
         features = {}
-        pe = pefile.PE(filepath, fast_load=True)
+        if data is not None:
+            pe = pefile.PE(data=data, fast_load=True)
+        else:
+            pe = pefile.PE(filepath, fast_load=True)
         
         try:
             sec_idx = pefile.DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_SECURITY']
@@ -106,7 +118,7 @@ def analyze_executable(filepath, filename="unknown"):
         features['SizeOfInitializedData'] = pe.OPTIONAL_HEADER.SizeOfInitializedData
         pe.close()
         
-        features['Entropy'] = get_file_entropy(filepath)
+        features['Entropy'] = get_file_entropy(filepath, data)
 
         df = pd.DataFrame([features])
         
@@ -158,18 +170,18 @@ async def scan_file(file: UploadFile = File(...)):
                 return {"status": "safe", "reason": "Verified known safe application via global NSRL database"}
 
             if ext == '.zip':
-                extract_dir = tempfile.mkdtemp()
                 try:
                     with zipfile.ZipFile(tmp_path, 'r') as zip_ref:
-                        zip_ref.extractall(extract_dir)
-                    
-                    for root, _, files in os.walk(extract_dir):
-                        for extracted_file in files:
-                            file_path = os.path.join(root, extracted_file)
+                        for extracted_file in zip_ref.namelist():
+                            # Skip directories
+                            if extracted_file.endswith('/'):
+                                continue
+                                
                             extracted_ext = os.path.splitext(extracted_file)[1].lower()
                             
                             if extracted_ext in ['.exe', '.dll']:
-                                inner_hash = get_sha256(file_path)
+                                file_data = zip_ref.read(extracted_file)
+                                inner_hash = get_sha256(data=file_data)
                                 circl_response = requests.get(
                                     f"https://hashlookup.circl.lu/lookup/sha256/{inner_hash}",
                                     headers={"accept": "application/json"},
@@ -179,9 +191,10 @@ async def scan_file(file: UploadFile = File(...)):
                                     print(f"[AI Scanner] Inner Executable: {extracted_file} | Known safe file verified via CIRCL/NSRL")
                                     continue
                                 
-                                scan_res = analyze_executable(file_path, extracted_file)
+                                scan_res = analyze_executable(data=file_data, filename=extracted_file)
                             else:
-                                file_hash = get_file_hash(file_path)
+                                file_data = zip_ref.read(extracted_file)
+                                file_hash = get_file_hash(data=file_data)
                                 scan_res = scan_with_virustotal(file_hash)
                                 
                             if scan_res.get("status") in ["malware", "malicious"]:
@@ -191,8 +204,6 @@ async def scan_file(file: UploadFile = File(...)):
                     return {"status": "safe", "error": "BadZipFile"}
                 except Exception as e:
                     return {"status": "safe", "error": str(e)}
-                finally:
-                    shutil.rmtree(extract_dir, ignore_errors=True)
 
             if is_executable:
                 return analyze_executable(tmp_path, filename)

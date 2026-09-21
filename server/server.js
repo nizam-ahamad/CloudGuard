@@ -20,7 +20,7 @@ const JWT_SECRET = 'cloudguard-super-secret-key';
 
 // Configure CORS for Vite frontend
 app.use(cors({
-  origin: ['http://localhost:5173', 'https://cloud-guard-self.vercel.app'],
+  origin: ['http://localhost:5173', 'https://cloud-guard-self.vercel.app', 'https://cloudguard-app.duckdns.org'],
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   credentials: true
 }));
@@ -32,7 +32,8 @@ const s3 = new S3Client({
   credentials: {
     accessKeyId: process.env.AWS_ACCESS_KEY_ID,
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-  }
+  },
+  requestChecksumCalculation: 'WHEN_REQUIRED'
 });
 
 const upload = multer({
@@ -44,7 +45,7 @@ const upload = multer({
       cb(null, {fieldName: file.fieldname});
     },
     key: function (req, file, cb) {
-      const decodedName = Buffer.from(file.originalname, 'latin1').toString('utf8');
+      const decodedName = file.originalname;
       cb(null, `${req.user._id}/${Date.now()}-${decodedName}`);
     }
   })
@@ -466,7 +467,8 @@ app.post('/api/presign', verifyToken, async (req, res) => {
     const { filename, contentType } = req.body;
     if (!filename) return res.status(400).json({ error: 'Filename is required' });
 
-    const fileKey = `${req.user._id}/${Date.now()}-${filename}`;
+    const userId = req.user?._id || req.user?.id || req.userId || 'anonymous';
+    const fileKey = `${userId}/${Date.now()}-${filename}`;
     
     const command = new PutObjectCommand({
       Bucket: process.env.AWS_BUCKET_NAME,
@@ -495,13 +497,13 @@ app.post('/api/upload', verifyToken, async (req, res) => {
   const incomingSize = filesToProcess.reduce((sum, f) => sum + f.size, 0);
 
   // Global Quota Check
-  const globalUsed = await getGlobalStorageUsed();
-  if (globalUsed > GLOBAL_MAX_BYTES) {
-    for (const f of filesToProcess) {
-      if (f.key) await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: f.key }));
-    }
-    return res.status(503).json({ error: "Upload failed: The server has reached its maximum global capacity limit." });
-  }
+  // const globalUsed = await getGlobalStorageUsed();
+  // if (globalUsed > GLOBAL_MAX_BYTES) {
+  //   for (const f of filesToProcess) {
+  //     if (f.key) await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: f.key }));
+  //   }
+  //   return res.status(503).json({ error: "Upload failed: The server has reached its maximum global capacity limit." });
+  // }
 
   // Check User Quota
   let currentStorageUsed = 0;
@@ -527,7 +529,7 @@ app.post('/api/upload', verifyToken, async (req, res) => {
 
   for (let i = 0; i < filesToProcess.length; i++) {
     const targetFile = filesToProcess[i];
-    const originalName = Buffer.from(targetFile.originalname, 'latin1').toString('utf8');
+    const originalName = targetFile.originalname;
     
     try {
       const ext = targetFile.originalname.split('.').pop().toLowerCase();
