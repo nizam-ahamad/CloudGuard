@@ -1,6 +1,6 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const multer = require('multer');
 const mongoose = require('mongoose');
 const axios = require('axios');
 const path = require('path');
@@ -12,7 +12,6 @@ const FormData = require('form-data');
 const crypto = require('crypto');
 const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand, ListObjectsV2Command, DeleteObjectsCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
-const multerS3 = require('multer-s3');
 
 const app = express();
 
@@ -36,20 +35,6 @@ const s3 = new S3Client({
   requestChecksumCalculation: 'WHEN_REQUIRED'
 });
 
-const upload = multer({
-  storage: multerS3({
-    s3: s3,
-    bucket: process.env.AWS_BUCKET_NAME,
-    contentType: multerS3.AUTO_CONTENT_TYPE,
-    metadata: function (req, file, cb) {
-      cb(null, {fieldName: file.fieldname});
-    },
-    key: function (req, file, cb) {
-      const decodedName = file.originalname;
-      cb(null, `${req.user._id}/${Date.now()}-${decodedName}`);
-    }
-  })
-});
 // File Metadata Schema
 const FileSchema = new mongoose.Schema({
   userId: { type: String, required: true },
