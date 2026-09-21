@@ -177,20 +177,22 @@ async def scan_file(file: UploadFile = File(...)):
                             if extracted_file.endswith('/'):
                                 continue
                                 
+                            extracted_ext = os.path.splitext(extracted_file)[1].lower()
                             file_data = zip_ref.read(extracted_file)
-                            inner_hash = get_sha256(data=file_data)
-                            circl_response = requests.get(
-                                f"https://hashlookup.circl.lu/lookup/sha256/{inner_hash}",
-                                headers={"accept": "application/json"},
-                                timeout=5
-                            )
-                            if circl_response.status_code == 200:
-                                print(f"[AI Scanner] Inner File: {extracted_file} | Known safe file verified via CIRCL/NSRL")
-                                continue
                             
-                            scan_res = analyze_executable(data=file_data, filename=extracted_file)
-                            
-                            if scan_res.get("status") == "unverified":
+                            if extracted_ext in ['.exe', '.dll', '.com']:
+                                inner_hash = get_sha256(data=file_data)
+                                circl_response = requests.get(
+                                    f"https://hashlookup.circl.lu/lookup/sha256/{inner_hash}",
+                                    headers={"accept": "application/json"},
+                                    timeout=5
+                                )
+                                if circl_response.status_code == 200:
+                                    print(f"[AI Scanner] Inner File: {extracted_file} | Known safe file verified via CIRCL/NSRL")
+                                    continue
+                                
+                                scan_res = analyze_executable(data=file_data, filename=extracted_file)
+                            else:
                                 file_hash = get_file_hash(data=file_data)
                                 scan_res = scan_with_virustotal(file_hash)
 
