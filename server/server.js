@@ -1,4 +1,11 @@
 require('dotenv').config();
+
+const requiredEnv = ['JWT_SECRET', 'GAS_SECRET', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_REGION', 'AWS_BUCKET_NAME', 'MONGO_URI'];
+const missing = requiredEnv.filter(k => !process.env[k]);
+if (missing.length > 0) {
+  console.error(`FATAL ERROR: Missing critical environment variables: ${missing.join(', ')}`);
+  process.exit(1);
+}
 const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
@@ -15,7 +22,7 @@ const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
 const app = express();
 
-const JWT_SECRET = 'cloudguard-super-secret-key';
+const JWT_SECRET = process.env.JWT_SECRET;
 
 // Configure CORS for Vite frontend
 app.use(cors({
@@ -260,7 +267,7 @@ app.post('/api/auth/forgot-password', async (req, res) => {
         body: JSON.stringify({ 
           to: email, 
           link: resetUrl,
-          secret: "super_secret_password_123" 
+          secret: process.env.GAS_SECRET 
         })
       });
 

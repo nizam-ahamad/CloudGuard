@@ -15,7 +15,14 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
 
+import sys
 load_dotenv(os.path.join(os.path.dirname(__file__), '../server/.env'))
+
+required_env = ['VT_API_KEY', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_REGION', 'AWS_BUCKET_NAME']
+missing = [k for k in required_env if not os.getenv(k)]
+if missing:
+    print(f"FATAL ERROR: Missing critical environment variables: {', '.join(missing)}", file=sys.stderr)
+    sys.exit(1)
 
 s3_client = boto3.client(
     's3',
@@ -24,7 +31,7 @@ s3_client = boto3.client(
     region_name=os.getenv('AWS_REGION')
 )
 
-VT_API_KEY = "4bd790331c1fd67dbd74d684ae7029879a662e16754c4490c2902cb2dbdc7226"
+VT_API_KEY = os.getenv("VT_API_KEY")
 
 # Global variable for the model
 rf_model = None
