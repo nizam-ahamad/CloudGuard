@@ -527,26 +527,11 @@ app.post('/api/upload', verifyToken, async (req, res) => {
         console.log('[Routing] AI Target: ' + targetFile.originalname);
         const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
         try {
-          const command = new GetObjectCommand({
-            Bucket: process.env.AWS_BUCKET_NAME,
-            Key: targetFile.key
-          });
-          const s3Response = await s3.send(command);
-          
-          const FormData = require('form-data');
-          const formData = new FormData();
-
-          // s3Response.Body is a Node.js Readable stream
-          formData.append('file', s3Response.Body, {
-              filename: targetFile.originalname,
-              knownLength: targetFile.size // Required by some versions of axios/form-data for streams
-          });
-
-          const aiResponse = await axios.post(`${aiServiceUrl}/scan`, formData, {
-              headers: { ...formData.getHeaders() },
-              timeout: 120000, // Increased to 2 minutes for large file transfers
-              maxContentLength: Infinity,
-              maxBodyLength: Infinity
+          const aiResponse = await axios.post(`${aiServiceUrl}/scan`, {
+              fileKey: targetFile.key,
+              filename: targetFile.originalname
+          }, {
+              timeout: 120000 // Increased to 2 minutes for processing large files
           });
           
           scanResult = aiResponse.data.status;

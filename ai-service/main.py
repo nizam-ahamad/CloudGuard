@@ -8,10 +8,21 @@ import hashlib
 import tempfile
 import shutil
 import zipfile
+import boto3
+from dotenv import load_dotenv
 from collections import Counter
-from fastapi import FastAPI, HTTPException, File, UploadFile
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
+
+load_dotenv(os.path.join(os.path.dirname(__file__), '../server/.env'))
+
+s3_client = boto3.client(
+    's3',
+    aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
+    aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY'),
+    region_name=os.getenv('AWS_REGION')
+)
 
 VT_API_KEY = "4bd790331c1fd67dbd74d684ae7029879a662e16754c4490c2902cb2dbdc7226"
 
@@ -140,22 +151,33 @@ def analyze_executable(filepath=None, data=None, filename="unknown"):
         print(f"[AI Scanner] Extraction failure for {filename}: {str(e)}")
         return {"status": "unverified", "message": "Non-executable or unparseable file bypass"}
 
+class ScanRequest(BaseModel):
+    fileKey: str
+    filename: str
+
 @app.post("/scan")
-async def scan_file(file: UploadFile = File(...)):
+async def scan_file(request: ScanRequest):
     try:
-        filename = file.filename or ""
+        filename = request.filename or ""
+        fileKey = request.fileKey
         ext = os.path.splitext(filename)[1].lower()
         is_executable = ext in ['.exe', '.dll', '.com']
 
         tmp_path = ""
         with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
-            shutil.copyfileobj(file.file, tmp)
+            tmp_path = tmp.name
+            bucket_name = os.getenv('AWS_BUCKET_NAME')
+            s3_response = s3_client.get_object(Bucket=bucket_name, Key=fileKey)
+            
+            hasher = hashlib.sha256()
+            for chunk in s3_response['Body'].iter_chunks(chunk_size=1048576):
+                tmp.write(chunk)
+                hasher.update(chunk)
             tmp.flush()
             os.fsync(tmp.fileno())
-            tmp_path = tmp.name
+            file_hash = hasher.hexdigest().upper()
         
         try:
-            file_hash = get_sha256(tmp_path)
 
             vt_res = scan_with_virustotal(file_hash)
             if vt_res.get("status") == "malicious":
