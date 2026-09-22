@@ -523,15 +523,11 @@ app.post('/api/upload', verifyToken, async (req, res) => {
     const originalName = targetFile.originalname;
     
     try {
-      const ext = targetFile.originalname.split('.').pop().toLowerCase();
-      const isAI = ['exe', 'dll', 'zip'].includes(ext);
-
       let scanResult = 'Unknown';
       let securityStatus = 'Pending';
       let isMalware = false;
 
-      if (isAI) {
-        console.log('[Routing] AI Target: ' + targetFile.originalname);
+      console.log('[Routing] Processing through AI Microservice: ' + targetFile.originalname);
         const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
         try {
           const aiResponse = await axios.post(`${aiServiceUrl}/scan`, {
@@ -600,124 +596,7 @@ app.post('/api/upload', verifyToken, async (req, res) => {
           }
           blockedFiles.push(targetFile.originalname);
         }
-      } else {
-        console.log('[Routing] Standard File: ' + targetFile.originalname);
-        try {
-          const command = new GetObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key });
-          const response = await s3.send(command);
-          
-          const crypto = require('crypto');
-          const hash = crypto.createHash('sha256');
-          for await (const chunk of response.Body) {
-            hash.update(chunk);
-          }
-          const sha256 = hash.digest('hex');
 
-          const vtResponse = await axios.get("https://www.virustotal.com/api/v3/files/" + sha256, {
-            headers: { 'x-apikey': process.env.VT_API_KEY },
-            timeout: 15000
-          });
-          const stats = vtResponse.data.data.attributes.last_analysis_stats;
-
-          if (stats.malicious > 0 || stats.suspicious > 0) {
-             if (targetFile.key) {
-               try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key })); } catch (e) {}
-             }
-             blockedFiles.push(targetFile.originalname);
-             continue;
-          }
-          
-          let relativePath = '';
-          if (req.body.relativePaths) {
-            relativePath = Array.isArray(req.body.relativePaths) ? req.body.relativePaths[i] : req.body.relativePaths;
-          }
-          let nestedRelativePath = targetFile.originalname;
-          if (relativePath) {
-            const relativeDir = path.dirname(relativePath);
-            if (relativeDir && relativeDir !== '.') {
-              nestedRelativePath = path.posix.join(relativeDir.split(path.sep).join('/'), targetFile.originalname);
-            }
-          }
-          let exactFileSize = targetFile.size;
-          if (!exactFileSize) {
-              try {
-                  const headData = await s3.send(new HeadObjectCommand({
-                      Bucket: process.env.AWS_BUCKET_NAME,
-                      Key: targetFile.key || targetFile.s3Key
-                  }));
-                  exactFileSize = headData.ContentLength;
-              } catch (err) {
-                  console.error("[S3 Size Check Error]:", err);
-                  exactFileSize = 0;
-              }
-          }
-          const fileData = {
-            userId: userId,
-            name: targetFile.originalname,
-            diskName: nestedRelativePath,
-            originalName: originalName,
-            location: targetFile.location,
-            s3Key: targetFile.key || `${userId}/${targetFile.originalname}`,
-            relativePath: relativePath,
-            size: exactFileSize,
-            mimetype: targetFile.mimetype,
-            status: 'safe',
-            securityStatus: 'Safe'
-          };
-          const newFile = new FileModel(fileData);
-          await newFile.save();
-          uploadedFiles.push(newFile);
-          
-        } catch (error) {
-           if (error.response && error.response.status === 404) {
-               let relativePath = '';
-               if (req.body.relativePaths) {
-                 relativePath = Array.isArray(req.body.relativePaths) ? req.body.relativePaths[i] : req.body.relativePaths;
-               }
-               let nestedRelativePath = targetFile.originalname;
-               if (relativePath) {
-                 const relativeDir = path.dirname(relativePath);
-                 if (relativeDir && relativeDir !== '.') {
-                   nestedRelativePath = path.posix.join(relativeDir.split(path.sep).join('/'), targetFile.originalname);
-                 }
-               }
-               let exactFileSize = targetFile.size;
-               if (!exactFileSize) {
-                   try {
-                       const headData = await s3.send(new HeadObjectCommand({
-                           Bucket: process.env.AWS_BUCKET_NAME,
-                           Key: targetFile.key || targetFile.s3Key
-                       }));
-                       exactFileSize = headData.ContentLength;
-                   } catch (err) {
-                       console.error("[S3 Size Check Error]:", err);
-                       exactFileSize = 0;
-                   }
-               }
-               const fileData = {
-                 userId: userId,
-                 name: targetFile.originalname,
-                 diskName: nestedRelativePath,
-                 originalName: originalName,
-                 location: targetFile.location,
-                 s3Key: targetFile.key || `${userId}/${targetFile.originalname}`,
-                 relativePath: relativePath,
-                 size: exactFileSize,
-                 mimetype: targetFile.mimetype,
-                 status: 'safe',
-                 securityStatus: 'Safe'
-               };
-               const newFile = new FileModel(fileData);
-               await newFile.save();
-               uploadedFiles.push(newFile);
-           } else {
-               if (targetFile.key) {
-                 try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key })); } catch (e) {}
-               }
-               blockedFiles.push(targetFile.originalname);
-           }
-        }
-      }
     } catch (error) {
       console.error('File processing error:', error);
       if (targetFile.key) {
