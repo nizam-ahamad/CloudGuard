@@ -469,7 +469,19 @@ app.post('/api/presign', verifyToken, async (req, res) => {
 
     const signedUrl = await getSignedUrl(s3, command, { expiresIn: 60 });
     
-    res.json({ signedUrl, fileKey });
+    const fileData = {
+      userId: userId,
+      name: filename,
+      originalName: filename,
+      s3Key: fileKey,
+      mimetype: contentType || 'application/octet-stream',
+      status: 'uploading',
+      securityStatus: 'UPLOADING'
+    };
+    const newFile = new FileModel(fileData);
+    await newFile.save();
+
+    res.json({ signedUrl, fileKey, fileId: newFile._id });
   } catch (err) {
     console.error('Presign Error:', err);
     res.status(500).json({ error: 'Failed to generate pre-signed URL' });
@@ -527,6 +539,15 @@ app.post('/api/upload', verifyToken, async (req, res) => {
       let securityStatus = 'Pending';
       let isMalware = false;
 
+      const fileRecord = await FileModel.findOne({ s3Key: targetFile.key });
+      if (!fileRecord) {
+        console.error('[Upload Error] File record not found for:', targetFile.key);
+        continue;
+      }
+
+      fileRecord.securityStatus = 'SCANNING';
+      await fileRecord.save();
+
       console.log('[Routing] Processing through AI Microservice: ' + targetFile.originalname);
         const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
         try {
@@ -543,6 +564,7 @@ app.post('/api/upload', verifyToken, async (req, res) => {
              if (targetFile.key) {
                try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key })); } catch (e) {}
              }
+             await FileModel.deleteOne({ _id: fileRecord._id });
              blockedFiles.push(targetFile.originalname);
              continue;
           }
@@ -572,22 +594,14 @@ app.post('/api/upload', verifyToken, async (req, res) => {
                   exactFileSize = 0;
               }
           }
-          const fileData = {
-            userId: userId,
-            name: targetFile.originalname,
-            diskName: nestedRelativePath,
-            originalName: originalName,
-            location: targetFile.location,
-            s3Key: targetFile.key || `${userId}/${targetFile.originalname}`,
-            relativePath: relativePath,
-            size: exactFileSize,
-            mimetype: targetFile.mimetype,
-            status: 'safe',
-            securityStatus: 'Safe'
-          };
-          const newFile = new FileModel(fileData);
-          await newFile.save();
-          uploadedFiles.push(newFile);
+          
+          fileRecord.diskName = nestedRelativePath;
+          fileRecord.relativePath = relativePath;
+          fileRecord.size = exactFileSize;
+          fileRecord.status = 'safe';
+          fileRecord.securityStatus = 'Safe';
+          await fileRecord.save();
+          uploadedFiles.push(fileRecord);
           
         } catch (scanErr) {
           console.error('[AI Connection Error]:', scanErr.message);
@@ -622,7 +636,7 @@ app.post('/api/upload', verifyToken, async (req, res) => {
 app.get('/api/view/:filename(*)', verifyToken, async (req, res) => {
   const filename = req.params.filename;
   try {
-    const fileRecord = await FileModel.findOne({ userId: req.user._id, diskName: filename });
+    const fileRecord = await FileModel.findOne({ userId: req.user._id, diskName: filename, securityStatus: 'Safe' });
     if (!fileRecord || !fileRecord.s3Key) return res.status(404).json({ error: 'File not found' });
     
     const command = new GetObjectCommand({
@@ -644,7 +658,7 @@ app.get('/api/view/:filename(*)', verifyToken, async (req, res) => {
 app.get('/api/download/:filename(*)', verifyToken, async (req, res) => {
   const filename = req.params.filename;
   try {
-    const fileRecord = await FileModel.findOne({ userId: req.user._id, diskName: filename });
+    const fileRecord = await FileModel.findOne({ userId: req.user._id, diskName: filename, securityStatus: 'Safe' });
     if (!fileRecord || !fileRecord.s3Key) return res.status(404).json({ error: 'File not found' });
     
     const command = new GetObjectCommand({
@@ -713,7 +727,7 @@ app.get('/api/files', verifyToken, async (req, res) => {
     if (isDbConnected || mongoose.connection.readyState === 1) {
       // Query MongoDB to ensure all files (including non-images) are returned
       // regardless of ephemeral disk state on Render.
-      const dbFiles = await FileModel.find({ userId: userId });
+      const dbFiles = await FileModel.find({ userId: userId, securityStatus: 'Safe' });
       
       const mappedFiles = [];
       const folders = new Set();
@@ -773,7 +787,7 @@ app.get('/api/files', verifyToken, async (req, res) => {
 // Access File Endpoint (Presigned URL)
 app.get('/api/files/:id/access', verifyToken, async (req, res) => {
   try {
-    const file = await FileModel.findById(req.params.id);
+    const file = await FileModel.findOne({ _id: req.params.id, securityStatus: 'Safe' });
     if (!file) return res.status(404).json({ error: 'File not found' });
     
     if (file.userId !== req.user._id && !req.user.isAdmin) {
