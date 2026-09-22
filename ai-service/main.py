@@ -225,4 +225,5 @@ async def scan_file(request: ScanRequest):
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"[AI Scanner] Fatal error during scan: {str(e)}")
+        return {"status": "scan_failed", "reason": "Internal scan error"}

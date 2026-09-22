@@ -534,12 +534,13 @@ app.post('/api/upload', verifyToken, async (req, res) => {
     const targetFile = filesToProcess[i];
     const originalName = targetFile.originalname;
     
+    let fileRecord = null;
     try {
       let scanResult = 'Unknown';
       let securityStatus = 'Pending';
       let isMalware = false;
 
-      const fileRecord = await FileModel.findOne({ s3Key: targetFile.key });
+      fileRecord = await FileModel.findOne({ s3Key: targetFile.key });
       if (!fileRecord) {
         console.error('[Upload Error] File record not found for:', targetFile.key);
         continue;
@@ -559,6 +560,10 @@ app.post('/api/upload', verifyToken, async (req, res) => {
           });
           
           scanResult = aiResponse.data.status;
+
+          if (scanResult === 'scan_failed') {
+             throw new Error('AI Service returned scan_failed');
+          }
 
           if (scanResult === 'unverified' || scanResult === 'malware' || scanResult === 'malicious') {
              if (targetFile.key) {
@@ -608,7 +613,10 @@ app.post('/api/upload', verifyToken, async (req, res) => {
           if (targetFile.key) {
             try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key })); } catch (e) {}
           }
-          blockedFiles.push(targetFile.originalname);
+          if (fileRecord && fileRecord._id) {
+            await FileModel.deleteOne({ _id: fileRecord._id });
+          }
+          return res.status(500).json({ error: "Upload failed: Security scan error" });
         }
 
     } catch (error) {
@@ -616,7 +624,10 @@ app.post('/api/upload', verifyToken, async (req, res) => {
       if (targetFile.key) {
         try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key })); } catch (e) {}
       }
-      blockedFiles.push(targetFile.originalname);
+      if (fileRecord && fileRecord._id) {
+        await FileModel.deleteOne({ _id: fileRecord._id });
+      }
+      return res.status(500).json({ error: "Upload failed: Security scan error" });
     }
   }
   
