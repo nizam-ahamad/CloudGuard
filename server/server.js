@@ -544,7 +544,11 @@ app.post('/api/upload', verifyToken, async (req, res) => {
       if (!fileRecord) {
         console.error('[Upload Error] Invalid or unauthorized file record for:', targetFile.key);
         if (targetFile.key) {
-          try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key })); } catch (e) {}
+          try {
+            await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key }));
+          } catch (e) {
+            console.error('[Upload Error] S3 Cleanup Failed for orphaned object:', targetFile.key, 'Error:', e.message);
+          }
         }
         return res.status(404).json({ error: "File record not found or already processed" });
       }
@@ -570,7 +574,11 @@ app.post('/api/upload', verifyToken, async (req, res) => {
 
           if (scanResult === 'unverified' || scanResult === 'malware' || scanResult === 'malicious') {
              if (targetFile.key) {
-               try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key })); } catch (e) {}
+               try {
+                 await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key }));
+               } catch (e) {
+                 console.error('[Upload Error] S3 Cleanup Failed for malicious object:', targetFile.key, 'Error:', e.message);
+               }
              }
              await FileModel.deleteOne({ _id: fileRecord._id });
              blockedFiles.push(targetFile.originalname);
@@ -614,7 +622,11 @@ app.post('/api/upload', verifyToken, async (req, res) => {
         } catch (scanErr) {
           console.error('[AI Connection Error]:', scanErr.message);
           if (targetFile.key) {
-            try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key })); } catch (e) {}
+            try {
+              await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key }));
+            } catch (e) {
+              console.error('[Upload Error] S3 Cleanup Failed during AI scan error:', targetFile.key, 'Error:', e.message);
+            }
           }
           if (fileRecord && fileRecord._id) {
             await FileModel.deleteOne({ _id: fileRecord._id });
@@ -625,7 +637,11 @@ app.post('/api/upload', verifyToken, async (req, res) => {
     } catch (error) {
       console.error('File processing error:', error);
       if (targetFile.key) {
-        try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key })); } catch (e) {}
+        try {
+          await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key }));
+        } catch (e) {
+          console.error('[Upload Error] S3 Cleanup Failed during file processing error:', targetFile.key, 'Error:', e.message);
+        }
       }
       if (fileRecord && fileRecord._id) {
         await FileModel.deleteOne({ _id: fileRecord._id });
