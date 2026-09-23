@@ -354,13 +354,19 @@ function App() {
           if (blockedFiles) allBlockedFiles.push(...blockedFiles);
 
         } catch (err) {
-           if (err.response && err.response.status === 403 && err.response.data.status === 'blocked') {
-             const { uploadedFiles, blockedFiles } = err.response.data;
-             if (uploadedFiles) allUploadedFiles.push(...uploadedFiles);
-             if (blockedFiles) allBlockedFiles.push(...blockedFiles);
+           if (err.response) {
+             const status = err.response.status;
+             if (status === 406) {
+               allBlockedFiles.push(file.name);
+             } else if (err.response.data && err.response.data.error) {
+               addToast('error', `Upload failed for ${file.name}: ${err.response.data.error}`);
+             } else {
+               addToast('error', `Upload failed for ${file.name}: Server Error`);
+             }
            } else {
-             throw err;
+             addToast('error', `Upload failed for ${file.name}: Network or Local Error`);
            }
+           console.error(`Error uploading ${file.name}:`, err);
         }
       }
 
