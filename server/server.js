@@ -568,21 +568,25 @@ app.post('/api/upload', verifyToken, async (req, res) => {
           
           scanResult = aiResponse.data.status;
 
-          if (scanResult === 'scan_failed') {
-             throw new Error('AI Service returned scan_failed');
-          }
-
-          if (scanResult === 'unverified' || scanResult === 'malware' || scanResult === 'malicious') {
+          if (scanResult === 'rate_limited') {
              if (targetFile.key) {
-               try {
-                 await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key }));
-               } catch (e) {
-                 console.error('[Upload Error] S3 Cleanup Failed for malicious object:', targetFile.key, 'Error:', e.message);
-               }
+               try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key })); } catch (e) { console.error('[Upload Error] S3 Cleanup Failed for rate limited object:', targetFile.key, 'Error:', e.message); }
              }
              await FileModel.deleteOne({ _id: fileRecord._id });
-             blockedFiles.push(targetFile.originalname);
-             continue;
+             return res.status(429).json({ error: "Scanner busy, please try again" });
+          }
+
+          if (scanResult === 'malicious') {
+             if (targetFile.key) {
+               try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key })); } catch (e) { console.error('[Upload Error] S3 Cleanup Failed for malicious object:', targetFile.key, 'Error:', e.message); }
+             }
+             fileRecord.securityStatus = 'MALICIOUS';
+             await fileRecord.save();
+             return res.status(406).json({ error: "File blocked: Malicious content detected" });
+          }
+
+          if (scanResult !== 'safe') {
+             throw new Error(`AI Service returned unexpected status: ${scanResult}`);
           }
 
           let relativePath = '';

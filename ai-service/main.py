@@ -101,10 +101,12 @@ def scan_with_virustotal(file_hash):
             return {"status": "malicious" if malicious_count > 0 else "safe"}
         elif response.status_code == 404:
             return {"status": "safe"}
+        elif response.status_code == 429:
+            return {"status": "rate_limited"}
         else:
-            return {"status": "safe"}
+            return {"status": "scan_failed"}
     except Exception:
-        return {"status": "safe"}
+        return {"status": "scan_failed"}
 
 def analyze_executable(filepath=None, data=None, filename="unknown"):
     if rf_model is None:
@@ -156,7 +158,7 @@ def analyze_executable(filepath=None, data=None, filename="unknown"):
             
     except Exception as e:
         print(f"[AI Scanner] Extraction failure for {filename}: {str(e)}")
-        return {"status": "unverified", "message": "Non-executable or unparseable file bypass"}
+        return {"status": "scan_failed", "message": "Failed to parse PE file"}
 
 class ScanRequest(BaseModel):
     fileKey: str
@@ -187,8 +189,8 @@ async def scan_file(request: ScanRequest):
         try:
 
             vt_res = scan_with_virustotal(file_hash)
-            if vt_res.get("status") == "malicious":
-                return {"status": "malicious"}
+            if vt_res.get("status") != "safe":
+                return vt_res
 
             if ext == '.zip':
                 try:
@@ -201,24 +203,24 @@ async def scan_file(request: ScanRequest):
                             inner_hash = get_sha256(data=file_data)
                             
                             inner_vt_res = scan_with_virustotal(inner_hash)
-                            if inner_vt_res.get("status") == "malicious":
-                                return {"status": "malicious"}
+                            if inner_vt_res.get("status") != "safe":
+                                return inner_vt_res
                             
                             extracted_ext = os.path.splitext(extracted_file)[1].lower()
                             if extracted_ext in ['.exe', '.dll', '.com']:
                                 scan_res = analyze_executable(data=file_data, filename=extracted_file)
-                                if scan_res.get("status") in ["malicious", "malware"]:
-                                    return {"status": "malicious"}
+                                if scan_res.get("status") != "safe":
+                                    return scan_res
                     return {"status": "safe"}
                 except zipfile.BadZipFile:
-                    return {"status": "safe", "error": "BadZipFile"}
+                    return {"status": "scan_failed", "error": "BadZipFile"}
                 except Exception as e:
-                    return {"status": "safe", "error": str(e)}
+                    return {"status": "scan_failed", "error": str(e)}
 
             if is_executable:
                 scan_res = analyze_executable(filepath=tmp_path, filename=filename)
-                if scan_res.get("status") in ["malicious", "malware"]:
-                    return {"status": "malicious"}
+                if scan_res.get("status") != "safe":
+                    return scan_res
                     
             return {"status": "safe"}
         finally:
