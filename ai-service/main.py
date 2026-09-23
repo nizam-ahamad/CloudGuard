@@ -33,6 +33,9 @@ s3_client = boto3.client(
 
 VT_API_KEY = os.getenv("VT_API_KEY")
 
+TEMP_DIR = os.path.join(os.path.dirname(__file__), 'temp')
+os.makedirs(TEMP_DIR, exist_ok=True)
+
 # Global variable for the model
 rf_model = None
 
@@ -192,7 +195,7 @@ async def scan_file(request: ScanRequest):
         ext = os.path.splitext(filename)[1].lower()
 
         tmp_path = ""
-        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+        with tempfile.NamedTemporaryFile(dir=TEMP_DIR, delete=False, suffix=ext) as tmp:
             tmp_path = tmp.name
             bucket_name = os.getenv('AWS_BUCKET_NAME')
             s3_response = s3_client.get_object(Bucket=bucket_name, Key=fileKey)
