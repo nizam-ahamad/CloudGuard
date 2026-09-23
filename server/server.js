@@ -540,10 +540,13 @@ app.post('/api/upload', verifyToken, async (req, res) => {
       let securityStatus = 'Pending';
       let isMalware = false;
 
-      fileRecord = await FileModel.findOne({ s3Key: targetFile.key, userId: req.user._id });
+      fileRecord = await FileModel.findOne({ s3Key: targetFile.key, userId: req.user._id, securityStatus: 'UPLOADING' });
       if (!fileRecord) {
-        console.error('[Upload Error] File record not found for:', targetFile.key);
-        continue;
+        console.error('[Upload Error] Invalid or unauthorized file record for:', targetFile.key);
+        if (targetFile.key) {
+          try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key })); } catch (e) {}
+        }
+        return res.status(404).json({ error: "File record not found or already processed" });
       }
 
       fileRecord.securityStatus = 'SCANNING';
