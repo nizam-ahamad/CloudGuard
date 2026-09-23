@@ -540,7 +540,7 @@ app.post('/api/upload', verifyToken, async (req, res) => {
       let securityStatus = 'Pending';
       let isMalware = false;
 
-      fileRecord = await FileModel.findOne({ s3Key: targetFile.key });
+      fileRecord = await FileModel.findOne({ s3Key: targetFile.key, userId: req.user._id });
       if (!fileRecord) {
         console.error('[Upload Error] File record not found for:', targetFile.key);
         continue;
@@ -798,12 +798,12 @@ app.get('/api/files', verifyToken, async (req, res) => {
 // Access File Endpoint (Presigned URL)
 app.get('/api/files/:id/access', verifyToken, async (req, res) => {
   try {
-    const file = await FileModel.findOne({ _id: req.params.id, securityStatus: 'Safe' });
-    if (!file) return res.status(404).json({ error: 'File not found' });
-    
-    if (file.userId !== req.user._id && !req.user.isAdmin) {
-      return res.status(403).json({ error: 'Access denied' });
+    let query = { _id: req.params.id, securityStatus: 'Safe' };
+    if (!req.user.isAdmin) {
+      query.userId = req.user._id;
     }
+    const file = await FileModel.findOne(query);
+    if (!file) return res.status(404).json({ error: 'File not found' });
 
     let targetKey = file.s3Key;
     if (!targetKey && file.location) {
