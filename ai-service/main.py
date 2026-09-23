@@ -120,17 +120,7 @@ def analyze_executable(filepath=None, data=None, filename="unknown"):
         else:
             pe = pefile.PE(filepath, fast_load=True)
         
-        try:
-            sec_idx = pefile.DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_SECURITY']
-            pe.parse_data_directories(directories=[sec_idx])
-            if len(pe.OPTIONAL_HEADER.DATA_DIRECTORY) > sec_idx:
-                sec_dir = pe.OPTIONAL_HEADER.DATA_DIRECTORY[sec_idx]
-                if sec_dir.VirtualAddress > 0 and sec_dir.Size > 0:
-                    print(f"[AI Scanner] Executable: {filename} | Authenticode Signature Verified (Skipping ML)")
-                    pe.close()
-                    return {'status': 'safe', 'reason': 'Valid Digital Signature Found'}
-        except Exception as e:
-            print(f"Signature check failed, proceeding to ML: {e}")
+        # Authenticode verification removed as per Phase 2 constraints.
 
         features['SizeOfOptionalHeader'] = pe.FILE_HEADER.SizeOfOptionalHeader
         features['Characteristics'] = pe.FILE_HEADER.Characteristics
@@ -170,7 +160,6 @@ async def scan_file(request: ScanRequest):
         filename = request.filename or ""
         fileKey = request.fileKey
         ext = os.path.splitext(filename)[1].lower()
-        is_executable = ext in ['.exe', '.dll', '.com']
 
         tmp_path = ""
         with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
@@ -185,6 +174,10 @@ async def scan_file(request: ScanRequest):
             tmp.flush()
             os.fsync(tmp.fileno())
             file_hash = hasher.hexdigest().upper()
+        
+        with open(tmp_path, 'rb') as f:
+            magic_bytes = f.read(2)
+        is_executable = (ext in ['.exe', '.dll', '.com']) or (magic_bytes == b'MZ')
         
         try:
 
@@ -207,7 +200,8 @@ async def scan_file(request: ScanRequest):
                                 return inner_vt_res
                             
                             extracted_ext = os.path.splitext(extracted_file)[1].lower()
-                            if extracted_ext in ['.exe', '.dll', '.com']:
+                            is_inner_executable = (extracted_ext in ['.exe', '.dll', '.com']) or (file_data[:2] == b'MZ')
+                            if is_inner_executable:
                                 scan_res = analyze_executable(data=file_data, filename=extracted_file)
                                 if scan_res.get("status") != "safe":
                                     return scan_res
