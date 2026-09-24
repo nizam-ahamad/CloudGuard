@@ -105,7 +105,7 @@ async function recalculateStorage(userId) {
   }
 }
 
-const GLOBAL_MAX_BYTES = 1073741824; // 1 GB
+const GLOBAL_MAX_BYTES = 107374182400; // 100GB limit calculated to stay within the AWS $100 credit budget for 6 months
 
 // Auth Middleware
 const verifyToken = async (req, res, next) => {
