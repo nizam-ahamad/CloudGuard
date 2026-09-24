@@ -219,19 +219,18 @@ app.post('/api/auth/register', async (req, res) => {
     }
 
     const scriptUrl = "https://script.google.com/macros/s/AKfycbwUtMYORet8Y6mkUtoNJ1ofJRr0Iq8UrGeYcIOjAVnXiVR2sSRSTdmVJ19cc7q3yS79/exec";
-    try {
-      await fetch(scriptUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          to: email, 
-          otp: otp,
-          secret: process.env.GAS_SECRET 
-        })
-      });
-    } catch (fetchErr) {
+    fetch(scriptUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ 
+        to: email, 
+        otp: otp,
+        type: 'otp',
+        secret: process.env.GAS_SECRET 
+      })
+    }).catch(fetchErr => {
       console.error('Error sending OTP webhook:', fetchErr);
-    }
+    });
     
     res.json({ message: 'User created. Please verify your email.' });
   } catch (err) {
