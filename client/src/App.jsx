@@ -941,21 +941,21 @@ function App() {
               {user?.name ? user.name.charAt(0).toUpperCase() : 'U'}
             </div>
             {showProfileMenu && (
-              <div className="absolute right-0 mt-2 w-48 bg-surface-container-lowest border border-outline-variant shadow-lg rounded-xl overflow-hidden z-50">
-                <div className="px-4 py-3 border-b border-outline-variant bg-surface-container-low cursor-default">
-                  <p className="text-sm font-bold text-on-surface truncate">{user?.name || 'User'}</p>
-                  <p className="text-xs text-on-surface-variant truncate">{user?.email || 'user@example.com'}</p>
+              <div className="absolute right-0 mt-2 w-48 bg-surface-container-lowest dark:bg-[#1e1f20] border border-outline-variant dark:border-zinc-800 shadow-lg rounded-xl overflow-hidden z-50">
+                <div className="px-4 py-3 border-b border-outline-variant dark:border-zinc-800 bg-surface-container-low dark:bg-[#131314] cursor-default">
+                  <p className="text-sm font-bold text-on-surface dark:text-[#e3e3e3] truncate">{user?.name || 'User'}</p>
+                  <p className="text-xs text-on-surface-variant dark:text-[#c4c7c5] truncate">{user?.email || 'user@example.com'}</p>
                 </div>
                 <button 
                   onClick={() => { setViewMode('settings'); setShowProfileMenu(false); }}
-                  className="w-full text-left px-4 py-3 text-on-surface hover:bg-surface-container-high text-sm flex items-center gap-2 transition-colors"
+                  className="w-full text-left px-4 py-3 text-on-surface dark:text-[#e3e3e3] hover:bg-surface-container-high dark:hover:bg-zinc-800/70 text-sm flex items-center gap-2 transition-colors"
                 >
                   <span className="material-symbols-outlined text-[18px]">person</span> Profile Settings
                 </button>
-                <div className="w-full h-px bg-outline-variant"></div>
+                <div className="w-full h-px bg-outline-variant dark:bg-zinc-800"></div>
                 <button 
                   onClick={handleLogout}
-                  className="w-full text-left px-4 py-3 text-error hover:bg-error/10 text-sm flex items-center gap-2 transition-colors"
+                  className="w-full text-left px-4 py-3 text-error dark:text-red-400 hover:bg-error/10 dark:hover:bg-red-950/30 text-sm flex items-center gap-2 transition-colors"
                 >
                   <span className="material-symbols-outlined text-[18px]">logout</span> Sign out
                 </button>
@@ -1255,7 +1255,7 @@ function App() {
                           {!file.isFolder && (
                             <button 
                               onClick={(e) => { e.stopPropagation(); handlePreview(file); }}
-                              className="p-1.5 text-on-surface-variant hover:text-secondary rounded hover:bg-surface-container-high transition-colors"
+                              className="p-1.5 text-on-surface-variant dark:text-[#c4c7c5] hover:text-secondary dark:hover:text-[#e3e3e3] rounded hover:bg-surface-container-high transition-colors"
                               title="Preview"
                             >
                               <span className="material-symbols-outlined text-[18px]">visibility</span>
@@ -1264,7 +1264,7 @@ function App() {
                           {!file.isFolder && file.diskName && file.status === 'Safe' && (
                             <button 
                               onClick={(e) => { e.stopPropagation(); handleDownload(file); }}
-                              className="p-1.5 text-on-surface-variant hover:text-secondary rounded hover:bg-surface-container-high transition-colors"
+                              className="p-1.5 text-on-surface-variant dark:text-[#c4c7c5] hover:text-secondary dark:hover:text-[#e3e3e3] rounded hover:bg-surface-container-high transition-colors"
                               title="Download"
                             >
                               <span className="material-symbols-outlined text-[18px]">download</span>
@@ -1272,7 +1272,7 @@ function App() {
                           )}
                           <button 
                             onClick={(e) => { e.stopPropagation(); setFileToDelete(file); }}
-                            className="p-1.5 text-on-surface-variant hover:text-error rounded hover:bg-error/10 transition-colors"
+                            className="p-1.5 text-on-surface-variant dark:text-[#c4c7c5] hover:text-error dark:hover:text-red-400 rounded hover:bg-error/10 transition-colors"
                             title="Delete"
                           >
                             <span className="material-symbols-outlined text-[18px]">delete</span>
