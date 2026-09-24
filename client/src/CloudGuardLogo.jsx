@@ -8,7 +8,7 @@ export default function CloudGuardLogo({ size = 120, className = '' }) {
       width={size} 
       height={size} 
       className={className}
-      style={{ objectFit: 'contain', mixBlendMode: 'multiply' }}
+      style={{ objectFit: 'contain' }}
     />
   );
 }
