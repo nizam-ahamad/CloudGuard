@@ -784,7 +784,7 @@ function App() {
       <nav className={`bg-surface-container-lowest dark:bg-surface-container-low h-screen w-64 fixed left-0 top-0 border-r border-outline-variant dark:border-outline flex flex-col py-stack-lg z-50 transform transition-transform duration-300 md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         {/* Brand Header */}
         <div className="px-6 mb-8 flex items-center gap-3">
-          <CloudGuardLogo size={40} className="shrink-0" />
+          <CloudGuardLogo size={96} className="shrink-0" />
           <div>
             <h1 className="font-headline-md text-headline-md font-bold text-primary dark:text-primary-fixed">CloudGuard</h1>
           </div>
@@ -826,7 +826,7 @@ function App() {
           <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="md:hidden p-2 text-on-surface-variant hover:bg-surface-container-high rounded-full transition-colors">
             <span className="material-symbols-outlined">menu</span>
           </button>
-          <CloudGuardLogo size={32} className="md:hidden shrink-0" />
+          <CloudGuardLogo size={64} className="md:hidden shrink-0" />
           <h1 className="font-headline-md text-headline-md font-bold text-primary dark:text-primary-fixed md:hidden">CloudGuard</h1>
         </div>
           <div className="hidden md:flex flex-1 max-w-md ml-4 mr-8">
