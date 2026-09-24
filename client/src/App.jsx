@@ -16,6 +16,7 @@ function App() {
   const [authMode, setAuthMode] = useState('login');
   const [authForm, setAuthForm] = useState({ name: '', email: '', password: '', remember: false });
   const [authError, setAuthError] = useState('');
+  const [isUnverified, setIsUnverified] = useState(false);
   const [isAuthLoading, setIsAuthLoading] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showForgotModal, setShowForgotModal] = useState(false);
@@ -86,9 +87,22 @@ function App() {
   }, []);
 
 
+  const handleResendOtp = async () => {
+    try {
+      setAuthError('');
+      await axios.post(`${API_BASE_URL}/api/auth/resend-otp`, { email: authForm.email });
+      setAuthMode('verify');
+      addToast('success', 'Verification code resent!');
+      setIsUnverified(false);
+    } catch (err) {
+      addToast('error', 'Failed to resend code.');
+    }
+  };
+
   const handleAuthSubmit = async (e) => {
     e.preventDefault();
     setAuthError('');
+    setIsUnverified(false);
     setIsAuthLoading(true);
 
     if (authMode === 'register') {
@@ -121,6 +135,11 @@ function App() {
         setCurrentDirectory('');
       }
     } catch (err) {
+      if (err.response?.data?.unverified) {
+        setIsUnverified(true);
+      } else {
+        setIsUnverified(false);
+      }
       const extracted = err.response?.data?.error || err.response?.data?.message || err.message || 'An unexpected error occurred';
       setAuthError(typeof extracted === 'string' ? extracted : JSON.stringify(extracted));
     } finally {
@@ -648,8 +667,17 @@ function App() {
           </div>
 
           {authError && (
-            <div className="mb-6 p-3 bg-error/10 border border-error/20 rounded-lg text-error text-sm text-center">
-              {authError}
+            <div className="mb-6 p-3 bg-error/10 border border-error/20 rounded-lg text-error text-sm text-center flex flex-col items-center">
+              <span>{authError}</span>
+              {isUnverified && (
+                <button
+                  type="button"
+                  onClick={handleResendOtp}
+                  className="mt-2 text-secondary hover:underline font-bold"
+                >
+                  Verify Now / Resend Code
+                </button>
+              )}
             </div>
           )}
 
@@ -735,6 +763,7 @@ function App() {
               onClick={() => {
                 setAuthMode(authMode === 'login' ? 'register' : 'login');
                 setAuthError('');
+                setIsUnverified(false);
               }}
               className="text-secondary text-sm hover:underline font-medium"
             >

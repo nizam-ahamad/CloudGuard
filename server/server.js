@@ -176,16 +176,21 @@ app.post('/api/auth/register', async (req, res) => {
       return res.status(400).json({ error: 'Password must be at least 8 characters long and contain at least 1 letter and 1 number' });
     }
     
-    let emailExists = false;
+    let existingUser = null;
+    let users = [];
+    let userIndex = -1;
     
     if (isDbConnected || mongoose.connection.readyState === 1) {
-      emailExists = await User.findOne({ email });
+      existingUser = await User.findOne({ email });
     } else {
-      const users = JSON.parse(fs.readFileSync(usersFilePath));
-      emailExists = users.find(u => u.email === email);
+      users = JSON.parse(fs.readFileSync(usersFilePath));
+      userIndex = users.findIndex(u => u.email === email);
+      if (userIndex !== -1) existingUser = users[userIndex];
     }
     
-    if (emailExists) return res.status(400).json({ error: 'Email already exists' });
+    if (existingUser && existingUser.isVerified !== false) {
+      return res.status(400).json({ error: 'Email already exists' });
+    }
     
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
@@ -195,26 +200,43 @@ app.post('/api/auth/register', async (req, res) => {
     const otpExpire = new Date(Date.now() + 10 * 60000); // 10 minutes
 
     if (isDbConnected || mongoose.connection.readyState === 1) {
-      const user = new User({ 
-        name, 
-        email, 
-        password: hashedPassword, 
-        isVerified: false,
-        otpHash,
-        otpExpire
-      });
-      await user.save();
+      if (existingUser) {
+        existingUser.name = name;
+        existingUser.password = hashedPassword;
+        existingUser.otpHash = otpHash;
+        existingUser.otpExpire = otpExpire;
+        existingUser.otpAttempts = 0;
+        await existingUser.save();
+      } else {
+        const user = new User({ 
+          name, 
+          email, 
+          password: hashedPassword, 
+          isVerified: false,
+          otpHash,
+          otpExpire
+        });
+        await user.save();
+      }
     } else {
-      const users = JSON.parse(fs.readFileSync(usersFilePath));
-      users.push({ 
-        _id: Date.now().toString(), 
-        name, 
-        email, 
-        password: hashedPassword,
-        isVerified: false,
-        otpHash,
-        otpExpire
-      });
+      if (existingUser) {
+        users[userIndex].name = name;
+        users[userIndex].password = hashedPassword;
+        users[userIndex].otpHash = otpHash;
+        users[userIndex].otpExpire = otpExpire;
+        users[userIndex].otpAttempts = 0;
+      } else {
+        users.push({ 
+          _id: Date.now().toString(), 
+          name, 
+          email, 
+          password: hashedPassword,
+          isVerified: false,
+          otpHash,
+          otpExpire,
+          otpAttempts: 0
+        });
+      }
       fs.writeFileSync(usersFilePath, JSON.stringify(users, null, 2));
     }
 
@@ -294,6 +316,62 @@ app.post('/api/auth/verify-otp', async (req, res) => {
     }
 
     res.json({ message: 'Email verified successfully. You can now log in.' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/auth/resend-otp', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'Missing email' });
+
+    let user = null;
+    let userIndex = -1;
+    let users = [];
+    
+    if (isDbConnected || mongoose.connection.readyState === 1) {
+      user = await User.findOne({ email });
+    } else {
+      users = JSON.parse(fs.readFileSync(usersFilePath));
+      userIndex = users.findIndex(u => u.email === email);
+      if (userIndex !== -1) user = users[userIndex];
+    }
+
+    if (!user) return res.status(400).json({ error: 'User not found' });
+    if (user.isVerified) return res.status(400).json({ error: 'User is already verified' });
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpHash = await bcrypt.hash(otp, 10);
+    const otpExpire = new Date(Date.now() + 10 * 60000); // 10 minutes
+
+    if (isDbConnected || mongoose.connection.readyState === 1) {
+      user.otpHash = otpHash;
+      user.otpExpire = otpExpire;
+      user.otpAttempts = 0;
+      await user.save();
+    } else {
+      users[userIndex].otpHash = otpHash;
+      users[userIndex].otpExpire = otpExpire;
+      users[userIndex].otpAttempts = 0;
+      fs.writeFileSync(usersFilePath, JSON.stringify(users, null, 2));
+    }
+
+    const scriptUrl = "https://script.google.com/macros/s/AKfycbwUtMYORet8Y6mkUtoNJ1ofJRr0Iq8UrGeYcIOjAVnXiVR2sSRSTdmVJ19cc7q3yS79/exec";
+    fetch(scriptUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ 
+        to: email, 
+        otp: otp,
+        type: 'otp',
+        secret: process.env.GAS_SECRET 
+      })
+    }).catch(fetchErr => {
+      console.error('Error sending OTP webhook:', fetchErr);
+    });
+
+    res.json({ message: 'A new verification code has been sent to your email.' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
