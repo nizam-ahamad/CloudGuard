@@ -248,7 +248,7 @@ app.post('/api/auth/register', async (req, res) => {
         to: email, 
         otp: otp,
         type: 'otp',
-        secret: "cloudguard-secure-secret-2024" 
+        secret: process.env.GAS_SECRET 
       })
     }).catch(fetchErr => {
       console.error('Error sending OTP webhook:', fetchErr);
@@ -365,7 +365,7 @@ app.post('/api/auth/resend-otp', async (req, res) => {
         to: email, 
         otp: otp,
         type: 'otp',
-        secret: "cloudguard-secure-secret-2024" 
+        secret: process.env.GAS_SECRET 
       })
     }).catch(fetchErr => {
       console.error('Error sending OTP webhook:', fetchErr);
@@ -451,7 +451,7 @@ app.post('/api/auth/forgot-password', async (req, res) => {
         body: JSON.stringify({ 
           to: email, 
           link: resetUrl,
-          secret: "cloudguard-secure-secret-2024" 
+          secret: process.env.GAS_SECRET 
         })
       });
 
