@@ -607,7 +607,7 @@ function App() {
         <div className="bg-surface w-full max-w-md rounded-2xl shadow-xl border border-outline-variant p-8">
           <div className="flex flex-col items-center mb-8">
             <div className="mb-4">
-              <CloudGuardLogo size={180} />
+              <CloudGuardLogo size={10} />
             </div>
             <h1 className="font-headline-md text-primary font-bold">CloudGuard</h1>
             <p className="text-on-surface-variant mt-2 font-body-md text-center">
