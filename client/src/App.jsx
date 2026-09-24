@@ -868,14 +868,14 @@ function App() {
         <div className="px-6 mb-8 flex items-center gap-0">
           <CloudGuardLogo className="h-12 w-auto shrink-0" />
           <div>
-            <h1 className="font-headline-md text-headline-md font-bold text-primary dark:text-white">CloudGuard</h1>
+            <h1 className="font-headline-md text-headline-md font-bold text-primary dark:text-[#e3e3e3]">CloudGuard</h1>
           </div>
         </div>
         {/* Main Navigation */}
         <div className="flex-1 px-4 space-y-1">
           <button 
             onClick={() => { setViewMode('all'); setCurrentDirectory(''); setIsSidebarOpen(false); }}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg font-bold cursor-pointer active:opacity-80 transition-colors duration-200 border-l-4 ${viewMode === 'all' ? 'text-secondary border-secondary bg-surface-container-low' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high border-transparent'}`}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${viewMode === 'all' ? 'text-secondary bg-surface-container-low dark:bg-[#282a2c] dark:text-[#e3e3e3]' : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'}`}
           >
             <span className="material-symbols-outlined" data-weight={viewMode === 'all' ? "fill" : ""}>folder_open</span>
             <span className="font-body-md text-body-md">My Files</span>
@@ -883,7 +883,7 @@ function App() {
           
           <button 
             onClick={() => { setViewMode('recent'); setCurrentDirectory(''); setIsSidebarOpen(false); }}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg font-bold cursor-pointer active:opacity-80 transition-colors duration-200 border-l-4 ${viewMode === 'recent' ? 'text-secondary border-secondary bg-surface-container-low' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high border-transparent'}`}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${viewMode === 'recent' ? 'text-secondary bg-surface-container-low dark:bg-[#282a2c] dark:text-[#e3e3e3]' : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'}`}
           >
             <span className="material-symbols-outlined" data-weight={viewMode === 'recent' ? "fill" : ""}>history</span>
             <span className="font-body-md text-body-md">Recent</span>
@@ -909,7 +909,7 @@ function App() {
             <span className="material-symbols-outlined">menu</span>
           </button>
           <CloudGuardLogo className="h-10 w-auto md:hidden shrink-0" />
-          <h1 className="font-headline-md text-headline-md font-bold text-primary dark:text-white md:hidden -ml-2">CloudGuard</h1>
+          <h1 className="font-headline-md text-headline-md font-bold text-primary dark:text-[#e3e3e3] md:hidden -ml-2">CloudGuard</h1>
         </div>
           <div className="hidden md:flex flex-1 max-w-md ml-4 mr-8">
             <div className="relative w-full focus-within:ring-2 focus-within:ring-secondary rounded-lg transition-all">
@@ -972,35 +972,35 @@ function App() {
       >
         {viewMode === 'settings' ? (
           <div className="max-w-3xl mx-auto space-y-6">
-            <h2 className="font-headline-md text-headline-md font-bold text-on-surface dark:text-white mb-8">Profile Settings</h2>
+            <h2 className="font-headline-md text-headline-md font-bold text-on-surface dark:text-[#e3e3e3] mb-8">Profile Settings</h2>
             
             <div className="bg-surface-container-lowest dark:bg-[#1e1f20] border border-outline-variant dark:border-zinc-800 rounded-xl p-6 shadow-sm">
-              <h3 className="font-title-md text-on-surface dark:text-white mb-4">Profile Details</h3>
+              <h3 className="font-title-md text-on-surface dark:text-[#e3e3e3] mb-4">Profile Details</h3>
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-on-surface-variant mb-1">Name</label>
+                  <label className="block text-sm font-medium text-on-surface-variant dark:text-[#c4c7c5] mb-1">Name</label>
                   <input type="text" value={user?.name || ''} readOnly className="w-full bg-surface-container-low dark:bg-[#1e1f20] text-on-surface-variant dark:text-zinc-200 border border-outline-variant dark:border-zinc-700 rounded-lg px-4 py-2 opacity-70 cursor-not-allowed" />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-on-surface-variant mb-1">Email</label>
+                  <label className="block text-sm font-medium text-on-surface-variant dark:text-[#c4c7c5] mb-1">Email</label>
                   <input type="text" value={user?.email || ''} readOnly className="w-full bg-surface-container-low dark:bg-[#1e1f20] text-on-surface-variant dark:text-zinc-200 border border-outline-variant dark:border-zinc-700 rounded-lg px-4 py-2 opacity-70 cursor-not-allowed" />
                 </div>
               </div>
             </div>
 
             <div className="bg-surface-container-lowest dark:bg-[#1e1f20] border border-outline-variant dark:border-zinc-800 rounded-xl p-6 shadow-sm">
-              <h3 className="font-title-md text-on-surface dark:text-white mb-4">Security</h3>
+              <h3 className="font-title-md text-on-surface dark:text-[#e3e3e3] mb-4">Security</h3>
               <form onSubmit={handlePasswordUpdate} className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-on-surface-variant mb-1">Current Password</label>
+                  <label className="block text-sm font-medium text-on-surface-variant dark:text-[#c4c7c5] mb-1">Current Password</label>
                   <PasswordInput value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} required className="w-full bg-surface dark:bg-[#1e1f20] text-on-surface dark:text-zinc-200 border border-outline-variant dark:border-zinc-700 focus:ring-2 focus:ring-secondary rounded-lg px-4 py-2 outline-none" />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-on-surface-variant mb-1">New Password</label>
+                  <label className="block text-sm font-medium text-on-surface-variant dark:text-[#c4c7c5] mb-1">New Password</label>
                   <PasswordInput value={newPassword} onChange={e => setNewPassword(e.target.value)} required className="w-full bg-surface dark:bg-[#1e1f20] text-on-surface dark:text-zinc-200 border border-outline-variant dark:border-zinc-700 focus:ring-2 focus:ring-secondary rounded-lg px-4 py-2 outline-none" />
                   <p className="text-xs text-on-surface-variant mt-1">Must be at least 8 characters with 1 letter and 1 number</p>
                 </div>
-                <button type="submit" disabled={isUpdatingPassword} className={`px-6 py-2 bg-primary dark:bg-zinc-800 text-on-primary dark:text-white rounded-lg font-medium transition-colors shadow-sm ${isUpdatingPassword ? 'opacity-70 cursor-not-allowed' : 'hover:bg-primary/90 dark:hover:bg-zinc-700'}`}>
+                <button type="submit" disabled={isUpdatingPassword} className={`px-6 py-2 bg-primary dark:bg-zinc-800 text-on-primary dark:text-[#e3e3e3] rounded-lg font-medium transition-colors shadow-sm ${isUpdatingPassword ? 'opacity-70 cursor-not-allowed' : 'hover:bg-primary/90 dark:hover:bg-zinc-700'}`}>
                   {isUpdatingPassword ? (
                     <span className="flex items-center justify-center gap-2">
                       <span className="animate-spin inline-block w-4 h-4 border-[2px] border-current border-t-transparent rounded-full" role="status" aria-label="loading"></span>
@@ -1021,7 +1021,7 @@ function App() {
                   <label className="block text-sm font-medium text-on-surface-variant dark:text-red-200 mb-1">To verify, type <strong>DELETE</strong> below:</label>
                   <input type="text" value={deleteConfirmText} onChange={e => setDeleteConfirmText(e.target.value)} className="w-full bg-surface dark:bg-[#1e1f20] text-on-surface dark:text-zinc-200 border border-outline-variant dark:border-zinc-700 focus:ring-2 focus:ring-error rounded-lg px-4 py-2 outline-none" />
                 </div>
-                <button type="submit" disabled={deleteConfirmText !== 'DELETE' || isDeletingAccount} className={`px-6 py-2 rounded-lg font-medium transition-colors shadow-sm ${deleteConfirmText === 'DELETE' && !isDeletingAccount ? 'bg-error dark:bg-zinc-800 text-on-error dark:text-white hover:bg-[#b91c1c] dark:hover:bg-zinc-700' : 'bg-surface-dim dark:bg-zinc-900 text-on-surface-variant dark:text-zinc-500 cursor-not-allowed opacity-70'}`}>
+                <button type="submit" disabled={deleteConfirmText !== 'DELETE' || isDeletingAccount} className={`px-6 py-2 rounded-lg font-medium transition-colors shadow-sm ${deleteConfirmText === 'DELETE' && !isDeletingAccount ? 'bg-error dark:bg-zinc-800 text-on-error dark:text-[#e3e3e3] hover:bg-[#b91c1c] dark:hover:bg-zinc-700' : 'bg-surface-dim dark:bg-zinc-900 text-on-surface-variant dark:text-zinc-500 cursor-not-allowed opacity-70'}`}>
                   {isDeletingAccount ? (
                     <span className="flex items-center justify-center gap-2">
                       <span className="animate-spin inline-block w-4 h-4 border-[2px] border-current border-t-transparent rounded-full" role="status" aria-label="loading"></span>
@@ -1039,7 +1039,7 @@ function App() {
         {/* Page Title */}
         <div className="mb-stack-lg flex flex-col md:flex-row md:justify-between md:items-end gap-4">
           <div>
-            <h2 className="font-headline-lg-mobile md:font-headline-lg text-headline-lg-mobile md:text-headline-lg font-bold text-on-surface dark:text-white mb-2">My Files</h2>
+            <h2 className="font-headline-lg-mobile md:font-headline-lg text-headline-lg-mobile md:text-headline-lg font-bold text-on-surface dark:text-[#e3e3e3] mb-2">My Files</h2>
             <p className="font-body-md text-body-md text-on-surface-variant dark:text-zinc-400">Manage and secure your digital vault.</p>
           </div>
           <div className="flex items-center gap-4 bg-surface-container-lowest dark:bg-[#1e1f20] p-4 rounded-xl border border-outline-variant dark:border-zinc-800/50 shadow-sm w-fit dark:text-zinc-300">
@@ -1118,7 +1118,7 @@ function App() {
         {/* Recent Files Table */}
         <section>
           <div className="flex items-center justify-between mb-stack-md">
-            <h3 className="font-title-lg text-title-lg text-on-surface dark:text-white">
+            <h3 className="font-title-lg text-title-lg text-on-surface dark:text-[#e3e3e3]">
               {viewMode === 'recent' ? 'Recent Files' : 'All Files'}
             </h3>
             <div className="flex items-center gap-4">
