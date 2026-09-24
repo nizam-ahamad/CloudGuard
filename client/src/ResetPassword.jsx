@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import axios from 'axios';
+import PasswordInput from './PasswordInput';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
@@ -63,8 +64,7 @@ function ResetPassword({ token }) {
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-on-surface mb-1">New Password</label>
-            <input 
-              type="password" 
+            <PasswordInput 
               required 
               className="w-full px-4 py-2 bg-surface-container-lowest border border-outline-variant rounded-lg focus:ring-2 focus:ring-secondary outline-none transition-all"
               value={password}
@@ -73,8 +73,7 @@ function ResetPassword({ token }) {
           </div>
           <div>
             <label className="block text-sm font-medium text-on-surface mb-1">Confirm New Password</label>
-            <input 
-              type="password" 
+            <PasswordInput 
               required 
               className="w-full px-4 py-2 bg-surface-container-lowest border border-outline-variant rounded-lg focus:ring-2 focus:ring-secondary outline-none transition-all"
               value={confirmPassword}

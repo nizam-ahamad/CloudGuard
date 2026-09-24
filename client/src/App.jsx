@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import ResetPassword from './ResetPassword';
 import CloudGuardLogo from './CloudGuardLogo';
+import PasswordInput from './PasswordInput';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
@@ -646,8 +647,7 @@ function App() {
             </div>
             <div>
               <label className="block text-sm font-medium text-on-surface mb-1">Password</label>
-              <input 
-                type="password" 
+              <PasswordInput 
                 required 
                 className="w-full px-4 py-2 bg-surface-container-lowest border border-outline-variant rounded-lg focus:ring-2 focus:ring-secondary outline-none transition-all"
                 value={authForm.password}
@@ -901,11 +901,11 @@ function App() {
               <form onSubmit={handlePasswordUpdate} className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-on-surface-variant mb-1">Current Password</label>
-                  <input type="password" value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} required className="w-full bg-surface text-on-surface border border-outline-variant focus:ring-2 focus:ring-secondary rounded-lg px-4 py-2 outline-none" />
+                  <PasswordInput value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} required className="w-full bg-surface text-on-surface border border-outline-variant focus:ring-2 focus:ring-secondary rounded-lg px-4 py-2 outline-none" />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-on-surface-variant mb-1">New Password</label>
-                  <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} required className="w-full bg-surface text-on-surface border border-outline-variant focus:ring-2 focus:ring-secondary rounded-lg px-4 py-2 outline-none" />
+                  <PasswordInput value={newPassword} onChange={e => setNewPassword(e.target.value)} required className="w-full bg-surface text-on-surface border border-outline-variant focus:ring-2 focus:ring-secondary rounded-lg px-4 py-2 outline-none" />
                 </div>
                 <button type="submit" disabled={isUpdatingPassword} className={`px-6 py-2 bg-primary text-on-primary rounded-lg font-medium transition-colors shadow-sm ${isUpdatingPassword ? 'opacity-70 cursor-not-allowed' : 'hover:bg-primary/90'}`}>
                   {isUpdatingPassword ? (
