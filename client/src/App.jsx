@@ -658,7 +658,7 @@ function App() {
 
     if (authMode === 'verify') {
       return (
-        <div className="min-h-screen bg-white dark:bg-slate-900 text-slate-900 dark:text-white flex items-center justify-center p-4">
+        <div className="min-h-screen bg-white dark:bg-[#131314] text-slate-900 dark:text-zinc-100 flex items-center justify-center p-4">
           <OTPVerification 
             email={authForm.email} 
             onVerifySuccess={() => {
@@ -672,7 +672,7 @@ function App() {
     }
 
     return (
-      <div className="min-h-screen bg-white dark:bg-slate-900 text-slate-900 dark:text-white flex items-center justify-center p-4">
+      <div className="min-h-screen bg-white dark:bg-[#131314] text-slate-900 dark:text-zinc-100 flex items-center justify-center p-4">
         <div className="bg-surface w-full max-w-md rounded-2xl shadow-xl border border-outline-variant p-8">
           <div className="flex flex-col items-center mb-8">
             <div className="mb-4">
@@ -862,9 +862,9 @@ function App() {
   }
 
   return (
-    <div className="flex h-screen w-full bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
+    <div className="flex h-screen w-full bg-white dark:bg-[#131314] text-slate-900 dark:text-zinc-100">
       {/* SideNavBar */}
-      <nav className={`bg-surface-container-lowest dark:bg-slate-900 h-screen w-64 fixed left-0 top-0 border-r border-outline-variant dark:border-slate-800 flex flex-col py-stack-lg z-50 transform transition-transform duration-300 md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+      <nav className={`bg-surface-container-lowest dark:bg-[#1e1f20] h-screen w-64 fixed left-0 top-0 border-r border-outline-variant dark:border-zinc-800 flex flex-col py-stack-lg z-50 transform transition-transform duration-300 md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="px-6 mb-8 flex items-center gap-0">
           <CloudGuardLogo className="h-12 w-auto shrink-0" />
           <div>
@@ -903,7 +903,7 @@ function App() {
       </nav>
 
       {/* TopAppBar */}
-      <header className="bg-surface-container-lowest dark:bg-slate-900 fixed top-0 right-0 w-full md:w-[calc(100%-256px)] h-16 border-b border-outline-variant dark:border-slate-800 flex justify-between items-center px-margin-mobile md:px-margin-desktop z-10">
+      <header className="bg-surface-container-lowest dark:bg-[#1e1f20] fixed top-0 right-0 w-full md:w-[calc(100%-256px)] h-16 border-b border-outline-variant dark:border-zinc-800 flex justify-between items-center px-margin-mobile md:px-margin-desktop z-10">
         <div className="flex items-center gap-4">
           <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="md:hidden p-2 text-on-surface-variant hover:bg-surface-container-high rounded-full transition-colors">
             <span className="material-symbols-outlined">menu</span>
@@ -917,7 +917,7 @@ function App() {
               <input 
                 value={searchQuery} 
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-surface dark:bg-slate-800 text-on-surface dark:text-white border border-outline-variant dark:border-slate-700 rounded-lg pl-10 pr-4 py-2 font-body-md text-body-md outline-none" 
+                className="w-full bg-surface dark:bg-zinc-800 text-on-surface dark:text-zinc-200 border border-outline-variant dark:border-zinc-700 rounded-lg pl-10 pr-4 py-2 font-body-md text-body-md outline-none" 
                 placeholder="Search files, folders..." 
                 type="text" 
               />
@@ -926,7 +926,7 @@ function App() {
         <div className="flex items-center gap-2">
           <button
             onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-            className="p-2 text-on-surface-variant dark:text-white hover:bg-surface-container-high dark:hover:bg-slate-800 rounded-full transition-colors flex items-center justify-center"
+            className="p-2 text-on-surface-variant dark:text-zinc-100 hover:bg-surface-container-high dark:hover:bg-zinc-800/70 rounded-full transition-colors flex items-center justify-center"
             title="Toggle Theme"
           >
             <span className="material-symbols-outlined">
@@ -979,11 +979,11 @@ function App() {
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-on-surface-variant mb-1">Name</label>
-                  <input type="text" value={user?.name || ''} readOnly className="w-full bg-surface-container-low dark:bg-slate-800 text-on-surface-variant dark:text-white border border-outline-variant dark:border-slate-700 rounded-lg px-4 py-2 opacity-70 cursor-not-allowed" />
+                  <input type="text" value={user?.name || ''} readOnly className="w-full bg-surface-container-low dark:bg-[#131314] text-on-surface-variant dark:text-zinc-100 border border-outline-variant dark:border-zinc-700 rounded-lg px-4 py-2 opacity-70 cursor-not-allowed" />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-on-surface-variant mb-1">Email</label>
-                  <input type="text" value={user?.email || ''} readOnly className="w-full bg-surface-container-low dark:bg-slate-800 text-on-surface-variant dark:text-white border border-outline-variant dark:border-slate-700 rounded-lg px-4 py-2 opacity-70 cursor-not-allowed" />
+                  <input type="text" value={user?.email || ''} readOnly className="w-full bg-surface-container-low dark:bg-[#131314] text-on-surface-variant dark:text-zinc-100 border border-outline-variant dark:border-zinc-700 rounded-lg px-4 py-2 opacity-70 cursor-not-allowed" />
                 </div>
               </div>
             </div>
@@ -993,11 +993,11 @@ function App() {
               <form onSubmit={handlePasswordUpdate} className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-on-surface-variant mb-1">Current Password</label>
-                  <PasswordInput value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} required className="w-full bg-surface dark:bg-slate-800 text-on-surface dark:text-white border border-outline-variant dark:border-slate-700 focus:ring-2 focus:ring-secondary rounded-lg px-4 py-2 outline-none" />
+                  <PasswordInput value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} required className="w-full bg-surface dark:bg-[#131314] text-on-surface dark:text-zinc-100 border border-outline-variant dark:border-zinc-700 focus:ring-2 focus:ring-secondary rounded-lg px-4 py-2 outline-none" />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-on-surface-variant mb-1">New Password</label>
-                  <PasswordInput value={newPassword} onChange={e => setNewPassword(e.target.value)} required className="w-full bg-surface dark:bg-slate-800 text-on-surface dark:text-white border border-outline-variant dark:border-slate-700 focus:ring-2 focus:ring-secondary rounded-lg px-4 py-2 outline-none" />
+                  <PasswordInput value={newPassword} onChange={e => setNewPassword(e.target.value)} required className="w-full bg-surface dark:bg-[#131314] text-on-surface dark:text-zinc-100 border border-outline-variant dark:border-zinc-700 focus:ring-2 focus:ring-secondary rounded-lg px-4 py-2 outline-none" />
                   <p className="text-xs text-on-surface-variant mt-1">Must be at least 8 characters with 1 letter and 1 number</p>
                 </div>
                 <button type="submit" disabled={isUpdatingPassword} className={`px-6 py-2 bg-primary text-on-primary rounded-lg font-medium transition-colors shadow-sm ${isUpdatingPassword ? 'opacity-70 cursor-not-allowed' : 'hover:bg-primary/90'}`}>
@@ -1019,7 +1019,7 @@ function App() {
               <form onSubmit={handleAccountDelete} className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-on-surface-variant dark:text-red-200 mb-1">To verify, type <strong>DELETE</strong> below:</label>
-                  <input type="text" value={deleteConfirmText} onChange={e => setDeleteConfirmText(e.target.value)} className="w-full bg-surface dark:bg-slate-800 text-on-surface dark:text-white border border-outline-variant dark:border-slate-700 focus:ring-2 focus:ring-error rounded-lg px-4 py-2 outline-none" />
+                  <input type="text" value={deleteConfirmText} onChange={e => setDeleteConfirmText(e.target.value)} className="w-full bg-surface dark:bg-[#131314] text-on-surface dark:text-zinc-100 border border-outline-variant dark:border-zinc-700 focus:ring-2 focus:ring-error rounded-lg px-4 py-2 outline-none" />
                 </div>
                 <button type="submit" disabled={deleteConfirmText !== 'DELETE' || isDeletingAccount} className={`px-6 py-2 rounded-lg font-medium transition-colors shadow-sm ${deleteConfirmText === 'DELETE' && !isDeletingAccount ? 'bg-error text-on-error hover:bg-[#b91c1c]' : 'bg-surface-dim text-on-surface-variant cursor-not-allowed opacity-70'}`}>
                   {isDeletingAccount ? (
@@ -1040,9 +1040,9 @@ function App() {
         <div className="mb-stack-lg flex flex-col md:flex-row md:justify-between md:items-end gap-4">
           <div>
             <h2 className="font-headline-lg-mobile md:font-headline-lg text-headline-lg-mobile md:text-headline-lg font-bold text-on-surface dark:text-white mb-2">My Files</h2>
-            <p className="font-body-md text-body-md text-on-surface-variant dark:text-slate-300">Manage and secure your digital vault.</p>
+            <p className="font-body-md text-body-md text-on-surface-variant dark:text-zinc-400">Manage and secure your digital vault.</p>
           </div>
-          <div className="flex items-center gap-4 bg-surface-container-lowest dark:bg-slate-800 p-4 rounded-xl border border-outline-variant dark:border-slate-700 shadow-sm w-fit dark:text-slate-200">
+          <div className="flex items-center gap-4 bg-surface-container-lowest dark:bg-[#1e1f20] p-4 rounded-xl border border-outline-variant dark:border-zinc-800/50 shadow-sm w-fit dark:text-zinc-300">
             <div className="relative w-12 h-12">
               <svg className="w-full h-full transform -rotate-90" viewBox="0 0 36 36">
                 <path className="text-surface-dim" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" strokeWidth="3"></path>
@@ -1071,17 +1071,17 @@ function App() {
               onDrop={onDrop} 
               onDragOver={onDragOver} 
               onClick={triggerFileInput}
-              className="w-full border-2 border-dashed border-outline-variant dark:border-slate-700 bg-surface-container-lowest dark:bg-slate-800 dark:text-slate-200 hover:bg-surface-container-low transition-colors duration-200 rounded-xl p-12 flex flex-col items-center justify-center cursor-pointer group"
+              className="w-full border-2 border-dashed border-outline-variant dark:border-zinc-800/50 bg-surface-container-lowest dark:bg-[#1e1f20] dark:text-zinc-300 hover:bg-surface-container-low transition-colors duration-200 rounded-xl p-12 flex flex-col items-center justify-center cursor-pointer group"
             >
               <div className="w-16 h-16 rounded-full bg-surface-container flex items-center justify-center mb-4 group-hover:scale-110 transition-transform duration-300">
                 <span className="material-symbols-outlined text-secondary text-3xl">
                   {uploading ? 'sync' : 'cloud_upload'}
                 </span>
               </div>
-              <h3 className="font-title-lg text-title-lg text-on-surface dark:text-slate-200 mb-2">
+              <h3 className="font-title-lg text-title-lg text-on-surface dark:text-zinc-200 mb-2">
                 {uploading ? 'Uploading...' : 'Drag & drop files or folders here'}
               </h3>
-              <p className="font-body-md text-body-md text-on-surface-variant dark:text-slate-400 text-center max-w-md mb-6">Securely upload documents, images, and archives. Maximum file size 5GB.</p>
+              <p className="font-body-md text-body-md text-on-surface-variant dark:text-zinc-400 text-center max-w-md mb-6">Securely upload documents, images, and archives. Maximum file size 5GB.</p>
               
               <button 
                 onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}
@@ -1124,7 +1124,7 @@ function App() {
             <div className="flex items-center gap-4">
               <button 
                 onClick={toggleSort}
-                className="text-on-surface-variant dark:text-slate-300 hover:text-secondary flex items-center gap-1 font-label-md"
+                className="text-on-surface-variant dark:text-zinc-300 hover:text-secondary flex items-center gap-1 font-label-md"
               >
                 <span className="material-symbols-outlined text-sm">sort</span>
                 Sort: {sortOrder === 'newest' ? 'Newest First' : 'Oldest First'}
@@ -1164,11 +1164,11 @@ function App() {
             </div>
           )}
 
-          <div className="bg-surface-container-lowest dark:bg-slate-800 rounded-xl border border-outline-variant dark:border-slate-700 shadow-sm overflow-hidden dark:text-slate-200">
+          <div className="bg-surface-container-lowest dark:bg-[#1e1f20] rounded-xl border border-outline-variant dark:border-zinc-800/50 shadow-sm overflow-hidden dark:text-zinc-300">
             <div className="overflow-x-auto custom-scrollbar">
               <table className="w-full text-left border-collapse min-w-[800px]">
                 <thead>
-                  <tr className="border-b border-outline-variant dark:border-slate-700 bg-surface-container-low dark:bg-slate-900 text-on-surface-variant dark:text-slate-300 font-label-md text-label-md uppercase tracking-wider">
+                  <tr className="border-b border-outline-variant dark:border-zinc-800/50 bg-surface-container-low dark:bg-[#1e1f20] text-on-surface-variant dark:text-zinc-300 font-label-md text-label-md uppercase tracking-wider">
                     <th className="py-4 px-6 font-medium w-12 text-center">
                       <input 
                         type="checkbox" 
@@ -1190,7 +1190,7 @@ function App() {
                     <th className="py-4 px-6 font-medium text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="font-body-md text-body-md text-on-surface dark:text-slate-200 divide-y divide-outline-variant/50 dark:divide-slate-700">
+                <tbody className="font-body-md text-body-md text-on-surface dark:text-zinc-300 divide-y divide-outline-variant/50 dark:divide-zinc-800/50">
                   {filteredFiles.length === 0 ? (
                     <tr>
                       <td colSpan="6" className="py-8 text-center text-on-surface-variant">
@@ -1202,7 +1202,7 @@ function App() {
                     <tr 
                       key={file._id || file.id} 
                       onClick={() => file.isFolder ? setCurrentDirectory(file.diskName) : handlePreview(file)}
-                      className={`hover:bg-surface-bright dark:hover:bg-slate-800 dark:text-slate-200 transition-colors group h-14 ${file.isFolder || (file.diskName && file.status === 'Safe') ? 'cursor-pointer' : ''}`}
+                      className={`hover:bg-surface-bright dark:hover:bg-zinc-800/70 dark:text-zinc-300 transition-colors group h-14 ${file.isFolder || (file.diskName && file.status === 'Safe') ? 'cursor-pointer' : ''}`}
                     >
                       <td className="py-3 px-6 w-12 text-center" onClick={(e) => e.stopPropagation()}>
                         {!file.isFolder && (
