@@ -9,6 +9,22 @@ import Toast from './Toast';
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
 function App() {
+  const [theme, setTheme] = useState(() => {
+    const savedTheme = localStorage.getItem('theme');
+    if (savedTheme) return savedTheme;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  });
+
+  useEffect(() => {
+    const root = window.document.documentElement;
+    if (theme === 'dark') {
+      root.classList.add('dark');
+    } else {
+      root.classList.remove('dark');
+    }
+    localStorage.setItem('theme', theme);
+  }, [theme]);
+
   const [token, setToken] = useState(() => localStorage.getItem('token') || sessionStorage.getItem('token'));
   const [user, setUser] = useState(() => {
     const userStr = localStorage.getItem('user') || sessionStorage.getItem('user');
@@ -642,7 +658,7 @@ function App() {
 
     if (authMode === 'verify') {
       return (
-        <div className="min-h-screen bg-surface-container-lowest flex items-center justify-center p-4">
+        <div className="min-h-screen bg-white dark:bg-slate-900 text-slate-900 dark:text-white flex items-center justify-center p-4">
           <OTPVerification 
             email={authForm.email} 
             onVerifySuccess={() => {
@@ -656,7 +672,7 @@ function App() {
     }
 
     return (
-      <div className="min-h-screen bg-surface-container-lowest flex items-center justify-center p-4">
+      <div className="min-h-screen bg-white dark:bg-slate-900 text-slate-900 dark:text-white flex items-center justify-center p-4">
         <div className="bg-surface w-full max-w-md rounded-2xl shadow-xl border border-outline-variant p-8">
           <div className="flex flex-col items-center mb-8">
             <div className="mb-4">
@@ -846,7 +862,7 @@ function App() {
   }
 
   return (
-    <div className="flex h-screen w-full">
+    <div className="flex h-screen w-full bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
       {/* SideNavBar */}
       <nav className={`bg-surface-container-lowest dark:bg-surface-container-low h-screen w-64 fixed left-0 top-0 border-r border-outline-variant dark:border-outline flex flex-col py-stack-lg z-50 transform transition-transform duration-300 md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="px-6 mb-8 flex items-center gap-0">
@@ -908,6 +924,15 @@ function App() {
             </div>
           </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+            className="p-2 text-on-surface-variant dark:text-white hover:bg-surface-container-high dark:hover:bg-slate-800 rounded-full transition-colors flex items-center justify-center"
+            title="Toggle Theme"
+          >
+            <span className="material-symbols-outlined">
+              {theme === 'dark' ? 'light_mode' : 'dark_mode'}
+            </span>
+          </button>
           <div className="relative ml-2">
             <div 
               onClick={(e) => { e.stopPropagation(); setShowProfileMenu(!showProfileMenu); }}
