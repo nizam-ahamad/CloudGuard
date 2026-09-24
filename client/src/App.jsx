@@ -4,6 +4,7 @@ import ResetPassword from './ResetPassword';
 import CloudGuardLogo from './CloudGuardLogo';
 import PasswordInput from './PasswordInput';
 import OTPVerification from './OTPVerification';
+import Toast from './Toast';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
@@ -312,9 +313,10 @@ function App() {
   const addToast = (type, message) => {
     const id = Date.now() + Math.random();
     setToasts(prev => [...prev, { id, type, message }]);
-    setTimeout(() => {
-      setToasts(prev => prev.filter(t => t.id !== id));
-    }, 5000);
+  };
+
+  const removeToast = (id) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
   };
 
   useEffect(() => {
@@ -1369,25 +1371,15 @@ function App() {
       )}
 
       {/* Toast Notification */}
-      <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-2">
+      <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-2 pointer-events-none">
         {toasts.map(toast => (
-          <div key={toast.id} className="bg-surface-container-highest border border-outline-variant rounded-xl shadow-xl p-4 flex items-center gap-3 min-w-[300px]">
-            {toast.type === 'success' ? (
-              <div className="w-8 h-8 rounded-full bg-[#dcfce7] flex items-center justify-center shrink-0">
-                <span className="material-symbols-outlined text-[#166534] text-sm">check</span>
-              </div>
-            ) : (
-              <div className="w-8 h-8 rounded-full bg-[#fef2f2] flex items-center justify-center shrink-0">
-                <span className="material-symbols-outlined text-error text-sm">warning</span>
-              </div>
-            )}
-            <p className="font-body-md text-on-surface flex-1">{toast.message}</p>
-            <button 
-              onClick={() => setToasts(prev => prev.filter(t => t.id !== toast.id))}
-              className="text-on-surface-variant hover:text-on-surface transition-colors p-1"
-            >
-              <span className="material-symbols-outlined text-sm">close</span>
-            </button>
+          <div key={toast.id} className="pointer-events-auto">
+            <Toast 
+              id={toast.id} 
+              type={toast.type} 
+              message={toast.message} 
+              onRemove={removeToast} 
+            />
           </div>
         ))}
       </div>
