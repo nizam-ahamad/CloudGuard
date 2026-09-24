@@ -1013,7 +1013,7 @@ function App() {
         <div className="mb-stack-lg flex flex-col md:flex-row md:justify-between md:items-end gap-4">
           <div>
             <h2 className="font-headline-lg-mobile md:font-headline-lg text-headline-lg-mobile md:text-headline-lg font-bold text-on-surface mb-2">My Files</h2>
-            <p className="font-body-md text-body-md text-on-surface-variant">Manage and secure your enterprise data.</p>
+            <p className="font-body-md text-body-md text-on-surface-variant">Manage and secure your digital vault.</p>
           </div>
           <div className="flex items-center gap-4 bg-surface-container-lowest p-4 rounded-xl border border-outline-variant shadow-sm w-fit">
             <div className="relative w-12 h-12">
