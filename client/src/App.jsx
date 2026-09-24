@@ -894,7 +894,7 @@ function App() {
         <div className="px-4 space-y-1 mt-auto border-t border-outline-variant pt-4 mx-4">
           <button 
             onClick={() => { setViewMode('settings'); setIsSidebarOpen(false); }}
-            className={`w-full flex items-center gap-3 px-4 py-2 rounded-lg font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${viewMode === 'settings' ? 'text-secondary bg-surface-container-low' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high'}`}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${viewMode === 'settings' ? 'bg-surface-container-low dark:bg-[#282a2c] dark:text-[#c4c7c5]' : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'}`}
           >
             <span className="material-symbols-outlined" data-weight={viewMode === 'settings' ? "fill" : ""}>settings</span>
             <span className="font-body-md text-body-md">Settings</span>
@@ -1048,11 +1048,11 @@ function App() {
                 <path className="text-surface-dim" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" strokeWidth="3"></path>
                 <path className="text-secondary" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" strokeDasharray={`${Math.min(storageStats.usedPercentage, 100)}, 100`} strokeWidth="3"></path>
               </svg>
-              <div className="absolute inset-0 flex items-center justify-center font-label-md text-[10px] font-bold text-on-surface">{Math.min(100, Math.round(storageStats.usedPercentage))}%</div>
+              <div className="absolute inset-0 flex items-center justify-center font-label-md text-[10px] font-bold text-on-surface dark:text-[#c4c7c5]">{Math.min(100, Math.round(storageStats.usedPercentage))}%</div>
             </div>
             <div>
-              <p className="font-label-md text-label-md text-on-surface-variant uppercase tracking-wider">Storage Used</p>
-              <p className="font-body-md text-body-md font-medium">{formatBytes(storageStats.usedBytes)} / {formatBytes(storageStats.totalLimitBytes, 0)}</p>
+              <p className="font-label-md text-label-md text-on-surface-variant dark:text-[#c4c7c5] uppercase tracking-wider">Storage Used</p>
+              <p className="font-body-md text-body-md font-medium dark:text-[#e3e3e3]">{formatBytes(storageStats.usedBytes)} / {formatBytes(storageStats.totalLimitBytes, 0)}</p>
             </div>
           </div>
         </div>
