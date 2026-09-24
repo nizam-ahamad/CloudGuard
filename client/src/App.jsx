@@ -782,9 +782,9 @@ function App() {
     <div className="flex h-screen w-full">
       {/* SideNavBar */}
       <nav className={`bg-surface-container-lowest dark:bg-surface-container-low h-screen w-64 fixed left-0 top-0 border-r border-outline-variant dark:border-outline flex flex-col py-stack-lg z-50 transform transition-transform duration-300 md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-        <div className="px-6 mb-8 flex items-center gap-2">
-          <CloudGuardLogo className="h-12 w-auto shrink-0" />
-          <div className="-ml-3">
+        <div className="px-6 mb-8 flex items-center gap-3">
+          <CloudGuardLogo className="h-12 w-auto shrink-0 mr-2" />
+          <div>
             <h1 className="font-headline-md text-headline-md font-bold text-primary dark:text-primary-fixed">CloudGuard</h1>
           </div>
         </div>
