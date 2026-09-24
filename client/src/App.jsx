@@ -868,7 +868,7 @@ function App() {
         <div className="px-6 mb-8 flex items-center gap-0">
           <CloudGuardLogo className="h-12 w-auto shrink-0" />
           <div>
-            <h1 className="font-headline-md text-headline-md font-bold text-primary dark:text-primary-fixed">CloudGuard</h1>
+            <h1 className="font-headline-md text-headline-md font-bold text-primary dark:text-white">CloudGuard</h1>
           </div>
         </div>
         {/* Main Navigation */}
@@ -909,7 +909,7 @@ function App() {
             <span className="material-symbols-outlined">menu</span>
           </button>
           <CloudGuardLogo className="h-10 w-auto md:hidden shrink-0" />
-          <h1 className="font-headline-md text-headline-md font-bold text-primary dark:text-primary-fixed md:hidden -ml-2">CloudGuard</h1>
+          <h1 className="font-headline-md text-headline-md font-bold text-primary dark:text-white md:hidden -ml-2">CloudGuard</h1>
         </div>
           <div className="hidden md:flex flex-1 max-w-md ml-4 mr-8">
             <div className="relative w-full focus-within:ring-2 focus-within:ring-secondary rounded-lg transition-all">
@@ -972,18 +972,18 @@ function App() {
       >
         {viewMode === 'settings' ? (
           <div className="max-w-3xl mx-auto space-y-6">
-            <h2 className="font-headline-md text-headline-md font-bold text-on-surface mb-8">Profile Settings</h2>
+            <h2 className="font-headline-md text-headline-md font-bold text-on-surface dark:text-white mb-8">Profile Settings</h2>
             
             <div className="bg-surface-container-lowest border border-outline-variant rounded-xl p-6 shadow-sm">
               <h3 className="font-title-md text-on-surface mb-4">Profile Details</h3>
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-on-surface-variant mb-1">Name</label>
-                  <input type="text" value={user?.name || ''} readOnly className="w-full bg-surface-container-low text-on-surface-variant border border-outline-variant rounded-lg px-4 py-2 opacity-70 cursor-not-allowed" />
+                  <input type="text" value={user?.name || ''} readOnly className="w-full bg-surface-container-low dark:bg-slate-800 text-on-surface-variant dark:text-white border border-outline-variant dark:border-slate-700 rounded-lg px-4 py-2 opacity-70 cursor-not-allowed" />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-on-surface-variant mb-1">Email</label>
-                  <input type="text" value={user?.email || ''} readOnly className="w-full bg-surface-container-low text-on-surface-variant border border-outline-variant rounded-lg px-4 py-2 opacity-70 cursor-not-allowed" />
+                  <input type="text" value={user?.email || ''} readOnly className="w-full bg-surface-container-low dark:bg-slate-800 text-on-surface-variant dark:text-white border border-outline-variant dark:border-slate-700 rounded-lg px-4 py-2 opacity-70 cursor-not-allowed" />
                 </div>
               </div>
             </div>
@@ -993,11 +993,11 @@ function App() {
               <form onSubmit={handlePasswordUpdate} className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-on-surface-variant mb-1">Current Password</label>
-                  <PasswordInput value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} required className="w-full bg-surface text-on-surface border border-outline-variant focus:ring-2 focus:ring-secondary rounded-lg px-4 py-2 outline-none" />
+                  <PasswordInput value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} required className="w-full bg-surface dark:bg-slate-800 text-on-surface dark:text-white border border-outline-variant dark:border-slate-700 focus:ring-2 focus:ring-secondary rounded-lg px-4 py-2 outline-none" />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-on-surface-variant mb-1">New Password</label>
-                  <PasswordInput value={newPassword} onChange={e => setNewPassword(e.target.value)} required className="w-full bg-surface text-on-surface border border-outline-variant focus:ring-2 focus:ring-secondary rounded-lg px-4 py-2 outline-none" />
+                  <PasswordInput value={newPassword} onChange={e => setNewPassword(e.target.value)} required className="w-full bg-surface dark:bg-slate-800 text-on-surface dark:text-white border border-outline-variant dark:border-slate-700 focus:ring-2 focus:ring-secondary rounded-lg px-4 py-2 outline-none" />
                   <p className="text-xs text-on-surface-variant mt-1">Must be at least 8 characters with 1 letter and 1 number</p>
                 </div>
                 <button type="submit" disabled={isUpdatingPassword} className={`px-6 py-2 bg-primary text-on-primary rounded-lg font-medium transition-colors shadow-sm ${isUpdatingPassword ? 'opacity-70 cursor-not-allowed' : 'hover:bg-primary/90'}`}>
@@ -1013,13 +1013,13 @@ function App() {
               </form>
             </div>
 
-            <div className="bg-error/10 border border-error/20 rounded-xl p-6">
-              <h3 className="font-title-md text-error mb-2">Danger Zone</h3>
-              <p className="text-sm text-on-surface-variant mb-4">Once you delete your account, there is no going back. Please be certain.</p>
+            <div className="bg-error/10 dark:bg-red-950/30 border border-error/20 dark:border-red-900/50 rounded-xl p-6 dark:text-red-200">
+              <h3 className="font-title-md text-error dark:text-red-300 mb-2">Danger Zone</h3>
+              <p className="text-sm text-on-surface-variant dark:text-red-200/80 mb-4">Once you delete your account, there is no going back. Please be certain.</p>
               <form onSubmit={handleAccountDelete} className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-on-surface-variant mb-1">To verify, type <strong>DELETE</strong> below:</label>
-                  <input type="text" value={deleteConfirmText} onChange={e => setDeleteConfirmText(e.target.value)} className="w-full bg-surface text-on-surface border border-outline-variant focus:ring-2 focus:ring-error rounded-lg px-4 py-2 outline-none" />
+                  <label className="block text-sm font-medium text-on-surface-variant dark:text-red-200 mb-1">To verify, type <strong>DELETE</strong> below:</label>
+                  <input type="text" value={deleteConfirmText} onChange={e => setDeleteConfirmText(e.target.value)} className="w-full bg-surface dark:bg-slate-800 text-on-surface dark:text-white border border-outline-variant dark:border-slate-700 focus:ring-2 focus:ring-error rounded-lg px-4 py-2 outline-none" />
                 </div>
                 <button type="submit" disabled={deleteConfirmText !== 'DELETE' || isDeletingAccount} className={`px-6 py-2 rounded-lg font-medium transition-colors shadow-sm ${deleteConfirmText === 'DELETE' && !isDeletingAccount ? 'bg-error text-on-error hover:bg-[#b91c1c]' : 'bg-surface-dim text-on-surface-variant cursor-not-allowed opacity-70'}`}>
                   {isDeletingAccount ? (
@@ -1078,10 +1078,10 @@ function App() {
                   {uploading ? 'sync' : 'cloud_upload'}
                 </span>
               </div>
-              <h3 className="font-title-lg text-title-lg text-on-surface mb-2">
+              <h3 className="font-title-lg text-title-lg text-on-surface dark:text-slate-200 mb-2">
                 {uploading ? 'Uploading...' : 'Drag & drop files or folders here'}
               </h3>
-              <p className="font-body-md text-body-md text-on-surface-variant text-center max-w-md mb-6">Securely upload documents, images, and archives. Maximum file size 5GB.</p>
+              <p className="font-body-md text-body-md text-on-surface-variant dark:text-slate-400 text-center max-w-md mb-6">Securely upload documents, images, and archives. Maximum file size 5GB.</p>
               
               <button 
                 onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}
@@ -1118,13 +1118,13 @@ function App() {
         {/* Recent Files Table */}
         <section>
           <div className="flex items-center justify-between mb-stack-md">
-            <h3 className="font-title-lg text-title-lg text-on-surface">
+            <h3 className="font-title-lg text-title-lg text-on-surface dark:text-white">
               {viewMode === 'recent' ? 'Recent Files' : 'All Files'}
             </h3>
             <div className="flex items-center gap-4">
               <button 
                 onClick={toggleSort}
-                className="text-on-surface-variant hover:text-secondary flex items-center gap-1 font-label-md"
+                className="text-on-surface-variant dark:text-slate-300 hover:text-secondary flex items-center gap-1 font-label-md"
               >
                 <span className="material-symbols-outlined text-sm">sort</span>
                 Sort: {sortOrder === 'newest' ? 'Newest First' : 'Oldest First'}
@@ -1202,7 +1202,7 @@ function App() {
                     <tr 
                       key={file._id || file.id} 
                       onClick={() => file.isFolder ? setCurrentDirectory(file.diskName) : handlePreview(file)}
-                      className={`hover:bg-surface-bright transition-colors group h-14 ${file.isFolder || (file.diskName && file.status === 'Safe') ? 'cursor-pointer' : ''}`}
+                      className={`hover:bg-surface-bright dark:hover:bg-slate-800 dark:text-slate-200 transition-colors group h-14 ${file.isFolder || (file.diskName && file.status === 'Safe') ? 'cursor-pointer' : ''}`}
                     >
                       <td className="py-3 px-6 w-12 text-center" onClick={(e) => e.stopPropagation()}>
                         {!file.isFolder && (
