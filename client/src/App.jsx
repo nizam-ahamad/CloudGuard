@@ -135,6 +135,7 @@ function App() {
   const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadStats, setUploadStats] = useState({ loaded: 0, total: 0 });
+  const [uploadAbortController, setUploadAbortController] = useState(null);
   const [toasts, setToasts] = useState([]);
   const [viewMode, setViewMode] = useState('all');
   const [currentDirectory, setCurrentDirectory] = useState('');
@@ -308,6 +309,9 @@ function App() {
       setUploadProgress(0);
       setUploadStats({ loaded: 0, total: (totalUploadSize / (1024 * 1024)).toFixed(1) });
       
+      const controller = new AbortController();
+      setUploadAbortController(controller);
+      
       const allUploadedFiles = [];
       const allBlockedFiles = [];
       let totalLoaded = 0;
@@ -315,13 +319,15 @@ function App() {
       const s3Axios = axios.create();
 
       for (const file of filesToUpload) {
+        let currentFileId = null;
         try {
           // 1. Presign
           const presignRes = await axios.post(`${API_BASE_URL}/api/presign`, {
             filename: file.name,
             contentType: file.type || 'application/octet-stream'
           });
-          const { signedUrl, fileKey } = presignRes.data;
+          const { signedUrl, fileKey, fileId } = presignRes.data;
+          currentFileId = fileId;
 
           // 2. Direct Upload to S3
           await s3Axios.put(signedUrl, file, {
@@ -329,6 +335,7 @@ function App() {
               'Content-Type': file.type || 'application/octet-stream',
               'Authorization': undefined
             },
+            signal: controller.signal,
             onUploadProgress: (progressEvent) => {
               const currentLoaded = progressEvent.loaded;
               const overallLoaded = totalLoaded + currentLoaded;
@@ -354,6 +361,18 @@ function App() {
           if (blockedFiles) allBlockedFiles.push(...blockedFiles);
 
         } catch (err) {
+           if (axios.isCancel(err) || err.name === 'CanceledError') {
+             console.log(`Upload canceled for ${file.name}`);
+             addToast('error', `Upload canceled for ${file.name}`);
+             if (currentFileId) {
+               try {
+                 await axios.delete(`${API_BASE_URL}/api/files/${currentFileId}`);
+               } catch (deleteErr) {
+                 console.error("Cleanup failed for canceled file:", deleteErr);
+               }
+             }
+             break; // Stop uploading remaining files if aborted
+           }
            if (err.response) {
              const status = err.response.status;
              if (status === 406) {
@@ -400,6 +419,14 @@ function App() {
     } finally {
       setUploading(false);
       setUploadProgress(0);
+      setUploadAbortController(null);
+    }
+  };
+
+  const handleCancelUpload = () => {
+    if (uploadAbortController) {
+      uploadAbortController.abort();
+      setUploadAbortController(null);
     }
   };
 
@@ -959,9 +986,18 @@ function App() {
         {/* Upload Progress */}
         {uploading && (
           <div className="mb-stack-lg p-4 bg-surface-container-lowest rounded-xl border border-outline-variant shadow-sm">
-            <div className="flex justify-between mb-2 font-label-md text-on-surface-variant">
+            <div className="flex justify-between items-center mb-2 font-label-md text-on-surface-variant">
               <span>Uploading... {uploadProgress}%</span>
-              <span>{uploadStats.loaded} MB / {uploadStats.total} MB</span>
+              <div className="flex items-center gap-4">
+                <span>{uploadStats.loaded} MB / {uploadStats.total} MB</span>
+                <button 
+                  onClick={handleCancelUpload}
+                  className="text-error hover:bg-error/10 p-1 rounded-full transition-colors flex items-center justify-center"
+                  title="Cancel Upload"
+                >
+                  <span className="material-symbols-outlined text-[20px]">close</span>
+                </button>
+              </div>
             </div>
             <div className="w-full bg-surface-container-high rounded-full h-2.5">
               <div className="bg-secondary h-2.5 rounded-full transition-all duration-300" style={{ width: `${uploadProgress}%` }}></div>
