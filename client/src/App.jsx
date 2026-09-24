@@ -783,9 +783,9 @@ function App() {
       {/* SideNavBar */}
       <nav className={`bg-surface-container-lowest dark:bg-surface-container-low h-screen w-64 fixed left-0 top-0 border-r border-outline-variant dark:border-outline flex flex-col py-stack-lg z-50 transform transition-transform duration-300 md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         {/* Brand Header */}
-        <div className="px-6 mb-8 flex items-center gap-3">
+        <div className="px-6 mb-8 flex items-center gap-1">
           <CloudGuardLogo className="h-12 w-auto shrink-0" />
-          <div>
+          <div className="-ml-2">
             <h1 className="font-headline-md text-headline-md font-bold text-primary dark:text-primary-fixed">CloudGuard</h1>
           </div>
         </div>
@@ -827,7 +827,7 @@ function App() {
             <span className="material-symbols-outlined">menu</span>
           </button>
           <CloudGuardLogo className="h-10 w-auto md:hidden shrink-0" />
-          <h1 className="font-headline-md text-headline-md font-bold text-primary dark:text-primary-fixed md:hidden">CloudGuard</h1>
+          <h1 className="font-headline-md text-headline-md font-bold text-primary dark:text-primary-fixed md:hidden -ml-2">CloudGuard</h1>
         </div>
           <div className="hidden md:flex flex-1 max-w-md ml-4 mr-8">
             <div className="relative w-full focus-within:ring-2 focus-within:ring-secondary rounded-lg transition-all">
