@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import ResetPassword from './ResetPassword';
+import CloudGuardLogo from './CloudGuardLogo';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
@@ -605,8 +606,8 @@ function App() {
       <div className="min-h-screen bg-surface-container-lowest flex items-center justify-center p-4">
         <div className="bg-surface w-full max-w-md rounded-2xl shadow-xl border border-outline-variant p-8">
           <div className="flex flex-col items-center mb-8">
-            <div className="w-16 h-16 rounded-xl bg-surface-container-high flex items-center justify-center mb-4">
-              <span className="material-symbols-outlined text-secondary text-3xl" data-weight="fill">security</span>
+            <div className="mb-4">
+              <CloudGuardLogo size={64} />
             </div>
             <h1 className="font-headline-md text-primary font-bold">CloudGuard</h1>
             <p className="text-on-surface-variant mt-2 font-body-md text-center">
@@ -783,9 +784,7 @@ function App() {
       <nav className={`bg-surface-container-lowest dark:bg-surface-container-low h-screen w-64 fixed left-0 top-0 border-r border-outline-variant dark:border-outline flex flex-col py-stack-lg z-50 transform transition-transform duration-300 md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         {/* Brand Header */}
         <div className="px-6 mb-8 flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-surface-container-high flex items-center justify-center shrink-0">
-            <span className="material-symbols-outlined text-secondary" data-weight="fill">security</span>
-          </div>
+          <CloudGuardLogo size={40} className="shrink-0" />
           <div>
             <h1 className="font-headline-md text-headline-md font-bold text-primary dark:text-primary-fixed">CloudGuard</h1>
           </div>
@@ -827,6 +826,7 @@ function App() {
           <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="md:hidden p-2 text-on-surface-variant hover:bg-surface-container-high rounded-full transition-colors">
             <span className="material-symbols-outlined">menu</span>
           </button>
+          <CloudGuardLogo size={32} className="md:hidden shrink-0" />
           <h1 className="font-headline-md text-headline-md font-bold text-primary dark:text-primary-fixed md:hidden">CloudGuard</h1>
         </div>
           <div className="hidden md:flex flex-1 max-w-md ml-4 mr-8">
