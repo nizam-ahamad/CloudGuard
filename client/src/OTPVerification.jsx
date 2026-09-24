@@ -1,11 +1,39 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 
 export default function OTPVerification({ email, onVerifySuccess, onCancel }) {
   const [otp, setOtp] = useState(new Array(6).fill(''));
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [timer, setTimer] = useState(60);
+  const [isResending, setIsResending] = useState(false);
   const inputRefs = useRef([]);
+
+  useEffect(() => {
+    let interval = null;
+    if (timer > 0) {
+      interval = setInterval(() => {
+        setTimer((prev) => prev - 1);
+      }, 1000);
+    } else {
+      clearInterval(interval);
+    }
+    return () => clearInterval(interval);
+  }, [timer]);
+
+  const handleResend = async () => {
+    if (timer > 0 || isResending) return;
+    setIsResending(true);
+    setError('');
+    try {
+      await axios.post(`${API_BASE_URL}/api/auth/resend-otp`, { email });
+      setTimer(60);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to resend code.');
+    } finally {
+      setIsResending(false);
+    }
+  };
 
   const handleChange = (e, index) => {
     const value = e.target.value;
@@ -65,7 +93,7 @@ export default function OTPVerification({ email, onVerifySuccess, onCancel }) {
   };
 
   return (
-    <div className="w-full mx-auto">
+    <div className="bg-surface w-full max-w-md mx-auto rounded-2xl shadow-xl border border-outline-variant p-6 md:p-8">
       <div className="flex flex-col items-center mb-8">
         <div className="w-16 h-16 rounded-xl bg-surface-container-high flex items-center justify-center mb-4">
           <span className="material-symbols-outlined text-secondary text-3xl" data-weight="fill">mark_email_read</span>
@@ -77,7 +105,7 @@ export default function OTPVerification({ email, onVerifySuccess, onCancel }) {
       </div>
 
       {error && (
-        <div className="mb-6 p-3 bg-error/10 border border-error/20 rounded-lg text-error text-sm text-center">
+        <div className="mb-6 py-2 px-3 bg-error/10 border border-error/20 rounded-lg text-error text-sm text-center">
           {error}
         </div>
       )}
@@ -102,7 +130,7 @@ export default function OTPVerification({ email, onVerifySuccess, onCancel }) {
         <button 
           type="submit" 
           disabled={isLoading}
-          className={`w-full py-3 bg-primary text-on-primary rounded-lg font-medium hover:bg-primary/90 transition-colors shadow-sm ${isLoading ? 'opacity-70 cursor-not-allowed' : ''}`}
+          className={`w-full py-2.5 px-4 bg-primary text-on-primary rounded-lg font-medium hover:bg-primary/90 transition-colors shadow-sm ${isLoading ? 'opacity-70 cursor-not-allowed' : ''}`}
         >
           {isLoading ? (
             <span className="flex items-center justify-center gap-2">
@@ -115,17 +143,30 @@ export default function OTPVerification({ email, onVerifySuccess, onCancel }) {
         </button>
       </form>
       
-      {onCancel && (
-        <div className="mt-6 text-center">
+      <div className="mt-6 flex flex-col items-center gap-3">
+        {timer > 0 ? (
+          <span className="text-on-surface-variant text-sm">Resend code in {timer}s</span>
+        ) : (
+          <button 
+            type="button"
+            onClick={handleResend}
+            disabled={isResending}
+            className="text-secondary text-sm hover:underline font-bold disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:no-underline"
+          >
+            {isResending ? 'Resending...' : 'Resend Code'}
+          </button>
+        )}
+        
+        {onCancel && (
           <button 
             type="button"
             onClick={onCancel}
-            className="text-secondary text-sm hover:underline font-medium"
+            className="text-on-surface-variant text-sm hover:underline font-medium mt-2"
           >
             Cancel
           </button>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
