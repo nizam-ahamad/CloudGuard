@@ -1095,22 +1095,22 @@ function App() {
 
         {/* Upload Progress */}
         {uploading && (
-          <div className="mb-stack-lg p-4 bg-surface-container-lowest rounded-xl border border-outline-variant shadow-sm">
+          <div className="mb-stack-lg p-4 bg-surface-container-lowest dark:bg-[#1e1f20] rounded-xl border border-outline-variant dark:border-zinc-800 shadow-sm">
             <div className="flex justify-between items-center mb-2 font-label-md text-on-surface-variant">
-              <span>Uploading... {uploadProgress}%</span>
+              <span className="dark:text-[#e3e3e3]">Uploading... {uploadProgress}%</span>
               <div className="flex items-center gap-4">
-                <span>{uploadStats.loaded} MB / {uploadStats.total} MB &bull; {uploadSpeed} MB/s</span>
+                <span className="dark:text-[#c4c7c5]">{uploadStats.loaded} MB / {uploadStats.total} MB &bull; {uploadSpeed} MB/s</span>
                 <button 
                   onClick={handleCancelUpload}
-                  className="text-error hover:bg-error/10 p-1 rounded-full transition-colors flex items-center justify-center"
+                  className="text-error dark:text-zinc-400 dark:hover:text-red-400 hover:bg-error/10 p-1 rounded-full transition-colors flex items-center justify-center"
                   title="Cancel Upload"
                 >
                   <span className="material-symbols-outlined text-[20px]">close</span>
                 </button>
               </div>
             </div>
-            <div className="w-full bg-surface-container-high rounded-full h-2.5">
-              <div className="bg-secondary h-2.5 rounded-full transition-all duration-300" style={{ width: `${uploadProgress}%` }}></div>
+            <div className="w-full bg-surface-container-high dark:bg-[#131314] rounded-full h-2.5">
+              <div className="bg-gradient-to-r from-indigo-500 via-blue-500 to-cyan-400 relative overflow-hidden h-2.5 rounded-full transition-all duration-300" style={{ width: `${uploadProgress}%` }}></div>
             </div>
           </div>
         )}
@@ -1228,8 +1228,8 @@ function App() {
                           <span className="font-medium truncate max-w-[250px]">{file.name}</span>
                         </div>
                       </td>
-                      <td className="py-3 px-6 text-on-surface-variant">{file.date}</td>
-                      <td className="py-3 px-6 text-on-surface-variant">{formatSize(file.size)}</td>
+                      <td className="py-3 px-6 text-on-surface-variant dark:text-[#c4c7c5]">{file.date}</td>
+                      <td className="py-3 px-6 text-on-surface-variant dark:text-[#c4c7c5]">{formatSize(file.size)}</td>
                       <td className="py-3 px-6">
                         {!file.isFolder && (
                           file.status === 'Safe' ? (
