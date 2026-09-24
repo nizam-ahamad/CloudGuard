@@ -33,6 +33,10 @@ s3_client = boto3.client(
 
 VT_API_KEY = os.getenv("VT_API_KEY")
 
+CUSTOM_WHITELIST = [
+    "231D90772D0E26D4376E85BC35FB349C2341926CBA84D800828791B33E1103EF"
+]
+
 TEMP_DIR = os.path.join(os.path.dirname(__file__), 'temp')
 os.makedirs(TEMP_DIR, exist_ok=True)
 
@@ -117,8 +121,14 @@ def analyze_executable(filepath=None, data=None, filename="unknown"):
         return scan_with_virustotal(get_file_hash(filepath, data))
 
     try:
-        # 1. CIRCL Hashlookup Check
         file_hash = get_sha256(filepath, data)
+        
+        # 0. Custom Internal Whitelist
+        if file_hash in CUSTOM_WHITELIST:
+            print(f"[AI Scanner] Executable: {filename} | Custom Whitelist Verified (Skipping ML)")
+            return {"status": "safe", "reason": "Verified custom safe internal tool"}
+
+        # 1. CIRCL Hashlookup Check
         try:
             circl_response = requests.get(
                 f"https://hashlookup.circl.lu/lookup/sha256/{file_hash}",
