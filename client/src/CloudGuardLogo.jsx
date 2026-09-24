@@ -7,7 +7,7 @@ export default function CloudGuardLogo({ size = 120, className = '' }) {
       alt="CloudGuard Logo" 
       width={size} 
       height={size} 
-      className={className}
+      className={`${className} dark:invert`}
       style={{ objectFit: 'contain' }}
     />
   );
