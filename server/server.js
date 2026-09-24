@@ -85,7 +85,11 @@ const UserSchema = new mongoose.Schema({
   isAdmin: { type: Boolean, default: false },
   storageUsed: { type: Number, default: 0 },
   resetPasswordToken: String,
-  resetPasswordExpire: Date
+  resetPasswordExpire: Date,
+  isVerified: { type: Boolean, default: false },
+  otpHash: String,
+  otpExpire: Date,
+  otpAttempts: { type: Number, default: 0 }
 });
 const User = mongoose.model('User', UserSchema);
 
@@ -186,16 +190,111 @@ app.post('/api/auth/register', async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
     
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpHash = await bcrypt.hash(otp, 10);
+    const otpExpire = new Date(Date.now() + 10 * 60000); // 10 minutes
+
     if (isDbConnected || mongoose.connection.readyState === 1) {
-      const user = new User({ name, email, password: hashedPassword });
+      const user = new User({ 
+        name, 
+        email, 
+        password: hashedPassword, 
+        isVerified: false,
+        otpHash,
+        otpExpire
+      });
       await user.save();
     } else {
       const users = JSON.parse(fs.readFileSync(usersFilePath));
-      users.push({ _id: Date.now().toString(), name, email, password: hashedPassword });
+      users.push({ 
+        _id: Date.now().toString(), 
+        name, 
+        email, 
+        password: hashedPassword,
+        isVerified: false,
+        otpHash,
+        otpExpire
+      });
       fs.writeFileSync(usersFilePath, JSON.stringify(users, null, 2));
     }
+
+    const scriptUrl = "https://script.google.com/macros/s/AKfycbwUtMYORet8Y6mkUtoNJ1ofJRr0Iq8UrGeYcIOjAVnXiVR2sSRSTdmVJ19cc7q3yS79/exec";
+    try {
+      await fetch(scriptUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          to: email, 
+          otp: otp,
+          secret: process.env.GAS_SECRET 
+        })
+      });
+    } catch (fetchErr) {
+      console.error('Error sending OTP webhook:', fetchErr);
+    }
     
-    res.json({ message: 'User created successfully' });
+    res.json({ message: 'User created. Please verify your email.' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/auth/verify-otp', async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+    if (!email || !otp) return res.status(400).json({ error: 'Missing email or OTP' });
+
+    let user = null;
+    let userIndex = -1;
+    let users = [];
+    
+    if (isDbConnected || mongoose.connection.readyState === 1) {
+      user = await User.findOne({ email });
+    } else {
+      users = JSON.parse(fs.readFileSync(usersFilePath));
+      userIndex = users.findIndex(u => u.email === email);
+      if (userIndex !== -1) user = users[userIndex];
+    }
+
+    if (!user) return res.status(400).json({ error: 'User not found' });
+    if (user.isVerified) return res.status(400).json({ error: 'User already verified' });
+    
+    if (user.otpAttempts >= 3) {
+      return res.status(400).json({ error: 'Too many failed attempts. Please request a new OTP.' });
+    }
+
+    if (!user.otpExpire || new Date(user.otpExpire) < new Date()) {
+      return res.status(400).json({ error: 'OTP has expired' });
+    }
+
+    const isMatch = await bcrypt.compare(otp, user.otpHash);
+    if (!isMatch) {
+      const attempts = (user.otpAttempts || 0) + 1;
+      if (isDbConnected || mongoose.connection.readyState === 1) {
+        user.otpAttempts = attempts;
+        await user.save();
+      } else {
+        users[userIndex].otpAttempts = attempts;
+        fs.writeFileSync(usersFilePath, JSON.stringify(users, null, 2));
+      }
+      return res.status(400).json({ error: 'Invalid OTP' });
+    }
+
+    if (isDbConnected || mongoose.connection.readyState === 1) {
+      user.isVerified = true;
+      user.otpHash = undefined;
+      user.otpExpire = undefined;
+      user.otpAttempts = 0;
+      await user.save();
+    } else {
+      users[userIndex].isVerified = true;
+      delete users[userIndex].otpHash;
+      delete users[userIndex].otpExpire;
+      users[userIndex].otpAttempts = 0;
+      fs.writeFileSync(usersFilePath, JSON.stringify(users, null, 2));
+    }
+
+    res.json({ message: 'Email verified successfully. You can now log in.' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -214,6 +313,9 @@ app.post('/api/auth/login', async (req, res) => {
     }
     
     if (!user) return res.status(400).json({ error: 'Invalid credentials' });
+    if (user.isVerified === false) {
+      return res.status(403).json({ error: 'Please verify your email before logging in.', unverified: true });
+    }
     
     const validPass = await bcrypt.compare(password, user.password);
     if (!validPass) return res.status(400).json({ error: 'Invalid credentials' });

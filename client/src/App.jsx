@@ -3,6 +3,7 @@ import axios from 'axios';
 import ResetPassword from './ResetPassword';
 import CloudGuardLogo from './CloudGuardLogo';
 import PasswordInput from './PasswordInput';
+import OTPVerification from './OTPVerification';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
@@ -102,8 +103,8 @@ function App() {
     try {
       if (authMode === 'register') {
         await axios.post(`${API_BASE_URL}/api/auth/register`, authForm);
-        setAuthMode('login');
-        addToast('success', 'Account created! Please sign in.');
+        setAuthMode('verify');
+        addToast('success', 'Account created! Please verify your email.');
       } else {
         const res = await axios.post(`${API_BASE_URL}/api/auth/login`, { email: authForm.email, password: authForm.password });
         const { token: newToken, user: newUser } = res.data;
@@ -616,6 +617,21 @@ function App() {
     if (window.location.pathname.startsWith('/reset-password/')) {
       const resetToken = window.location.pathname.split('/reset-password/')[1];
       return <ResetPassword token={resetToken} />;
+    }
+
+    if (authMode === 'verify') {
+      return (
+        <div className="min-h-screen bg-surface-container-lowest flex items-center justify-center p-4">
+          <OTPVerification 
+            email={authForm.email} 
+            onVerifySuccess={() => {
+              setAuthMode('login');
+              addToast('success', 'Email verified! Please log in.');
+            }}
+            onCancel={() => setAuthMode('login')}
+          />
+        </div>
+      );
     }
 
     return (
