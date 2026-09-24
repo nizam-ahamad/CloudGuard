@@ -968,36 +968,36 @@ function App() {
       {/* Main Content Canvas */}
       <main 
         onClick={() => { setShowProfileMenu(false); setIsSidebarOpen(false); }} 
-        className="pt-24 pb-12 px-margin-mobile md:px-margin-desktop md:ml-64 max-w-container-max mx-auto w-full"
+        className="pt-24 pb-12 px-margin-mobile md:px-margin-desktop md:ml-64 max-w-container-max mx-auto w-full min-h-screen dark:bg-[#131314]"
       >
         {viewMode === 'settings' ? (
           <div className="max-w-3xl mx-auto space-y-6">
             <h2 className="font-headline-md text-headline-md font-bold text-on-surface dark:text-white mb-8">Profile Settings</h2>
             
-            <div className="bg-surface-container-lowest border border-outline-variant rounded-xl p-6 shadow-sm">
-              <h3 className="font-title-md text-on-surface mb-4">Profile Details</h3>
+            <div className="bg-surface-container-lowest dark:bg-[#1e1f20] border border-outline-variant dark:border-zinc-800 rounded-xl p-6 shadow-sm">
+              <h3 className="font-title-md text-on-surface dark:text-white mb-4">Profile Details</h3>
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-on-surface-variant mb-1">Name</label>
-                  <input type="text" value={user?.name || ''} readOnly className="w-full bg-surface-container-low dark:bg-[#131314] text-on-surface-variant dark:text-zinc-100 border border-outline-variant dark:border-zinc-700 rounded-lg px-4 py-2 opacity-70 cursor-not-allowed" />
+                  <input type="text" value={user?.name || ''} readOnly className="w-full bg-surface-container-low dark:bg-[#131314] text-on-surface-variant dark:text-zinc-200 border border-outline-variant dark:border-zinc-700 rounded-lg px-4 py-2 opacity-70 cursor-not-allowed" />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-on-surface-variant mb-1">Email</label>
-                  <input type="text" value={user?.email || ''} readOnly className="w-full bg-surface-container-low dark:bg-[#131314] text-on-surface-variant dark:text-zinc-100 border border-outline-variant dark:border-zinc-700 rounded-lg px-4 py-2 opacity-70 cursor-not-allowed" />
+                  <input type="text" value={user?.email || ''} readOnly className="w-full bg-surface-container-low dark:bg-[#131314] text-on-surface-variant dark:text-zinc-200 border border-outline-variant dark:border-zinc-700 rounded-lg px-4 py-2 opacity-70 cursor-not-allowed" />
                 </div>
               </div>
             </div>
 
-            <div className="bg-surface-container-lowest border border-outline-variant rounded-xl p-6 shadow-sm">
-              <h3 className="font-title-md text-on-surface mb-4">Security</h3>
+            <div className="bg-surface-container-lowest dark:bg-[#1e1f20] border border-outline-variant dark:border-zinc-800 rounded-xl p-6 shadow-sm">
+              <h3 className="font-title-md text-on-surface dark:text-white mb-4">Security</h3>
               <form onSubmit={handlePasswordUpdate} className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-on-surface-variant mb-1">Current Password</label>
-                  <PasswordInput value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} required className="w-full bg-surface dark:bg-[#131314] text-on-surface dark:text-zinc-100 border border-outline-variant dark:border-zinc-700 focus:ring-2 focus:ring-secondary rounded-lg px-4 py-2 outline-none" />
+                  <PasswordInput value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} required className="w-full bg-surface dark:bg-[#131314] text-on-surface dark:text-zinc-200 border border-outline-variant dark:border-zinc-700 focus:ring-2 focus:ring-secondary rounded-lg px-4 py-2 outline-none" />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-on-surface-variant mb-1">New Password</label>
-                  <PasswordInput value={newPassword} onChange={e => setNewPassword(e.target.value)} required className="w-full bg-surface dark:bg-[#131314] text-on-surface dark:text-zinc-100 border border-outline-variant dark:border-zinc-700 focus:ring-2 focus:ring-secondary rounded-lg px-4 py-2 outline-none" />
+                  <PasswordInput value={newPassword} onChange={e => setNewPassword(e.target.value)} required className="w-full bg-surface dark:bg-[#131314] text-on-surface dark:text-zinc-200 border border-outline-variant dark:border-zinc-700 focus:ring-2 focus:ring-secondary rounded-lg px-4 py-2 outline-none" />
                   <p className="text-xs text-on-surface-variant mt-1">Must be at least 8 characters with 1 letter and 1 number</p>
                 </div>
                 <button type="submit" disabled={isUpdatingPassword} className={`px-6 py-2 bg-primary text-on-primary rounded-lg font-medium transition-colors shadow-sm ${isUpdatingPassword ? 'opacity-70 cursor-not-allowed' : 'hover:bg-primary/90'}`}>
@@ -1013,13 +1013,13 @@ function App() {
               </form>
             </div>
 
-            <div className="bg-error/10 dark:bg-red-950/30 border border-error/20 dark:border-red-900/50 rounded-xl p-6 dark:text-red-200">
-              <h3 className="font-title-md text-error dark:text-red-300 mb-2">Danger Zone</h3>
-              <p className="text-sm text-on-surface-variant dark:text-red-200/80 mb-4">Once you delete your account, there is no going back. Please be certain.</p>
+            <div className="bg-error/10 dark:bg-red-950/20 border border-error/20 dark:border-red-900/50 rounded-xl p-6 dark:text-red-400">
+              <h3 className="font-title-md text-error dark:text-red-400 mb-2">Danger Zone</h3>
+              <p className="text-sm text-on-surface-variant dark:text-red-400/80 mb-4">Once you delete your account, there is no going back. Please be certain.</p>
               <form onSubmit={handleAccountDelete} className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-on-surface-variant dark:text-red-200 mb-1">To verify, type <strong>DELETE</strong> below:</label>
-                  <input type="text" value={deleteConfirmText} onChange={e => setDeleteConfirmText(e.target.value)} className="w-full bg-surface dark:bg-[#131314] text-on-surface dark:text-zinc-100 border border-outline-variant dark:border-zinc-700 focus:ring-2 focus:ring-error rounded-lg px-4 py-2 outline-none" />
+                  <label className="block text-sm font-medium text-on-surface-variant dark:text-red-400 mb-1">To verify, type <strong>DELETE</strong> below:</label>
+                  <input type="text" value={deleteConfirmText} onChange={e => setDeleteConfirmText(e.target.value)} className="w-full bg-surface dark:bg-[#131314] text-on-surface dark:text-zinc-200 border border-outline-variant dark:border-zinc-700 focus:ring-2 focus:ring-error rounded-lg px-4 py-2 outline-none" />
                 </div>
                 <button type="submit" disabled={deleteConfirmText !== 'DELETE' || isDeletingAccount} className={`px-6 py-2 rounded-lg font-medium transition-colors shadow-sm ${deleteConfirmText === 'DELETE' && !isDeletingAccount ? 'bg-error text-on-error hover:bg-[#b91c1c]' : 'bg-surface-dim text-on-surface-variant cursor-not-allowed opacity-70'}`}>
                   {isDeletingAccount ? (
