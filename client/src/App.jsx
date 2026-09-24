@@ -135,11 +135,13 @@ function App() {
   const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadStats, setUploadStats] = useState({ loaded: 0, total: 0 });
+  const [uploadSpeed, setUploadSpeed] = useState(0);
   const [uploadAbortController, setUploadAbortController] = useState(null);
   const [toasts, setToasts] = useState([]);
   const [viewMode, setViewMode] = useState('all');
   const [currentDirectory, setCurrentDirectory] = useState('');
   const fileInputRef = useRef(null);
+  const prevUploadRef = useRef({ time: 0, loaded: 0 });
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
@@ -312,6 +314,9 @@ function App() {
       const controller = new AbortController();
       setUploadAbortController(controller);
       
+      prevUploadRef.current = { time: Date.now(), loaded: 0 };
+      setUploadSpeed(0);
+      
       const allUploadedFiles = [];
       const allBlockedFiles = [];
       let totalLoaded = 0;
@@ -339,6 +344,19 @@ function App() {
             onUploadProgress: (progressEvent) => {
               const currentLoaded = progressEvent.loaded;
               const overallLoaded = totalLoaded + currentLoaded;
+              
+              const now = Date.now();
+              const timeElapsed = now - prevUploadRef.current.time;
+              
+              if (timeElapsed >= 500) {
+                const bytesLoadedSinceLast = overallLoaded - prevUploadRef.current.loaded;
+                const speedBps = (bytesLoadedSinceLast / timeElapsed) * 1000;
+                const speedMbps = (speedBps / (1024 * 1024)).toFixed(1);
+                
+                setUploadSpeed(speedMbps);
+                prevUploadRef.current = { time: now, loaded: overallLoaded };
+              }
+
               setUploadProgress(Math.round((overallLoaded * 100) / totalUploadSize));
               setUploadStats({
                 loaded: (overallLoaded / (1024 * 1024)).toFixed(1),
@@ -989,7 +1007,7 @@ function App() {
             <div className="flex justify-between items-center mb-2 font-label-md text-on-surface-variant">
               <span>Uploading... {uploadProgress}%</span>
               <div className="flex items-center gap-4">
-                <span>{uploadStats.loaded} MB / {uploadStats.total} MB</span>
+                <span>{uploadStats.loaded} MB / {uploadStats.total} MB &bull; {uploadSpeed} MB/s</span>
                 <button 
                   onClick={handleCancelUpload}
                   className="text-error hover:bg-error/10 p-1 rounded-full transition-colors flex items-center justify-center"
