@@ -89,6 +89,16 @@ function App() {
     e.preventDefault();
     setAuthError('');
     setIsAuthLoading(true);
+
+    if (authMode === 'register') {
+      const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/;
+      if (!passwordRegex.test(authForm.password)) {
+        setAuthError('Password must be at least 8 characters long and contain at least 1 letter and 1 number.');
+        setIsAuthLoading(false);
+        return;
+      }
+    }
+
     try {
       if (authMode === 'register') {
         await axios.post(`${API_BASE_URL}/api/auth/register`, authForm);
@@ -152,6 +162,11 @@ function App() {
 
   const handlePasswordUpdate = async (e) => {
     e.preventDefault();
+    const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/;
+    if (!passwordRegex.test(newPassword)) {
+      addToast('error', 'Password must be at least 8 characters with 1 letter and 1 number.');
+      return;
+    }
     setIsUpdatingPassword(true);
     try {
       await axios.put(`${API_BASE_URL}/api/auth/password`, { currentPassword, newPassword });
@@ -653,6 +668,11 @@ function App() {
                 value={authForm.password}
                 onChange={e => setAuthForm({...authForm, password: e.target.value})}
               />
+              {authMode === 'register' && (
+                <p className="text-xs text-on-surface-variant mt-1">
+                  Must be at least 8 characters with 1 letter and 1 number
+                </p>
+              )}
             </div>
             
             {authMode === 'login' && (
@@ -906,6 +926,7 @@ function App() {
                 <div>
                   <label className="block text-sm font-medium text-on-surface-variant mb-1">New Password</label>
                   <PasswordInput value={newPassword} onChange={e => setNewPassword(e.target.value)} required className="w-full bg-surface text-on-surface border border-outline-variant focus:ring-2 focus:ring-secondary rounded-lg px-4 py-2 outline-none" />
+                  <p className="text-xs text-on-surface-variant mt-1">Must be at least 8 characters with 1 letter and 1 number</p>
                 </div>
                 <button type="submit" disabled={isUpdatingPassword} className={`px-6 py-2 bg-primary text-on-primary rounded-lg font-medium transition-colors shadow-sm ${isUpdatingPassword ? 'opacity-70 cursor-not-allowed' : 'hover:bg-primary/90'}`}>
                   {isUpdatingPassword ? (

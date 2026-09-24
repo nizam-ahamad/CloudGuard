@@ -13,6 +13,11 @@ function ResetPassword({ token }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/;
+    if (!passwordRegex.test(password)) {
+      setError('Password must be at least 8 characters long and contain at least 1 letter and 1 number.');
+      return;
+    }
     if (password !== confirmPassword) {
       setError('Passwords do not match');
       return;
@@ -70,6 +75,7 @@ function ResetPassword({ token }) {
               value={password}
               onChange={e => setPassword(e.target.value)}
             />
+            <p className="text-xs text-on-surface-variant mt-1">Must be at least 8 characters with 1 letter and 1 number</p>
           </div>
           <div>
             <label className="block text-sm font-medium text-on-surface mb-1">Confirm New Password</label>

@@ -167,6 +167,11 @@ app.post('/api/auth/register', async (req, res) => {
     const { name, email, password } = req.body;
     if (!name || !email || !password) return res.status(400).json({ error: 'Missing fields' });
     
+    const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/;
+    if (!passwordRegex.test(password)) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters long and contain at least 1 letter and 1 number' });
+    }
+    
     let emailExists = false;
     
     if (isDbConnected || mongoose.connection.readyState === 1) {
@@ -329,6 +334,11 @@ app.put('/api/auth/reset-password/:token', async (req, res) => {
       return res.status(400).json({ error: 'Please provide a new password' });
     }
 
+    const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/;
+    if (!passwordRegex.test(password)) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters long and contain at least 1 letter and 1 number' });
+    }
+
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
@@ -354,6 +364,11 @@ app.put('/api/auth/password', verifyToken, async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
     if (!currentPassword || !newPassword) return res.status(400).json({ error: 'Missing fields' });
+
+    const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/;
+    if (!passwordRegex.test(newPassword)) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters long and contain at least 1 letter and 1 number' });
+    }
 
     let userPass = null;
     let userIndex = -1;
