@@ -5,6 +5,7 @@ export default function OTPVerification({ email, onVerifySuccess, onCancel }) {
   const [otp, setOtp] = useState(new Array(6).fill(''));
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isVerified, setIsVerified] = useState(false);
   const [timer, setTimer] = useState(60);
   const [isResending, setIsResending] = useState(false);
   const inputRefs = useRef([]);
@@ -83,11 +84,13 @@ export default function OTPVerification({ email, onVerifySuccess, onCancel }) {
     try {
       const res = await axios.post(`${API_BASE_URL}/api/auth/verify-otp`, { email, otp: otpValue });
       if (res.status === 200) {
-        onVerifySuccess(res.data.token);
+        setIsVerified(true);
+        setTimeout(() => {
+          onVerifySuccess(res.data.token);
+        }, 1500);
       }
     } catch (err) {
       setError(err.response?.data?.error || 'Verification failed. Please try again.');
-    } finally {
       setIsLoading(false);
     }
   };
@@ -104,69 +107,83 @@ export default function OTPVerification({ email, onVerifySuccess, onCancel }) {
         </p>
       </div>
 
-      {error && (
-        <div className="mb-6 py-2 px-3 bg-error/10 border border-error/20 rounded-lg text-error text-sm text-center">
-          {error}
+      {isVerified ? (
+        <div className="flex flex-col items-center justify-center py-8 animate-in fade-in zoom-in duration-300">
+          <div className="w-20 h-20 rounded-full bg-success/20 flex items-center justify-center mb-6">
+            <svg className="w-10 h-10 text-success animate-[ping_1s_cubic-bezier(0,0,0.2,1)_1]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path>
+            </svg>
+          </div>
+          <h2 className="text-xl font-bold text-success dark:text-[#e3e3e3]">Verification Successful</h2>
+          <p className="text-on-surface-variant dark:text-[#c4c7c5] mt-2">Redirecting to dashboard...</p>
         </div>
-      )}
-
-      <form onSubmit={handleSubmit} className="space-y-6">
-        <div className="flex justify-between gap-2 max-w-sm mx-auto">
-          {otp.map((digit, index) => (
-            <input
-              key={index}
-              type="text"
-              maxLength="1"
-              value={digit}
-              ref={el => inputRefs.current[index] = el}
-              onChange={(e) => handleChange(e, index)}
-              onKeyDown={(e) => handleKeyDown(e, index)}
-              onPaste={handlePaste}
-              className="w-12 h-14 text-center text-xl font-bold bg-surface-container-lowest dark:bg-[#131314] border border-outline-variant dark:border-zinc-700 dark:text-zinc-200 rounded-lg focus:ring-2 focus:ring-secondary outline-none transition-all"
-            />
-          ))}
-        </div>
-
-        <button 
-          type="submit" 
-          disabled={isLoading}
-          className={`w-full py-2.5 px-4 bg-primary dark:bg-zinc-800 text-on-primary dark:text-[#e3e3e3] rounded-lg font-medium hover:bg-primary/90 dark:hover:bg-zinc-700 transition-colors shadow-sm ${isLoading ? 'opacity-70 cursor-not-allowed' : ''}`}
-        >
-          {isLoading ? (
-            <span className="flex items-center justify-center gap-2">
-              <span className="animate-spin inline-block w-4 h-4 border-[2px] border-current border-t-transparent rounded-full" role="status" aria-label="loading"></span>
-              Verifying...
-            </span>
-          ) : (
-            'Verify Email'
+      ) : (
+        <>
+          {error && (
+            <div className="mb-6 py-2 px-3 bg-error/10 border border-error/20 rounded-lg text-error text-sm text-center">
+              {error}
+            </div>
           )}
-        </button>
-      </form>
-      
-      <div className="mt-6 flex flex-col items-center gap-3">
-        {timer > 0 ? (
-          <span className="text-on-surface-variant dark:text-[#c4c7c5] text-sm">Resend code in {timer}s</span>
-        ) : (
-          <button 
-            type="button"
-            onClick={handleResend}
-            disabled={isResending}
-            className="text-secondary dark:text-blue-400 dark:hover:text-blue-300 text-sm hover:underline font-bold disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:no-underline"
-          >
-            {isResending ? 'Resending...' : 'Resend Code'}
-          </button>
-        )}
-        
-        {onCancel && (
-          <button 
-            type="button"
-            onClick={onCancel}
-            className="text-on-surface-variant dark:text-[#c4c7c5] text-sm hover:underline font-medium mt-2"
-          >
-            Cancel
-          </button>
-        )}
-      </div>
+
+          <form onSubmit={handleSubmit} className="space-y-6">
+            <div className="flex justify-between gap-2 max-w-sm mx-auto">
+              {otp.map((digit, index) => (
+                <input
+                  key={index}
+                  type="text"
+                  maxLength="1"
+                  value={digit}
+                  ref={el => inputRefs.current[index] = el}
+                  onChange={(e) => handleChange(e, index)}
+                  onKeyDown={(e) => handleKeyDown(e, index)}
+                  onPaste={handlePaste}
+                  className="w-12 h-14 text-center text-xl font-bold bg-surface-container-lowest dark:bg-[#131314] border border-outline-variant dark:border-zinc-700 dark:text-zinc-200 rounded-lg focus:ring-2 focus:ring-secondary outline-none transition-all"
+                />
+              ))}
+            </div>
+
+            <button 
+              type="submit" 
+              disabled={isLoading}
+              className={`w-full py-2.5 px-4 bg-primary dark:bg-zinc-800 text-on-primary dark:text-[#e3e3e3] rounded-lg font-medium hover:bg-primary/90 dark:hover:bg-zinc-700 transition-colors shadow-sm ${isLoading ? 'opacity-70 cursor-not-allowed' : ''}`}
+            >
+              {isLoading ? (
+                <span className="flex items-center justify-center gap-2">
+                  <span className="animate-spin inline-block w-4 h-4 border-[2px] border-current border-t-transparent rounded-full" role="status" aria-label="loading"></span>
+                  Verifying...
+                </span>
+              ) : (
+                'Verify Email'
+              )}
+            </button>
+          </form>
+          
+          <div className="mt-6 flex flex-col items-center gap-3">
+            {timer > 0 ? (
+              <span className="text-on-surface-variant dark:text-[#c4c7c5] text-sm">Resend code in {timer}s</span>
+            ) : (
+              <button 
+                type="button"
+                onClick={handleResend}
+                disabled={isResending}
+                className="text-secondary dark:text-blue-400 dark:hover:text-blue-300 text-sm hover:underline font-bold disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:no-underline"
+              >
+                {isResending ? 'Resending...' : 'Resend Code'}
+              </button>
+            )}
+            
+            {onCancel && (
+              <button 
+                type="button"
+                onClick={onCancel}
+                className="text-on-surface-variant dark:text-[#c4c7c5] text-sm hover:underline font-medium mt-2"
+              >
+                Cancel
+              </button>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }

@@ -52,6 +52,13 @@ function App() {
   const [isForgotSuccess, setIsForgotSuccess] = useState(false);
   const [forgotError, setForgotError] = useState('');
   const [isForgotLoading, setIsForgotLoading] = useState(false);
+  const [showWelcomeModal, setShowWelcomeModal] = useState(false);
+
+  useEffect(() => {
+    if (token && !localStorage.getItem('has_seen_vault_tour')) {
+      setShowWelcomeModal(true);
+    }
+  }, [token]);
 
   const handleForgotSubmit = async (e) => {
     e.preventDefault();
@@ -890,6 +897,29 @@ function App() {
   return (
     <div className="flex min-h-screen w-full bg-white dark:bg-[#131314] text-slate-900 dark:text-zinc-100">
       <SplashOverlay />
+      
+      {/* Onboarding Welcome Modal */}
+      {showWelcomeModal && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-surface-container-lowest dark:bg-[#1e1f20] rounded-xl border border-outline-variant dark:border-zinc-800 w-full max-w-md p-6 relative shadow-xl">
+            <h3 className="font-title-lg text-on-surface dark:text-[#e3e3e3] text-xl font-bold">Welcome to your vault</h3>
+            <p className="font-body-md text-on-surface-variant dark:text-[#c4c7c5] mt-2">
+              Your secure digital space is ready. Upload documents, run malware scans, and manage your files safely.
+            </p>
+            <div className="flex justify-end mt-4">
+              <button 
+                onClick={() => {
+                  setShowWelcomeModal(false);
+                  localStorage.setItem('has_seen_vault_tour', 'true');
+                }}
+                className="px-4 py-2 bg-primary dark:bg-zinc-800 text-on-primary dark:text-[#e3e3e3] hover:bg-primary/90 dark:hover:bg-zinc-700 rounded-lg transition-colors font-medium"
+              >
+                Get Started
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* SideNavBar */}
       <nav className={`bg-surface-container-lowest dark:bg-[#1e1f20] h-screen w-64 fixed left-0 top-0 border-r border-outline-variant dark:border-zinc-800 flex flex-col py-stack-lg z-50 transform transition-transform duration-300 md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="px-6 mb-8 flex items-center gap-0">
