@@ -12,16 +12,12 @@ function App() {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const minimumLoadTime = new Promise(resolve => setTimeout(resolve, 800));
-    
     if (document.fonts && document.fonts.ready) {
-      Promise.all([document.fonts.ready, minimumLoadTime]).then(() => {
-        setIsLoading(false);
+      document.fonts.ready.then(() => {
+        setTimeout(() => setIsLoading(false), 300);
       });
     } else {
-      minimumLoadTime.then(() => {
-        setIsLoading(false);
-      });
+      setTimeout(() => setIsLoading(false), 300);
     }
   }, []);
   const [theme, setTheme] = useState(() => {
@@ -665,15 +661,13 @@ function App() {
   const searchFiltered = sortedFiles.filter(file => file.name.toLowerCase().includes(searchQuery.toLowerCase()));
   const filteredFiles = viewMode === 'recent' ? searchFiltered.slice(0, 5) : searchFiltered;
 
-  if (isLoading) {
-    return (
-      <div className="min-h-screen w-full flex items-center justify-center bg-[#131314] absolute inset-0 z-50">
-        <div className="animate-pulse">
-          <CloudGuardLogo size={200} className="dark:invert" />
-        </div>
+  const SplashOverlay = () => isLoading ? (
+    <div className="fixed inset-0 z-[9999] bg-[#131314] flex items-center justify-center">
+      <div className="animate-pulse">
+        <CloudGuardLogo size={200} className="dark:invert" />
       </div>
-    );
-  }
+    </div>
+  ) : null;
 
   if (!token) {
     if (window.location.pathname.startsWith('/reset-password/')) {
@@ -698,6 +692,7 @@ function App() {
 
     return (
       <div className="min-h-screen bg-white dark:bg-[#131314] text-slate-900 dark:text-zinc-100 flex items-center justify-center p-4">
+        <SplashOverlay />
         <div className="bg-surface w-full max-w-md rounded-2xl shadow-xl border border-outline-variant p-8">
           <div className="flex flex-col items-center mb-8">
             <div className="mb-4">
@@ -888,6 +883,7 @@ function App() {
 
   return (
     <div className="flex min-h-screen w-full bg-white dark:bg-[#131314] text-slate-900 dark:text-zinc-100">
+      <SplashOverlay />
       {/* SideNavBar */}
       <nav className={`bg-surface-container-lowest dark:bg-[#1e1f20] h-screen w-64 fixed left-0 top-0 border-r border-outline-variant dark:border-zinc-800 flex flex-col py-stack-lg z-50 transform transition-transform duration-300 md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="px-6 mb-8 flex items-center gap-0">
