@@ -85,9 +85,7 @@ export default function OTPVerification({ email, onVerifySuccess, onCancel }) {
       const res = await axios.post(`${API_BASE_URL}/api/auth/verify-otp`, { email, otp: otpValue });
       if (res.status === 200) {
         setIsVerified(true);
-        setTimeout(() => {
-          onVerifySuccess(res.data.token, res.data.user);
-        }, 1500);
+        onVerifySuccess(res.data.token, res.data.user);
       }
     } catch (err) {
       setError(err.response?.data?.error || 'Verification failed. Please try again.');
