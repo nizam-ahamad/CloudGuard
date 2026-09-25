@@ -34,4 +34,6 @@
     -webkit-box-shadow: 0 0 0 30px #1e1f20 inset !important;
     -webkit-text-fill-color: #e3e3e3 !important;
     caret-color: #e3e3e3 !important;
+    border-radius: inherit !important;
+    background-clip: padding-box !important;
 }
