@@ -95,6 +95,7 @@ export default function OTPVerification({ email, onVerifySuccess, onCancel }) {
           }, 1500);
         } else {
           console.error("Backend failed to return a valid token:", res.data);
+          setIsLoading(false);
         }
       }
     } catch (err) {

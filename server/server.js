@@ -315,11 +315,12 @@ app.post('/api/auth/verify-otp', async (req, res) => {
       fs.writeFileSync(usersFilePath, JSON.stringify(users, null, 2));
     }
 
-    const token = jwt.sign({ _id: user._id, name: user.name, isAdmin: user.isAdmin || false }, JWT_SECRET, { expiresIn: '7d' });
+    const secret = process.env.JWT_SECRET || 'development_fallback_secret_123';
+    const token = jwt.sign({ _id: user._id, name: user.name, isAdmin: user.isAdmin || false }, secret, { expiresIn: '7d' });
     return res.status(200).json({ message: 'Email verified successfully!', token, user: { name: user.name, email: user.email, isAdmin: user.isAdmin || false } });
   } catch (error) {
     console.error("OTP Verification Crash:", error);
-    return res.status(500).json({ message: "Internal server error during verification." });
+    return res.status(500).json({ message: "Server error during verification.", error: error.message });
   }
 });
 
