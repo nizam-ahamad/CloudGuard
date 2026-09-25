@@ -1053,7 +1053,7 @@ function App() {
                 <div>
                   <label className="block text-sm font-medium text-on-surface-variant dark:text-[#c4c7c5] mb-1">New Password</label>
                   <PasswordInput value={newPassword} onChange={e => setNewPassword(e.target.value)} required className="w-full bg-surface dark:bg-[#1e1f20] text-on-surface dark:text-zinc-200 border border-outline-variant dark:border-zinc-700 focus:ring-2 focus:ring-secondary rounded-lg px-4 py-2 outline-none" />
-                  <p className="text-xs text-on-surface-variant mt-1">Must be at least 8 characters with 1 letter and 1 number</p>
+                  <p className="text-xs text-on-surface-variant dark:text-[#c4c7c5] mt-1">Must be at least 8 characters with 1 letter and 1 number</p>
                 </div>
                 <button type="submit" disabled={isUpdatingPassword} className={`px-6 py-2 bg-primary dark:bg-zinc-800 text-on-primary dark:text-[#e3e3e3] rounded-lg font-medium transition-colors shadow-sm ${isUpdatingPassword ? 'opacity-70 cursor-not-allowed' : 'hover:bg-primary/90 dark:hover:bg-zinc-700'}`}>
                   {isUpdatingPassword ? (
@@ -1076,7 +1076,7 @@ function App() {
                   <label className="block text-sm font-medium text-on-surface-variant dark:text-red-200 mb-1">To verify, type <strong>DELETE</strong> below:</label>
                   <input type="text" value={deleteConfirmText} onChange={e => setDeleteConfirmText(e.target.value)} className="w-full bg-surface dark:bg-[#1e1f20] text-on-surface dark:text-zinc-200 border border-outline-variant dark:border-zinc-700 focus:ring-2 focus:ring-error rounded-lg px-4 py-2 outline-none" />
                 </div>
-                <button type="submit" disabled={deleteConfirmText !== 'DELETE' || isDeletingAccount} className={`px-6 py-2 rounded-lg font-medium transition-colors shadow-sm ${deleteConfirmText === 'DELETE' && !isDeletingAccount ? 'bg-error dark:bg-zinc-800 text-on-error dark:text-[#e3e3e3] hover:bg-[#b91c1c] dark:hover:bg-zinc-700' : 'bg-surface-dim dark:bg-zinc-900 text-on-surface-variant dark:text-zinc-500 cursor-not-allowed opacity-70'}`}>
+                <button type="submit" disabled={deleteConfirmText !== 'DELETE' || isDeletingAccount} className={`px-6 py-2 rounded-lg font-medium transition-colors shadow-sm ${deleteConfirmText === 'DELETE' && !isDeletingAccount ? 'bg-error dark:bg-red-500/10 text-on-error dark:text-red-500 dark:border dark:border-red-500/30 hover:bg-[#b91c1c] dark:hover:bg-red-500/20' : 'bg-surface-dim dark:bg-zinc-900 text-on-surface-variant dark:text-zinc-500 cursor-not-allowed opacity-70'}`}>
                   {isDeletingAccount ? (
                     <span className="flex items-center justify-center gap-2">
                       <span className="animate-spin inline-block w-4 h-4 border-[2px] border-current border-t-transparent rounded-full" role="status" aria-label="loading"></span>
