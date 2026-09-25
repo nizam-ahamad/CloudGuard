@@ -751,7 +751,7 @@ function App() {
                 <input 
                   type="text" 
                   required 
-                  className="w-full px-4 py-2 bg-surface-container-lowest dark:bg-[#1e1f20] border-2 border-outline-variant dark:border-[#282a2c] dark:text-zinc-200 rounded-lg focus:border-blue-500 focus:outline-none focus:ring-0 transition-colors duration-200"
+                  className="w-full px-4 py-2 bg-surface-container-lowest dark:bg-[#1e1f20] dark:text-zinc-200 rounded-lg border-2 border-[#282a2c] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200"
                   value={authForm.name}
                   onChange={e => setAuthForm({...authForm, name: e.target.value})}
                 />
@@ -762,7 +762,7 @@ function App() {
               <input 
                 type="email" 
                 required 
-                className="w-full px-4 py-2 bg-surface-container-lowest dark:bg-[#1e1f20] border-2 border-outline-variant dark:border-[#282a2c] dark:text-zinc-200 rounded-lg focus:border-blue-500 focus:outline-none focus:ring-0 transition-colors duration-200"
+                className="w-full px-4 py-2 bg-surface-container-lowest dark:bg-[#1e1f20] dark:text-zinc-200 rounded-lg border-2 border-[#282a2c] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200"
                 value={authForm.email}
                 onChange={e => setAuthForm({...authForm, email: e.target.value})}
               />
@@ -771,7 +771,7 @@ function App() {
               <label className="block text-sm font-medium text-on-surface dark:text-[#c4c7c5] mb-1">Password</label>
               <PasswordInput 
                 required 
-                className="w-full px-4 py-2 bg-surface-container-lowest dark:bg-[#1e1f20] border-2 border-outline-variant dark:border-[#282a2c] dark:text-zinc-200 rounded-lg focus:border-blue-500 focus:outline-none focus:ring-0 transition-colors duration-200"
+                className="w-full px-4 py-2 bg-surface-container-lowest dark:bg-[#1e1f20] dark:text-zinc-200 rounded-lg border-2 border-[#282a2c] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200"
                 value={authForm.password}
                 onChange={e => setAuthForm({...authForm, password: e.target.value})}
               />
