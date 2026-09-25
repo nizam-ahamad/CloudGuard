@@ -85,6 +85,17 @@ function App() {
   const [previewUrl, setPreviewUrl] = useState("");
   const [previewText, setPreviewText] = useState("");
 
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') {
+        e.preventDefault();
+        setIsCollapsed(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   const closePreview = () => {
     setPreviewFile(null);
     setPreviewUrl("");
@@ -977,11 +988,14 @@ function App() {
           
           <button 
             onClick={() => setIsCollapsed(!isCollapsed)}
-            className="hidden md:flex group relative w-full items-center justify-center py-2 mt-2 text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] rounded-full transition-colors"
+            className="hidden md:flex group relative w-full items-center justify-center py-2 mt-2 text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface dark:hover:text-white hover:bg-surface-container-high dark:hover:bg-white/5 rounded-lg transition-colors"
           >
             <span className="material-symbols-outlined transition-transform duration-300" style={{ transform: isCollapsed ? 'rotate(180deg)' : 'rotate(0deg)' }}>
-              keyboard_double_arrow_left
+              view_sidebar
             </span>
+            <div className="absolute left-full ml-4 px-3 py-1 bg-[#1e1f20] border border-zinc-800 text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+              Toggle Sidebar (Ctrl+B)
+            </div>
           </button>
         </div>
       </nav>
