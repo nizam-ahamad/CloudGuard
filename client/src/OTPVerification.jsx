@@ -83,15 +83,21 @@ export default function OTPVerification({ email, onVerifySuccess, onCancel }) {
     
     try {
       const res = await axios.post(`${API_BASE_URL}/api/auth/verify-otp`, { email, otp: otpValue });
-      if (res.status === 200 && res.data.token) {
+      if (res.status === 200) {
         setIsVerified(true);
-        localStorage.setItem('token', res.data.token);
-        if (res.data.user) {
-          localStorage.setItem('user', JSON.stringify(res.data.user));
+        if (res.data.token) {
+          localStorage.setItem('token', res.data.token);
+          if (res.data.user) {
+            localStorage.setItem('user', JSON.stringify(res.data.user));
+          }
+          setTimeout(() => {
+            window.location.href = '/';
+          }, 1500);
+        } else {
+          setTimeout(() => {
+            window.location.href = '/';
+          }, 1500);
         }
-        setTimeout(() => {
-          window.location.href = '/';
-        }, 1500);
       }
     } catch (err) {
       setError(err.response?.data?.error || 'Verification failed. Please try again.');
