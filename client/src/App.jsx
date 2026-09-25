@@ -933,10 +933,10 @@ function App() {
         </div>
       )}
       {/* SideNavBar */}
-      <nav className={`bg-surface-container-lowest dark:bg-[#1e1f20] h-screen ${isCollapsed ? 'w-20' : 'w-64'} fixed left-0 top-0 border-r border-outline-variant dark:border-zinc-800 flex flex-col py-stack-lg z-50 transform transition-all duration-300 ease-in-out md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+      <nav className={`bg-surface-container-lowest dark:bg-[#1e1f20] h-screen ${isCollapsed ? 'w-20' : 'w-64'} fixed left-0 top-0 border-r border-outline-variant dark:border-zinc-800 flex flex-col py-stack-lg z-50 transform transition-all duration-300 ease-in-out overflow-x-hidden md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className={`px-6 mb-8 flex items-center gap-0 ${isCollapsed ? 'justify-center !px-0' : ''}`}>
-          <CloudGuardLogo className="h-12 w-auto shrink-0" />
-          <div className={`overflow-hidden whitespace-nowrap transition-all duration-300 ease-in-out ${isCollapsed ? 'w-0 opacity-0' : 'opacity-100 delay-100'}`}>
+          <CloudGuardLogo className="h-12 w-auto flex-shrink-0" />
+          <div className={`overflow-hidden whitespace-nowrap transition-all duration-300 ease-in-out ${isCollapsed ? 'w-0 opacity-0' : 'w-auto opacity-100 delay-100'}`}>
             <h1 className="font-headline-md text-headline-md font-bold text-primary dark:text-[#e3e3e3]">CloudGuard</h1>
           </div>
         </div>
@@ -947,7 +947,7 @@ function App() {
             className={`group relative w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4'} py-3 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${viewMode === 'all' ? 'text-secondary bg-surface-container-low dark:bg-[#282a2c] dark:text-[#e3e3e3]' : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'}`}
           >
             <span className="material-symbols-outlined shrink-0" data-weight={viewMode === 'all' ? "fill" : ""}>folder_open</span>
-            <span className={`font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ease-in-out ${isCollapsed ? 'w-0 opacity-0' : 'opacity-100 delay-100'}`}>My Files</span>
+            <span className={`font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ease-in-out ${isCollapsed ? 'w-0 opacity-0' : 'w-auto opacity-100 delay-100'}`}>My Files</span>
             {isCollapsed && (
               <div className="absolute left-full ml-4 px-3 py-1 bg-[#1e1f20] border border-zinc-800 text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
                 My Files
@@ -960,7 +960,7 @@ function App() {
             className={`group relative w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4'} py-3 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${viewMode === 'recent' ? 'text-secondary bg-surface-container-low dark:bg-[#282a2c] dark:text-[#e3e3e3]' : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'}`}
           >
             <span className="material-symbols-outlined shrink-0" data-weight={viewMode === 'recent' ? "fill" : ""}>history</span>
-            <span className={`font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ease-in-out ${isCollapsed ? 'w-0 opacity-0' : 'opacity-100 delay-100'}`}>Recent</span>
+            <span className={`font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ease-in-out ${isCollapsed ? 'w-0 opacity-0' : 'w-auto opacity-100 delay-100'}`}>Recent</span>
             {isCollapsed && (
               <div className="absolute left-full ml-4 px-3 py-1 bg-[#1e1f20] border border-zinc-800 text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
                 Recent
@@ -976,7 +976,7 @@ function App() {
             className={`group relative w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4'} py-3 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${viewMode === 'settings' ? 'bg-surface-container-low dark:bg-[#282a2c] dark:text-[#c4c7c5]' : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'}`}
           >
             <span className="material-symbols-outlined shrink-0" data-weight={viewMode === 'settings' ? "fill" : ""}>settings</span>
-            <span className={`font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ease-in-out ${isCollapsed ? 'w-0 opacity-0' : 'opacity-100 delay-100'}`}>Settings</span>
+            <span className={`font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ease-in-out ${isCollapsed ? 'w-0 opacity-0' : 'w-auto opacity-100 delay-100'}`}>Settings</span>
             {isCollapsed && (
               <div className="absolute left-full ml-4 px-3 py-1 bg-[#1e1f20] border border-zinc-800 text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
                 Settings
