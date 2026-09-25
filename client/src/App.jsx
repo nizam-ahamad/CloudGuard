@@ -80,6 +80,7 @@ function App() {
   const [storageStats, setStorageStats] = useState({ usedBytes: 0, totalLimitBytes: 1, usedPercentage: 0 });
   const [searchQuery, setSearchQuery] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(false);
   const [previewFile, setPreviewFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState("");
   const [previewText, setPreviewText] = useState("");
@@ -921,46 +922,72 @@ function App() {
         </div>
       )}
       {/* SideNavBar */}
-      <nav className={`bg-surface-container-lowest dark:bg-[#1e1f20] h-screen w-64 fixed left-0 top-0 border-r border-outline-variant dark:border-zinc-800 flex flex-col py-stack-lg z-50 transform transition-transform duration-300 md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-        <div className="px-6 mb-8 flex items-center gap-0">
+      <nav className={`bg-surface-container-lowest dark:bg-[#1e1f20] h-screen ${isCollapsed ? 'w-20' : 'w-64'} fixed left-0 top-0 border-r border-outline-variant dark:border-zinc-800 flex flex-col py-stack-lg z-50 transform transition-all duration-300 ease-in-out md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+        <div className={`px-6 mb-8 flex items-center gap-0 ${isCollapsed ? 'justify-center !px-0' : ''}`}>
           <CloudGuardLogo className="h-12 w-auto shrink-0" />
-          <div>
-            <h1 className="font-headline-md text-headline-md font-bold text-primary dark:text-[#e3e3e3]">CloudGuard</h1>
-          </div>
+          {!isCollapsed && (
+            <div>
+              <h1 className="font-headline-md text-headline-md font-bold text-primary dark:text-[#e3e3e3]">CloudGuard</h1>
+            </div>
+          )}
         </div>
         {/* Main Navigation */}
         <div className="flex-1 px-4 space-y-1">
           <button 
             onClick={() => { setViewMode('all'); setCurrentDirectory(''); setIsSidebarOpen(false); }}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${viewMode === 'all' ? 'text-secondary bg-surface-container-low dark:bg-[#282a2c] dark:text-[#e3e3e3]' : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'}`}
+            className={`group relative w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4'} py-3 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${viewMode === 'all' ? 'text-secondary bg-surface-container-low dark:bg-[#282a2c] dark:text-[#e3e3e3]' : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'}`}
           >
             <span className="material-symbols-outlined" data-weight={viewMode === 'all' ? "fill" : ""}>folder_open</span>
-            <span className="font-body-md text-body-md">My Files</span>
+            {!isCollapsed && <span className="font-body-md text-body-md">My Files</span>}
+            {isCollapsed && (
+              <div className="absolute left-full ml-4 px-3 py-1 bg-[#1e1f20] border border-zinc-800 text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+                My Files
+              </div>
+            )}
           </button>
           
           <button 
             onClick={() => { setViewMode('recent'); setCurrentDirectory(''); setIsSidebarOpen(false); }}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${viewMode === 'recent' ? 'text-secondary bg-surface-container-low dark:bg-[#282a2c] dark:text-[#e3e3e3]' : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'}`}
+            className={`group relative w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4'} py-3 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${viewMode === 'recent' ? 'text-secondary bg-surface-container-low dark:bg-[#282a2c] dark:text-[#e3e3e3]' : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'}`}
           >
             <span className="material-symbols-outlined" data-weight={viewMode === 'recent' ? "fill" : ""}>history</span>
-            <span className="font-body-md text-body-md">Recent</span>
+            {!isCollapsed && <span className="font-body-md text-body-md">Recent</span>}
+            {isCollapsed && (
+              <div className="absolute left-full ml-4 px-3 py-1 bg-[#1e1f20] border border-zinc-800 text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+                Recent
+              </div>
+            )}
           </button>
         </div>
 
         {/* Footer Navigation */}
-        <div className="px-4 space-y-1 mt-auto border-t border-outline-variant pt-4 mx-4">
+        <div className={`px-4 space-y-1 mt-auto border-t border-outline-variant pt-4 ${isCollapsed ? 'mx-2' : 'mx-4'}`}>
           <button 
             onClick={() => { setViewMode('settings'); setIsSidebarOpen(false); }}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${viewMode === 'settings' ? 'bg-surface-container-low dark:bg-[#282a2c] dark:text-[#c4c7c5]' : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'}`}
+            className={`group relative w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4'} py-3 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${viewMode === 'settings' ? 'bg-surface-container-low dark:bg-[#282a2c] dark:text-[#c4c7c5]' : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'}`}
           >
             <span className="material-symbols-outlined" data-weight={viewMode === 'settings' ? "fill" : ""}>settings</span>
-            <span className="font-body-md text-body-md">Settings</span>
+            {!isCollapsed && <span className="font-body-md text-body-md">Settings</span>}
+            {isCollapsed && (
+              <div className="absolute left-full ml-4 px-3 py-1 bg-[#1e1f20] border border-zinc-800 text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+                Settings
+              </div>
+            )}
+          </button>
+          
+          <button 
+            onClick={() => setIsCollapsed(!isCollapsed)}
+            className="hidden md:flex group relative w-full items-center justify-center py-2 mt-2 text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] rounded-full transition-colors"
+          >
+            <span className="material-symbols-outlined transition-transform duration-300" style={{ transform: isCollapsed ? 'rotate(180deg)' : 'rotate(0deg)' }}>
+              keyboard_double_arrow_left
+            </span>
           </button>
         </div>
       </nav>
 
       {/* TopAppBar */}
-      <header className="bg-surface-container-lowest dark:bg-[#1e1f20] fixed top-0 right-0 w-full md:w-[calc(100%-256px)] h-16 border-b border-outline-variant dark:border-zinc-800 flex justify-between items-center px-margin-mobile md:px-margin-desktop z-10">
+      <header className={`bg-surface-container-lowest dark:bg-[#1e1f20] fixed top-0 right-0 w-full h-16 border-b border-outline-variant dark:border-zinc-800 flex justify-between items-center px-margin-mobile md:px-margin-desktop z-10 transition-all duration-300 ease-in-out ${isCollapsed ? 'md:w-[calc(100%-80px)]' : 'md:w-[calc(100%-256px)]'}`}>
         <div className="flex items-center gap-4">
           <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="md:hidden p-2 text-on-surface-variant hover:bg-surface-container-high rounded-full transition-colors">
             <span className="material-symbols-outlined">menu</span>
@@ -1023,7 +1050,7 @@ function App() {
       {/* Main Content Canvas */}
       <main 
         onClick={() => { setShowProfileMenu(false); setIsSidebarOpen(false); }} 
-        className="pt-24 pb-12 px-margin-mobile md:px-margin-desktop md:ml-64 max-w-container-max mx-auto w-full min-h-screen dark:bg-[#131314]"
+        className={`pt-24 pb-12 px-margin-mobile md:px-margin-desktop max-w-container-max mx-auto w-full min-h-screen dark:bg-[#131314] transition-all duration-300 ease-in-out ${isCollapsed ? 'md:ml-20' : 'md:ml-64'}`}
       >
         {viewMode === 'settings' ? (
           <div className="max-w-3xl mx-auto space-y-6">
