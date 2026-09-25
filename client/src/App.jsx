@@ -12,11 +12,14 @@ function App() {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // Wait for initial render and icon fonts to load to prevent FOUC
-    const timer = setTimeout(() => {
+    // Wait for initial render and external web fonts to fully load to completely prevent FOUC
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(() => {
+        setIsLoading(false);
+      });
+    } else {
       setIsLoading(false);
-    }, 600); // 600ms delay to ensure smooth transition
-    return () => clearTimeout(timer);
+    }
   }, []);
   const [theme, setTheme] = useState(() => {
     const savedTheme = localStorage.getItem('theme');
