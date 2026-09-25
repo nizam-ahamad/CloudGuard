@@ -662,9 +662,9 @@ function App() {
   const filteredFiles = viewMode === 'recent' ? searchFiltered.slice(0, 5) : searchFiltered;
 
   const SplashOverlay = () => isLoading ? (
-    <div className="fixed inset-0 z-[9999] bg-[#131314] flex items-center justify-center">
+    <div className="fixed inset-0 z-[9999] bg-white dark:bg-[#131314] flex items-center justify-center">
       <div className="animate-pulse">
-        <CloudGuardLogo size={200} className="dark:invert" />
+        <CloudGuardLogo size={200} />
       </div>
     </div>
   ) : null;
