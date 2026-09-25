@@ -23,7 +23,7 @@ function App() {
   const [theme, setTheme] = useState(() => {
     const savedTheme = localStorage.getItem('theme');
     if (savedTheme) return savedTheme;
-    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    return 'dark';
   });
 
   useEffect(() => {
@@ -680,9 +680,15 @@ function App() {
         <div className="min-h-screen bg-white dark:bg-[#131314] text-slate-900 dark:text-zinc-100 flex items-center justify-center p-4">
           <OTPVerification 
             email={authForm.email} 
-            onVerifySuccess={() => {
-              setAuthMode('login');
-              addToast('success', 'Email verified! Please log in.');
+            onVerifySuccess={(token) => {
+              if (token) {
+                localStorage.setItem('token', token);
+                setToken(token);
+                addToast('success', 'Email verified successfully!');
+              } else {
+                setAuthMode('login');
+                addToast('success', 'Email verified! Please log in.');
+              }
             }}
             onCancel={() => setAuthMode('login')}
           />

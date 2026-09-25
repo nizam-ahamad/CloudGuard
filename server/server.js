@@ -315,7 +315,8 @@ app.post('/api/auth/verify-otp', async (req, res) => {
       fs.writeFileSync(usersFilePath, JSON.stringify(users, null, 2));
     }
 
-    res.json({ message: 'Email verified successfully. You can now log in.' });
+    const token = jwt.sign({ _id: user._id, name: user.name, isAdmin: user.isAdmin || false }, JWT_SECRET, { expiresIn: '7d' });
+    res.json({ message: 'Email verified successfully!', token, user: { name: user.name, email: user.email, isAdmin: user.isAdmin || false } });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
