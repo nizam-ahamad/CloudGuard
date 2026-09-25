@@ -12,13 +12,16 @@ function App() {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // Wait for initial render and external web fonts to fully load to completely prevent FOUC
+    const minimumLoadTime = new Promise(resolve => setTimeout(resolve, 800));
+    
     if (document.fonts && document.fonts.ready) {
-      document.fonts.ready.then(() => {
+      Promise.all([document.fonts.ready, minimumLoadTime]).then(() => {
         setIsLoading(false);
       });
     } else {
-      setIsLoading(false);
+      minimumLoadTime.then(() => {
+        setIsLoading(false);
+      });
     }
   }, []);
   const [theme, setTheme] = useState(() => {
