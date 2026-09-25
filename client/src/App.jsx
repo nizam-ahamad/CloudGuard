@@ -1379,26 +1379,26 @@ function App() {
       {/* Delete Confirmation Modal */}
       {(fileToDelete || showBulkDeleteModal) && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-          <div className="bg-surface-container-lowest rounded-xl shadow-xl border border-outline-variant w-full max-w-md p-6 flex flex-col gap-4">
-            <h3 className="font-title-lg text-on-surface">Confirm Delete</h3>
-            <p className="font-body-md text-on-surface-variant">
+          <div className="bg-surface-container-lowest dark:bg-[#1e1f20] rounded-xl shadow-xl border border-outline-variant dark:border-zinc-800 w-full max-w-md p-6 flex flex-col gap-4">
+            <h3 className="font-title-lg text-on-surface dark:text-[#e3e3e3]">Confirm Delete</h3>
+            <p className="font-body-md text-on-surface-variant dark:text-[#c4c7c5]">
               {showBulkDeleteModal ? (
-                <>Are you sure you want to permanently delete the <strong className="break-all text-on-surface">{selectedFiles.length}</strong> selected files?</>
+                <>Are you sure you want to permanently delete the <strong className="break-all text-on-surface dark:text-[#e3e3e3]">{selectedFiles.length}</strong> selected files?</>
               ) : (
-                <>Are you sure you want to permanently delete <strong className="break-all text-on-surface">{fileToDelete?.name}</strong>?</>
+                <>Are you sure you want to permanently delete <strong className="break-all text-on-surface dark:text-[#e3e3e3]">{fileToDelete?.name}</strong>?</>
               )}
             </p>
             <div className="flex justify-end gap-3 mt-4">
               <button 
                 onClick={() => { setFileToDelete(null); setShowBulkDeleteModal(false); }}
-                className="px-4 py-2 font-label-md text-on-surface-variant hover:bg-surface-container-high rounded-lg transition-colors"
+                className="px-4 py-2 font-label-md text-on-surface-variant dark:text-[#c4c7c5] hover:bg-surface-container-high dark:hover:bg-zinc-800/70 rounded-lg transition-colors"
               >
                 Cancel
               </button>
               <button 
                 onClick={showBulkDeleteModal ? handleBulkDelete : confirmDelete}
                 disabled={isDeleting || isBulkDeleting}
-                className={`px-4 py-2 font-label-md bg-error text-on-error rounded-lg transition-colors ${(isDeleting || isBulkDeleting) ? 'opacity-70 cursor-not-allowed' : 'hover:bg-[#b91c1c]'}`}
+                className={`px-4 py-2 font-label-md bg-error dark:bg-red-900 text-on-error dark:text-red-100 rounded-lg transition-colors ${(isDeleting || isBulkDeleting) ? 'opacity-70 cursor-not-allowed' : 'hover:bg-[#b91c1c] dark:hover:bg-red-800'}`}
               >
                 {(isDeleting || isBulkDeleting) ? (
                   <span className="flex items-center justify-center gap-2">
