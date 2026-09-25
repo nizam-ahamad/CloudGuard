@@ -9,6 +9,15 @@ import Toast from './Toast';
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
 function App() {
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    // Wait for initial render and icon fonts to load to prevent FOUC
+    const timer = setTimeout(() => {
+      setIsLoading(false);
+    }, 600); // 600ms delay to ensure smooth transition
+    return () => clearTimeout(timer);
+  }, []);
   const [theme, setTheme] = useState(() => {
     const savedTheme = localStorage.getItem('theme');
     if (savedTheme) return savedTheme;
@@ -649,6 +658,16 @@ function App() {
 
   const searchFiltered = sortedFiles.filter(file => file.name.toLowerCase().includes(searchQuery.toLowerCase()));
   const filteredFiles = viewMode === 'recent' ? searchFiltered.slice(0, 5) : searchFiltered;
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen w-full flex items-center justify-center bg-[#131314] absolute inset-0 z-50">
+        <div className="animate-pulse">
+          <CloudGuardLogo size={200} className="dark:invert" />
+        </div>
+      </div>
+    );
+  }
 
   if (!token) {
     if (window.location.pathname.startsWith('/reset-password/')) {
