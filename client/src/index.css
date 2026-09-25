@@ -25,3 +25,13 @@
     background-color: #cbd5e1;
     border-radius: 20px;
 }
+
+/* Force autofill to match dark mode theme */
+.dark input:-webkit-autofill,
+.dark input:-webkit-autofill:hover, 
+.dark input:-webkit-autofill:focus, 
+.dark input:-webkit-autofill:active {
+    -webkit-box-shadow: 0 0 0 30px #1e1f20 inset !important;
+    -webkit-text-fill-color: #e3e3e3 !important;
+    caret-color: #e3e3e3 !important;
+}
