@@ -691,9 +691,8 @@ function App() {
               if (token && user) {
                 localStorage.setItem('token', token);
                 localStorage.setItem('user', JSON.stringify(user));
-                setTimeout(() => {
-                  window.location.href = '/';
-                }, 1500);
+                setToken(token);
+                setUser(user);
               } else {
                 setAuthMode('login');
               }

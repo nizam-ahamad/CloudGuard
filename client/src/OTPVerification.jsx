@@ -84,19 +84,17 @@ export default function OTPVerification({ email, onVerifySuccess, onCancel }) {
     try {
       const res = await axios.post(`${API_BASE_URL}/api/auth/verify-otp`, { email, otp: otpValue });
       if (res.status === 200) {
-        setIsVerified(true);
-        if (res.data.token) {
+        if (res.data.token && res.data.token !== "undefined") {
+          setIsVerified(true);
           localStorage.setItem('token', res.data.token);
           if (res.data.user) {
             localStorage.setItem('user', JSON.stringify(res.data.user));
           }
           setTimeout(() => {
-            window.location.href = '/';
+            onVerifySuccess(res.data.token, res.data.user);
           }, 1500);
         } else {
-          setTimeout(() => {
-            window.location.href = '/';
-          }, 1500);
+          console.error("Backend failed to return a valid token:", res.data);
         }
       }
     } catch (err) {
