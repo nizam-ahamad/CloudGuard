@@ -693,13 +693,13 @@ function App() {
     return (
       <div className="min-h-screen bg-white dark:bg-[#131314] text-slate-900 dark:text-zinc-100 flex items-center justify-center p-4">
         <SplashOverlay />
-        <div className="bg-surface w-full max-w-md rounded-2xl shadow-xl border border-outline-variant p-8">
+        <div className="bg-surface dark:bg-[#1e1f20] w-full max-w-md rounded-2xl shadow-xl border border-outline-variant dark:border-zinc-800 p-8">
           <div className="flex flex-col items-center mb-8">
             <div className="mb-4">
               <CloudGuardLogo size={175} />
             </div>
-            <h1 className="font-headline-md text-primary font-bold">CloudGuard</h1>
-            <p className="text-on-surface-variant mt-2 font-body-md text-center">
+            <h1 className="font-headline-md text-primary dark:text-[#e3e3e3] font-bold">CloudGuard</h1>
+            <p className="text-on-surface-variant dark:text-[#c4c7c5] mt-2 font-body-md text-center">
               {authMode === 'login' ? 'Sign in to access your secure storage' : 'Create an account to get started'}
             </p>
           </div>
@@ -711,7 +711,7 @@ function App() {
                 <button
                   type="button"
                   onClick={handleResendOtp}
-                  className="mt-2 text-secondary hover:underline font-bold"
+                  className="mt-2 text-secondary dark:text-blue-400 dark:hover:text-blue-300 hover:underline font-bold"
                 >
                   Verify Now / Resend Code
                 </button>
@@ -722,36 +722,36 @@ function App() {
           <form onSubmit={handleAuthSubmit} className="space-y-4">
             {authMode === 'register' && (
               <div>
-                <label className="block text-sm font-medium text-on-surface mb-1">Full Name</label>
+                <label className="block text-sm font-medium text-on-surface dark:text-[#c4c7c5] mb-1">Full Name</label>
                 <input 
                   type="text" 
                   required 
-                  className="w-full px-4 py-2 bg-surface-container-lowest border border-outline-variant rounded-lg focus:ring-2 focus:ring-secondary outline-none transition-all"
+                  className="w-full px-4 py-2 bg-surface-container-lowest dark:bg-[#131314] border border-outline-variant dark:border-zinc-700 dark:text-zinc-200 rounded-lg focus:ring-2 focus:ring-secondary outline-none transition-all"
                   value={authForm.name}
                   onChange={e => setAuthForm({...authForm, name: e.target.value})}
                 />
               </div>
             )}
             <div>
-              <label className="block text-sm font-medium text-on-surface mb-1">Email</label>
+              <label className="block text-sm font-medium text-on-surface dark:text-[#c4c7c5] mb-1">Email</label>
               <input 
                 type="email" 
                 required 
-                className="w-full px-4 py-2 bg-surface-container-lowest border border-outline-variant rounded-lg focus:ring-2 focus:ring-secondary outline-none transition-all"
+                className="w-full px-4 py-2 bg-surface-container-lowest dark:bg-[#131314] border border-outline-variant dark:border-zinc-700 dark:text-zinc-200 rounded-lg focus:ring-2 focus:ring-secondary outline-none transition-all"
                 value={authForm.email}
                 onChange={e => setAuthForm({...authForm, email: e.target.value})}
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-on-surface mb-1">Password</label>
+              <label className="block text-sm font-medium text-on-surface dark:text-[#c4c7c5] mb-1">Password</label>
               <PasswordInput 
                 required 
-                className="w-full px-4 py-2 bg-surface-container-lowest border border-outline-variant rounded-lg focus:ring-2 focus:ring-secondary outline-none transition-all"
+                className="w-full px-4 py-2 bg-surface-container-lowest dark:bg-[#131314] border border-outline-variant dark:border-zinc-700 dark:text-zinc-200 rounded-lg focus:ring-2 focus:ring-secondary outline-none transition-all"
                 value={authForm.password}
                 onChange={e => setAuthForm({...authForm, password: e.target.value})}
               />
               {authMode === 'register' && (
-                <p className="text-xs text-on-surface-variant mt-1">
+                <p className="text-xs text-on-surface-variant dark:text-[#c4c7c5] mt-1">
                   Must be at least 8 characters with 1 letter and 1 number
                 </p>
               )}
@@ -767,12 +767,12 @@ function App() {
                     checked={authForm.remember}
                     onChange={e => setAuthForm({...authForm, remember: e.target.checked})}
                   />
-                  <label htmlFor="remember" className="ml-2 text-sm text-on-surface-variant">Remember me</label>
+                  <label htmlFor="remember" className="ml-2 text-sm text-on-surface-variant dark:text-[#c4c7c5]">Remember me</label>
                 </div>
                 <button 
                   type="button" 
                   onClick={() => setShowForgotModal(true)}
-                  className="text-sm text-secondary hover:underline font-medium"
+                  className="text-sm text-secondary dark:text-blue-400 dark:hover:text-blue-300 hover:underline font-medium"
                 >
                   Forgot password?
                 </button>
@@ -782,7 +782,7 @@ function App() {
             <button 
               type="submit" 
               disabled={isAuthLoading}
-              className={`w-full py-3 bg-primary text-on-primary rounded-lg font-medium hover:bg-primary/90 transition-colors mt-6 shadow-sm ${isAuthLoading ? 'opacity-70 cursor-not-allowed' : ''}`}
+              className={`w-full py-3 bg-primary dark:bg-zinc-800 text-on-primary dark:text-[#e3e3e3] rounded-lg font-medium hover:bg-primary/90 dark:hover:bg-zinc-700 transition-colors mt-6 shadow-sm ${isAuthLoading ? 'opacity-70 cursor-not-allowed' : ''}`}
             >
               {isAuthLoading ? (
                 <span className="flex items-center justify-center gap-2">
@@ -803,7 +803,7 @@ function App() {
                 setAuthError('');
                 setIsUnverified(false);
               }}
-              className="text-secondary text-sm hover:underline font-medium"
+              className="text-secondary dark:text-blue-400 dark:hover:text-blue-300 text-sm hover:underline font-medium"
             >
               {authMode === 'login' ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
             </button>
@@ -813,7 +813,7 @@ function App() {
         {/* Forgot Password Modal */}
         {showForgotModal && (
           <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-            <div className="bg-surface w-full max-w-sm rounded-xl shadow-xl p-6 relative">
+            <div className="bg-surface dark:bg-[#1e1f20] dark:border dark:border-zinc-800 w-full max-w-sm rounded-xl shadow-xl p-6 relative">
               <button 
                 onClick={() => {
                   setShowForgotModal(false);
@@ -821,7 +821,7 @@ function App() {
                   setForgotError('');
                   setForgotEmail('');
                 }}
-                className="absolute top-4 right-4 text-on-surface-variant hover:text-on-surface"
+                className="absolute top-4 right-4 text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface dark:hover:text-[#e3e3e3]"
               >
                 <span className="material-symbols-outlined">close</span>
               </button>
@@ -833,8 +833,8 @@ function App() {
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
                     </svg>
                   </div>
-                  <h3 className="font-title-lg font-bold text-on-surface mb-2">Check your inbox</h3>
-                  <p className="text-sm text-on-surface-variant mb-6">
+                  <h3 className="font-title-lg font-bold text-on-surface dark:text-[#e3e3e3] mb-2">Check your inbox</h3>
+                  <p className="text-sm text-on-surface-variant dark:text-[#c4c7c5] mb-6">
                     We've sent a password reset link to <strong>{forgotEmail}</strong>.
                   </p>
                   <button 
@@ -843,31 +843,31 @@ function App() {
                       setIsForgotSuccess(false);
                       setForgotEmail('');
                     }}
-                    className="w-full py-2 bg-surface-container-high text-on-surface rounded-lg font-medium transition-colors hover:bg-surface-container-highest"
+                    className="w-full py-2 bg-surface-container-high dark:bg-zinc-800 text-on-surface dark:text-[#e3e3e3] rounded-lg font-medium transition-colors hover:bg-surface-container-highest dark:hover:bg-zinc-700"
                   >
                     Back to Login
                   </button>
                 </div>
               ) : (
                 <div className="text-left">
-                  <h3 className="font-title-lg text-on-surface mb-2">Reset Password</h3>
-                  <p className="text-sm text-on-surface-variant mb-6">Enter your email and we'll send you a link to reset your password.</p>
+                  <h3 className="font-title-lg text-on-surface dark:text-[#e3e3e3] mb-2">Reset Password</h3>
+                  <p className="text-sm text-on-surface-variant dark:text-[#c4c7c5] mb-6">Enter your email and we'll send you a link to reset your password.</p>
                   
                   {forgotError && <div className="mb-4 p-2 bg-error/10 text-error text-sm rounded-lg">{forgotError}</div>}
                   
                   <form onSubmit={handleForgotSubmit}>
-                    <label className="block text-sm font-medium text-on-surface mb-1">Email address</label>
+                    <label className="block text-sm font-medium text-on-surface dark:text-[#c4c7c5] mb-1">Email address</label>
                     <input 
                       type="email" 
                       required 
-                      className="w-full px-4 py-2 bg-surface-container-lowest border border-outline-variant rounded-lg focus:ring-2 focus:ring-secondary outline-none transition-all mb-4"
+                      className="w-full px-4 py-2 bg-surface-container-lowest dark:bg-[#131314] border border-outline-variant dark:border-zinc-700 dark:text-zinc-200 rounded-lg focus:ring-2 focus:ring-secondary outline-none transition-all mb-4"
                       value={forgotEmail}
                       onChange={e => setForgotEmail(e.target.value)}
                     />
                     <button 
                       type="submit" 
                       disabled={isForgotLoading}
-                      className={`w-full py-2 bg-primary text-on-primary rounded-lg font-medium transition-colors ${isForgotLoading ? 'opacity-70 cursor-not-allowed' : 'hover:bg-primary/90'}`}
+                      className={`w-full py-2 bg-primary dark:bg-zinc-800 text-on-primary dark:text-[#e3e3e3] rounded-lg font-medium transition-colors ${isForgotLoading ? 'opacity-70 cursor-not-allowed' : 'hover:bg-primary/90 dark:hover:bg-zinc-700'}`}
                     >
                       {isForgotLoading ? 'Sending...' : 'Send Reset Link'}
                     </button>

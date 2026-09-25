@@ -40,14 +40,14 @@ function ResetPassword({ token }) {
   };
 
   return (
-    <div className="min-h-screen bg-surface-container-lowest flex items-center justify-center p-4">
-      <div className="bg-surface w-full max-w-md rounded-2xl shadow-xl border border-outline-variant p-8">
+    <div className="min-h-screen bg-surface-container-lowest dark:bg-[#131314] flex items-center justify-center p-4">
+      <div className="bg-surface dark:bg-[#1e1f20] w-full max-w-md rounded-2xl shadow-xl border border-outline-variant dark:border-zinc-800 p-8">
         <div className="flex flex-col items-center mb-8">
           <div className="w-16 h-16 rounded-xl bg-surface-container-high flex items-center justify-center mb-4">
             <span className="material-symbols-outlined text-secondary text-3xl" data-weight="fill">lock_reset</span>
           </div>
-          <h1 className="font-headline-md text-primary font-bold">Reset Password</h1>
-          <p className="text-on-surface-variant mt-2 font-body-md text-center">
+          <h1 className="font-headline-md text-primary dark:text-[#e3e3e3] font-bold">Reset Password</h1>
+          <p className="text-on-surface-variant dark:text-[#c4c7c5] mt-2 font-body-md text-center">
             Enter your new password below.
           </p>
         </div>
@@ -68,20 +68,20 @@ function ResetPassword({ token }) {
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-on-surface mb-1">New Password</label>
+            <label className="block text-sm font-medium text-on-surface dark:text-[#c4c7c5] mb-1">New Password</label>
             <PasswordInput 
               required 
-              className="w-full px-4 py-2 bg-surface-container-lowest border border-outline-variant rounded-lg focus:ring-2 focus:ring-secondary outline-none transition-all"
+              className="w-full px-4 py-2 bg-surface-container-lowest dark:bg-[#131314] border border-outline-variant dark:border-zinc-700 dark:text-zinc-200 rounded-lg focus:ring-2 focus:ring-secondary outline-none transition-all"
               value={password}
               onChange={e => setPassword(e.target.value)}
             />
-            <p className="text-xs text-on-surface-variant mt-1">Must be at least 8 characters with 1 letter and 1 number</p>
+            <p className="text-xs text-on-surface-variant dark:text-[#c4c7c5] mt-1">Must be at least 8 characters with 1 letter and 1 number</p>
           </div>
           <div>
-            <label className="block text-sm font-medium text-on-surface mb-1">Confirm New Password</label>
+            <label className="block text-sm font-medium text-on-surface dark:text-[#c4c7c5] mb-1">Confirm New Password</label>
             <PasswordInput 
               required 
-              className="w-full px-4 py-2 bg-surface-container-lowest border border-outline-variant rounded-lg focus:ring-2 focus:ring-secondary outline-none transition-all"
+              className="w-full px-4 py-2 bg-surface-container-lowest dark:bg-[#131314] border border-outline-variant dark:border-zinc-700 dark:text-zinc-200 rounded-lg focus:ring-2 focus:ring-secondary outline-none transition-all"
               value={confirmPassword}
               onChange={e => setConfirmPassword(e.target.value)}
             />
@@ -90,7 +90,7 @@ function ResetPassword({ token }) {
           <button 
             type="submit" 
             disabled={isLoading || !!message}
-            className={`w-full py-3 bg-primary text-on-primary rounded-lg font-medium hover:bg-primary/90 transition-colors mt-6 shadow-sm ${isLoading || message ? 'opacity-70 cursor-not-allowed' : ''}`}
+            className={`w-full py-3 bg-primary dark:bg-zinc-800 text-on-primary dark:text-[#e3e3e3] rounded-lg font-medium hover:bg-primary/90 dark:hover:bg-zinc-700 transition-colors mt-6 shadow-sm ${isLoading || message ? 'opacity-70 cursor-not-allowed' : ''}`}
           >
             {isLoading ? (
               <span className="flex items-center justify-center gap-2">
@@ -107,7 +107,7 @@ function ResetPassword({ token }) {
           <button 
             type="button"
             onClick={() => window.location.href = '/'}
-            className="text-secondary text-sm hover:underline font-medium"
+            className="text-secondary dark:text-blue-400 dark:hover:text-blue-300 text-sm hover:underline font-medium"
           >
             Back to login
           </button>

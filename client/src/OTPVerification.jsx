@@ -93,14 +93,14 @@ export default function OTPVerification({ email, onVerifySuccess, onCancel }) {
   };
 
   return (
-    <div className="bg-surface w-full max-w-md mx-auto rounded-2xl shadow-xl border border-outline-variant p-6 md:p-8">
+    <div className="bg-surface dark:bg-[#1e1f20] w-full max-w-md mx-auto rounded-2xl shadow-xl border border-outline-variant dark:border-zinc-800 p-6 md:p-8">
       <div className="flex flex-col items-center mb-8">
         <div className="w-16 h-16 rounded-xl bg-surface-container-high flex items-center justify-center mb-4">
           <span className="material-symbols-outlined text-secondary text-3xl" data-weight="fill">mark_email_read</span>
         </div>
-        <h1 className="font-headline-md text-primary font-bold">Verify your email</h1>
-        <p className="text-on-surface-variant mt-2 font-body-md text-center">
-          We sent a 6-digit code to <strong>{email}</strong>. It expires in 10 minutes.
+        <h1 className="font-headline-md text-primary dark:text-[#e3e3e3] font-bold">Verify your email</h1>
+        <p className="text-on-surface-variant dark:text-[#c4c7c5] mt-2 font-body-md text-center">
+          We sent a 6-digit code to <strong className="dark:text-[#e3e3e3]">{email}</strong>. It expires in 10 minutes.
         </p>
       </div>
 
@@ -122,7 +122,7 @@ export default function OTPVerification({ email, onVerifySuccess, onCancel }) {
               onChange={(e) => handleChange(e, index)}
               onKeyDown={(e) => handleKeyDown(e, index)}
               onPaste={handlePaste}
-              className="w-12 h-14 text-center text-xl font-bold bg-surface-container-lowest border border-outline-variant rounded-lg focus:ring-2 focus:ring-secondary outline-none transition-all"
+              className="w-12 h-14 text-center text-xl font-bold bg-surface-container-lowest dark:bg-[#131314] border border-outline-variant dark:border-zinc-700 dark:text-zinc-200 rounded-lg focus:ring-2 focus:ring-secondary outline-none transition-all"
             />
           ))}
         </div>
@@ -130,7 +130,7 @@ export default function OTPVerification({ email, onVerifySuccess, onCancel }) {
         <button 
           type="submit" 
           disabled={isLoading}
-          className={`w-full py-2.5 px-4 bg-primary text-on-primary rounded-lg font-medium hover:bg-primary/90 transition-colors shadow-sm ${isLoading ? 'opacity-70 cursor-not-allowed' : ''}`}
+          className={`w-full py-2.5 px-4 bg-primary dark:bg-zinc-800 text-on-primary dark:text-[#e3e3e3] rounded-lg font-medium hover:bg-primary/90 dark:hover:bg-zinc-700 transition-colors shadow-sm ${isLoading ? 'opacity-70 cursor-not-allowed' : ''}`}
         >
           {isLoading ? (
             <span className="flex items-center justify-center gap-2">
@@ -145,13 +145,13 @@ export default function OTPVerification({ email, onVerifySuccess, onCancel }) {
       
       <div className="mt-6 flex flex-col items-center gap-3">
         {timer > 0 ? (
-          <span className="text-on-surface-variant text-sm">Resend code in {timer}s</span>
+          <span className="text-on-surface-variant dark:text-[#c4c7c5] text-sm">Resend code in {timer}s</span>
         ) : (
           <button 
             type="button"
             onClick={handleResend}
             disabled={isResending}
-            className="text-secondary text-sm hover:underline font-bold disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:no-underline"
+            className="text-secondary dark:text-blue-400 dark:hover:text-blue-300 text-sm hover:underline font-bold disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:no-underline"
           >
             {isResending ? 'Resending...' : 'Resend Code'}
           </button>
@@ -161,7 +161,7 @@ export default function OTPVerification({ email, onVerifySuccess, onCancel }) {
           <button 
             type="button"
             onClick={onCancel}
-            className="text-on-surface-variant text-sm hover:underline font-medium mt-2"
+            className="text-on-surface-variant dark:text-[#c4c7c5] text-sm hover:underline font-medium mt-2"
           >
             Cancel
           </button>
