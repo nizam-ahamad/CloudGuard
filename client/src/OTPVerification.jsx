@@ -86,7 +86,7 @@ export default function OTPVerification({ email, onVerifySuccess, onCancel }) {
       if (res.status === 200) {
         setIsVerified(true);
         setTimeout(() => {
-          onVerifySuccess(res.data.token);
+          onVerifySuccess(res.data.token, res.data.user);
         }, 1500);
       }
     } catch (err) {

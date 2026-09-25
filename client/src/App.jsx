@@ -687,14 +687,15 @@ function App() {
         <div className="min-h-screen bg-white dark:bg-[#131314] text-slate-900 dark:text-zinc-100 flex items-center justify-center p-4">
           <OTPVerification 
             email={authForm.email} 
-            onVerifySuccess={(token) => {
-              if (token) {
+            onVerifySuccess={(token, user) => {
+              if (token && user) {
                 localStorage.setItem('token', token);
+                localStorage.setItem('user', JSON.stringify(user));
                 setToken(token);
-                addToast('success', 'Email verified successfully!');
+                setUser(user);
+                window.location.href = '/';
               } else {
                 setAuthMode('login');
-                addToast('success', 'Email verified! Please log in.');
               }
             }}
             onCancel={() => setAuthMode('login')}
