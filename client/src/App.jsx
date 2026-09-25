@@ -933,9 +933,9 @@ function App() {
         </div>
       )}
       {/* SideNavBar */}
-      <nav className={`bg-surface-container-lowest dark:bg-[#1e1f20] h-screen ${isCollapsed ? 'w-20' : 'w-64'} fixed left-0 top-0 border-r border-outline-variant dark:border-zinc-800 flex flex-col py-stack-lg z-50 transform transition-all duration-300 ease-in-out overflow-x-hidden md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-        <div className={`px-6 mb-8 flex items-center gap-0 ${isCollapsed ? 'justify-center !px-0' : ''}`}>
-          <CloudGuardLogo className="h-12 w-auto flex-shrink-0" />
+      <nav className={`bg-surface-container-lowest dark:bg-[#1e1f20] h-screen ${isCollapsed ? 'w-20' : 'w-72'} fixed left-0 top-0 border-r border-outline-variant dark:border-zinc-800 flex flex-col py-stack-lg z-50 transform transition-all duration-300 ease-in-out overflow-x-hidden md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+        <div className={`px-6 mb-8 flex items-center gap-2 ${isCollapsed ? 'justify-center !px-0' : ''}`}>
+          <CloudGuardLogo className="h-10 w-auto flex-shrink-0" />
           <div className={`overflow-hidden whitespace-nowrap transition-all duration-300 ease-in-out ${isCollapsed ? 'w-0 opacity-0' : 'w-auto opacity-100 delay-100'}`}>
             <h1 className="font-headline-md text-headline-md font-bold text-primary dark:text-[#e3e3e3]">CloudGuard</h1>
           </div>
@@ -999,7 +999,7 @@ function App() {
       </nav>
 
       {/* TopAppBar */}
-      <header className={`bg-surface-container-lowest dark:bg-[#1e1f20] fixed top-0 right-0 w-full h-16 border-b border-outline-variant dark:border-zinc-800 flex justify-between items-center px-margin-mobile md:px-margin-desktop z-10 transition-all duration-300 ease-in-out ${isCollapsed ? 'md:w-[calc(100%-80px)]' : 'md:w-[calc(100%-256px)]'}`}>
+      <header className={`bg-surface-container-lowest dark:bg-[#1e1f20] fixed top-0 right-0 w-full h-16 border-b border-outline-variant dark:border-zinc-800 flex justify-between items-center px-margin-mobile md:px-margin-desktop z-10 transition-all duration-300 ease-in-out ${isCollapsed ? 'md:w-[calc(100%-80px)]' : 'md:w-[calc(100%-288px)]'}`}>
         <div className="flex items-center gap-4">
           <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="md:hidden p-2 text-on-surface-variant hover:bg-surface-container-high rounded-full transition-colors">
             <span className="material-symbols-outlined">menu</span>
@@ -1062,7 +1062,7 @@ function App() {
       {/* Main Content Canvas */}
       <main 
         onClick={() => { setShowProfileMenu(false); setIsSidebarOpen(false); }} 
-        className={`pt-24 pb-12 px-margin-mobile md:px-margin-desktop max-w-container-max mx-auto w-full min-h-screen dark:bg-[#131314] transition-all duration-300 ease-in-out ${isCollapsed ? 'md:ml-20' : 'md:ml-64'}`}
+        className={`pt-24 pb-12 px-margin-mobile md:px-margin-desktop max-w-container-max mx-auto w-full min-h-screen dark:bg-[#131314] transition-all duration-300 ease-in-out ${isCollapsed ? 'md:ml-20' : 'md:ml-72'}`}
       >
         {viewMode === 'settings' ? (
           <div className="max-w-3xl mx-auto space-y-6">
