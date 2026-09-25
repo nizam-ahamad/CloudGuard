@@ -27,20 +27,20 @@ export default function Toast({ id, type, message, onRemove }) {
 
   return (
     <div 
-      className={`bg-surface-container-highest border border-outline-variant rounded-xl shadow-xl p-4 flex items-center gap-3 min-w-[300px] transition-all duration-300 ease-out ${
+      className={`bg-[#1e1f20] border border-[#282a2c] rounded-xl shadow-xl p-4 flex items-center gap-3 min-w-[300px] transition-all duration-300 ease-out ${
         isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
       }`}
     >
       {type === 'success' ? (
-        <div className="w-8 h-8 rounded-full bg-[#dcfce7] flex items-center justify-center shrink-0">
-          <span className="material-symbols-outlined text-[#166534] text-sm">check</span>
+        <div className="w-8 h-8 rounded-full bg-[#282a2c] flex items-center justify-center shrink-0">
+          <span className="material-symbols-outlined text-[#c4c7c5] text-sm">check</span>
         </div>
       ) : (
-        <div className="w-8 h-8 rounded-full bg-[#fef2f2] flex items-center justify-center shrink-0">
-          <span className="material-symbols-outlined text-error text-sm">warning</span>
+        <div className="w-8 h-8 rounded-full bg-[#282a2c] flex items-center justify-center shrink-0">
+          <span className="material-symbols-outlined text-red-400 text-sm">warning</span>
         </div>
       )}
-      <p className="font-body-md text-on-surface flex-1">{message}</p>
+      <p className="font-body-md text-[#e3e3e3] flex-1">{message}</p>
       <button 
         onClick={handleClose}
         className="text-on-surface-variant hover:text-on-surface transition-colors p-1"

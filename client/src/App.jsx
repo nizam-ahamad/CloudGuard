@@ -153,7 +153,7 @@ function App() {
       if (authMode === 'register') {
         await axios.post(`${API_BASE_URL}/api/auth/register`, authForm);
         setAuthMode('verify');
-        addToast('success', 'Account created! Please verify your email.');
+        addToast('success', 'Vault initialized. Welcome to your secure space.');
       } else {
         const res = await axios.post(`${API_BASE_URL}/api/auth/login`, { email: authForm.email, password: authForm.password });
         const { token: newToken, user: newUser } = res.data;
