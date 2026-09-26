@@ -6,20 +6,20 @@ import { Link } from 'react-router-dom';
 export default function LandingPage() {
   return (
     <div className="min-h-screen bg-[#131314] text-[#e3e3e3] flex flex-col items-center justify-center overflow-hidden">
-      <div className="relative flex items-center justify-center w-full max-w-2xl h-64 mb-8">
+      <div className="flex items-center justify-center w-full max-w-2xl h-64 mb-8">
         <motion.img 
           src="/cloudguard-logo-fav.svg" 
           alt="CloudGuard Shark" 
-          className="absolute left-1/4 w-32 h-32 z-10" 
-          initial={{ x: -400, opacity: 0 }} 
-          animate={{ x: 50, opacity: 1 }} 
-          transition={{ type: "spring", stiffness: 120, damping: 12, delay: 0.2 }} 
+          className="w-32 h-32 z-10" 
+          initial={{ x: -250, opacity: 0 }} 
+          animate={{ x: 40, opacity: 1 }} 
+          transition={{ type: "spring", stiffness: 250, damping: 20, delay: 0.2 }} 
         />
         <motion.div 
-          className="absolute right-1/4 z-0" 
-          initial={{ scale: 1, opacity: 1 }} 
-          animate={{ scale: 0, opacity: 0 }} 
-          transition={{ delay: 0.9, duration: 0.2 }}
+          className="z-0" 
+          initial={{ x: 40, scale: 1, opacity: 0 }} 
+          animate={{ scale: [0, 1, 0], opacity: [0, 1, 0] }} 
+          transition={{ times: [0, 0.2, 1], duration: 0.7, delay: 0.1 }}
         >
           <Bug className="text-red-500 w-16 h-16" />
         </motion.div>
