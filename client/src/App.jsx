@@ -1,10 +1,12 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { Routes, Route, Navigate } from 'react-router-dom';
 import axios from 'axios';
 import ResetPassword from './ResetPassword';
 import CloudGuardLogo from './CloudGuardLogo';
 import PasswordInput from './PasswordInput';
 import OTPVerification from './OTPVerification';
 import Toast from './Toast';
+import LandingPage from './pages/LandingPage';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
@@ -689,34 +691,35 @@ function App() {
   ) : null;
 
   if (!token) {
-    if (window.location.pathname.startsWith('/reset-password/')) {
-      const resetToken = window.location.pathname.split('/reset-password/')[1];
-      return <ResetPassword token={resetToken} />;
-    }
+    const authContent = (() => {
+      if (window.location.pathname.startsWith('/reset-password/')) {
+        const resetToken = window.location.pathname.split('/reset-password/')[1];
+        return <ResetPassword token={resetToken} />;
+      }
 
-    if (authMode === 'verify') {
+      if (authMode === 'verify') {
+        return (
+          <div className="min-h-screen bg-white dark:bg-[#131314] text-slate-900 dark:text-zinc-100 flex items-center justify-center p-4">
+            <OTPVerification 
+              email={authForm.email} 
+              onVerifySuccess={(token, user) => {
+                if (token && user) {
+                  localStorage.setItem('token', token);
+                  localStorage.setItem('user', JSON.stringify(user));
+                  setToken(token);
+                  setUser(user);
+                } else {
+                  setAuthMode('login');
+                }
+              }}
+              onCancel={() => setAuthMode('login')}
+            />
+          </div>
+        );
+      }
+
       return (
         <div className="min-h-screen bg-white dark:bg-[#131314] text-slate-900 dark:text-zinc-100 flex items-center justify-center p-4">
-          <OTPVerification 
-            email={authForm.email} 
-            onVerifySuccess={(token, user) => {
-              if (token && user) {
-                localStorage.setItem('token', token);
-                localStorage.setItem('user', JSON.stringify(user));
-                setToken(token);
-                setUser(user);
-              } else {
-                setAuthMode('login');
-              }
-            }}
-            onCancel={() => setAuthMode('login')}
-          />
-        </div>
-      );
-    }
-
-    return (
-      <div className="min-h-screen bg-white dark:bg-[#131314] text-slate-900 dark:text-zinc-100 flex items-center justify-center p-4">
         <SplashOverlay />
         <div className="bg-surface dark:bg-[#1e1f20] w-full max-w-md rounded-2xl shadow-xl border border-outline-variant dark:border-zinc-800 p-8">
           <div className="flex flex-col items-center mb-8">
@@ -903,10 +906,19 @@ function App() {
           </div>
         )}
       </div>
+      );
+    })();
+
+    return (
+      <Routes>
+        <Route path="/" element={<LandingPage />} />
+        <Route path="/login" element={authContent} />
+        <Route path="/reset-password/:token" element={authContent} />
+        <Route path="*" element={<Navigate to="/login" replace />} />
+      </Routes>
     );
   }
-
-  return (
+  const dashboardContent = (
     <div className="flex min-h-screen w-full bg-white dark:bg-[#131314] text-slate-900 dark:text-zinc-100">
       <SplashOverlay />
       
@@ -1503,6 +1515,14 @@ function App() {
         ))}
       </div>
     </div>
+  );
+
+  return (
+    <Routes>
+      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+      <Route path="/dashboard" element={dashboardContent} />
+      <Route path="*" element={<Navigate to="/dashboard" replace />} />
+    </Routes>
   );
 }
 
