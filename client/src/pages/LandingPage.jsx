@@ -1,11 +1,15 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
+import { motion } from 'framer-motion';
+import { Bug } from 'lucide-react';
+import CloudGuardLogo from '../CloudGuardLogo';
 
 export default function LandingPage() {
   return (
-    <div className="min-h-screen bg-[#131314] text-zinc-100 flex flex-col">
-      <nav className="w-full flex items-center justify-between px-8 py-6 border-b border-zinc-800">
+    <div className="min-h-screen bg-[#131314] text-zinc-100 flex flex-col overflow-hidden">
+      <nav className="w-full flex items-center justify-between px-8 py-6 border-b border-zinc-800 relative z-10">
         <div className="flex items-center gap-2">
+          <CloudGuardLogo size={32} />
           <h1 className="font-headline-md text-2xl font-bold text-[#e3e3e3]">CloudGuard</h1>
         </div>
         <Link 
@@ -16,13 +20,34 @@ export default function LandingPage() {
         </Link>
       </nav>
       
-      <section className="flex-1 flex flex-col items-center justify-center px-4 text-center">
+      <section className="flex-1 flex flex-col items-center justify-center px-4 text-center relative z-10 min-h-[80vh]">
         <h2 className="text-5xl md:text-7xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-emerald-400 mb-6">
           Next-Gen Cloud Security
         </h2>
-        <p className="text-xl text-[#c4c7c5] max-w-2xl mb-10">
+        <p className="text-xl text-[#c4c7c5] max-w-2xl mb-12">
           The most secure way to store, scan, and manage your digital life.
         </p>
+
+        <div className="flex items-center justify-center w-full max-w-lg h-32 relative mb-16">
+          <motion.div
+            initial={{ x: -200, opacity: 0 }}
+            whileInView={{ x: 100, opacity: 1 }}
+            transition={{ duration: 0.6, type: "spring", bounce: 0.4 }}
+            className="absolute left-1/4 z-20"
+          >
+            <CloudGuardLogo size={80} />
+          </motion.div>
+          
+          <motion.div
+            initial={{ scale: 1, opacity: 1 }}
+            whileInView={{ scale: 0, opacity: 0 }}
+            transition={{ delay: 0.5, duration: 0.2 }}
+            className="absolute right-1/4 z-10"
+          >
+            <Bug color="#ef4444" size={64} />
+          </motion.div>
+        </div>
+
         <Link 
           to="/login"
           className="px-8 py-4 bg-primary text-on-primary font-bold rounded-xl hover:bg-primary/90 transition-colors text-lg shadow-lg shadow-primary/20"
