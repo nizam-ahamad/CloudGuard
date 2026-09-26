@@ -11,7 +11,7 @@ export default function LandingPage() {
         <motion.img 
           src="/cloudguard-logo.svg" 
           alt="Shark"
-          className="absolute z-20 w-40 h-40"
+          className="absolute z-20 w-40 h-40 brightness-0 invert"
           initial={{ left: "-10%", opacity: 0 }}
           animate={{ left: "45%", opacity: 1 }}
           transition={{ duration: 0.6, delay: 0.2, type: "spring", stiffness: 120 }}
