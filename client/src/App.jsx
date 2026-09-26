@@ -912,11 +912,13 @@ function App() {
     return (
       <Routes>
         <Route path="/" element={<LandingPage />} />
-        <Route path="*" element={authContent} />
+        <Route path="/login" element={authContent} />
+        <Route path="/reset-password/:token" element={authContent} />
+        <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     );
   }
-  return (
+  const dashboardContent = (
     <div className="flex min-h-screen w-full bg-white dark:bg-[#131314] text-slate-900 dark:text-zinc-100">
       <SplashOverlay />
       
@@ -1513,6 +1515,14 @@ function App() {
         ))}
       </div>
     </div>
+  );
+
+  return (
+    <Routes>
+      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+      <Route path="/dashboard" element={dashboardContent} />
+      <Route path="*" element={<Navigate to="/dashboard" replace />} />
+    </Routes>
   );
 }
 
