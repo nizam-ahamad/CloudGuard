@@ -6,22 +6,22 @@ import { Link } from 'react-router-dom';
 export default function LandingPage() {
   return (
     <div className="min-h-screen bg-[#131314] text-[#e3e3e3] flex flex-col items-center justify-center overflow-hidden">
-      <div className="flex items-center justify-center w-full max-w-2xl h-64 mb-8">
+      <div className="relative w-full max-w-lg h-48 mx-auto mb-12 overflow-hidden bg-transparent">
         <motion.img 
           src="/cloudguard-logo-fav.svg" 
-          alt="CloudGuard Shark" 
-          className="w-32 h-32 z-10" 
-          initial={{ x: -250, opacity: 0 }} 
-          animate={{ x: 40, opacity: 1 }} 
-          transition={{ type: "spring", stiffness: 250, damping: 20, delay: 0.2 }} 
+          alt="Shark"
+          className="absolute top-1/2 -translate-y-1/2 left-0 w-32 h-32 z-20"
+          initial={{ x: -150, opacity: 0 }}
+          animate={{ x: 280, opacity: 1 }}
+          transition={{ duration: 0.6, delay: 0.2, type: "spring", stiffness: 100 }}
         />
-        <motion.div 
-          className="z-0" 
-          initial={{ x: 40, scale: 1, opacity: 0 }} 
-          animate={{ scale: [0, 1, 0], opacity: [0, 1, 0] }} 
-          transition={{ times: [0, 0.2, 1], duration: 0.7, delay: 0.1 }}
+        <motion.div
+          className="absolute top-1/2 -translate-y-1/2 right-16 z-10 text-red-500"
+          initial={{ scale: 0, opacity: 0 }}
+          animate={{ scale: [0, 1.2, 1, 0], opacity: [0, 1, 1, 0] }}
+          transition={{ times: [0, 0.1, 0.8, 1], duration: 1, delay: 0.1 }}
         >
-          <Bug className="text-red-500 w-16 h-16" />
+          <Bug size={64} />
         </motion.div>
       </div>
 
