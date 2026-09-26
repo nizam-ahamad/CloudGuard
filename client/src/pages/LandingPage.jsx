@@ -6,20 +6,24 @@ import { Link } from 'react-router-dom';
 export default function LandingPage() {
   return (
     <div className="min-h-screen bg-[#131314] text-[#e3e3e3] flex flex-col items-center justify-center overflow-hidden">
-      <div className="relative w-full max-w-lg h-48 mx-auto mb-12 overflow-hidden bg-transparent">
+      <div className="relative w-full max-w-3xl h-64 mx-auto flex items-center overflow-hidden bg-transparent">
+        {/* The Attacking Shark */}
         <motion.img 
           src="/cloudguard-logo-fav.svg" 
           alt="Shark"
-          className="absolute top-1/2 -translate-y-1/2 left-0 w-32 h-32 z-20"
-          initial={{ x: -150, opacity: 0 }}
-          animate={{ x: 280, opacity: 1 }}
-          transition={{ duration: 0.6, delay: 0.2, type: "spring", stiffness: 100 }}
+          className="absolute z-20 w-40 h-40"
+          initial={{ left: "-10%", opacity: 0 }}
+          animate={{ left: "45%", opacity: 1 }}
+          transition={{ duration: 0.6, delay: 0.2, type: "spring", stiffness: 120 }}
         />
+
+        {/* The Virus */}
         <motion.div
-          className="absolute top-1/2 -translate-y-1/2 right-16 z-10 text-red-500"
+          className="absolute z-10 text-red-500"
+          style={{ left: "55%" }}
           initial={{ scale: 0, opacity: 0 }}
           animate={{ scale: [0, 1.2, 1, 0], opacity: [0, 1, 1, 0] }}
-          transition={{ times: [0, 0.1, 0.8, 1], duration: 1, delay: 0.1 }}
+          transition={{ times: [0, 0.1, 0.8, 1], duration: 0.9, delay: 0.1 }}
         >
           <Bug size={64} />
         </motion.div>
