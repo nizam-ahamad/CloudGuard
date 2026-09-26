@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { Terminal, ShieldCheck, FileCode2, FolderLock } from 'lucide-react';
+import CloudGuardLogo from '../CloudGuardLogo';
 
 export default function LandingPage() {
   return (
@@ -13,17 +14,12 @@ export default function LandingPage() {
       {/* Top Navigation Bar */}
       <nav className="w-full flex items-center justify-between px-8 py-5 border-b border-[#222] bg-black/50 backdrop-blur-md sticky top-0 z-50">
         <div className="flex items-center gap-3">
-          <img 
-            src="/cloudguard-logo.svg" 
-            alt="CloudGuard Logo" 
-            className="h-8 w-auto object-contain" 
-            style={{ filter: "brightness(0) invert(1)" }} 
-          />
-          <span className="text-xl font-bold tracking-tight text-white">CloudGuard</span>
+          <CloudGuardLogo className="h-12 w-auto text-[#e3e3e3] fill-current" />
+          <span className="text-xl font-bold tracking-tight text-[#e3e3e3]">CloudGuard</span>
         </div>
         <div className="flex items-center gap-6">
-          <a href="https://github.com/yourusername/cloudguard" target="_blank" className="font-mono text-sm text-[#888] hover:text-white transition-colors">DOCUMENTATION</a>
-          <Link to="/login" className="px-5 py-2 bg-[#111] border border-[#333] hover:border-white transition-colors rounded text-sm font-mono text-white">
+          <a href="https://github.com/yourusername/cloudguard" target="_blank" className="font-mono text-sm text-[#888] hover:text-[#e3e3e3] transition-colors">DOCUMENTATION</a>
+          <Link to="/login" className="px-5 py-2 bg-[#111] border border-[#333] hover:border-[#e3e3e3] transition-colors rounded text-sm font-mono text-[#e3e3e3]">
             LOGIN
           </Link>
         </div>
@@ -37,7 +33,7 @@ export default function LandingPage() {
             <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
             <span className="font-mono text-xs text-[#888]">v1.0.0 DEPLOYED ON AWS</span>
           </div>
-          <h1 className="text-6xl md:text-7xl font-extrabold mb-8 tracking-tighter text-white leading-[1.1]">
+          <h1 className="text-6xl md:text-7xl font-extrabold mb-8 tracking-tighter text-[#e3e3e3] leading-[1.1]">
             Secure object storage. <br />
             <span className="text-[#555]">Powered by Machine Learning.</span>
           </h1>
@@ -45,7 +41,7 @@ export default function LandingPage() {
             A high-performance digital vault integrating Python-based Random Forest threat detection directly into the upload pipeline.
           </p>
           <div className="flex items-center justify-center gap-4">
-            <Link to="/login" className="px-8 py-4 bg-white text-black hover:bg-[#ccc] transition-colors rounded font-medium text-lg shadow-[0_0_30px_rgba(255,255,255,0.1)]">
+            <Link to="/login" className="px-8 py-4 bg-[#e3e3e3] text-black hover:bg-[#c4c7c5] transition-colors rounded font-medium text-lg shadow-[0_0_30px_rgba(227,227,227,0.1)]">
               Initialize Vault
             </Link>
           </div>
