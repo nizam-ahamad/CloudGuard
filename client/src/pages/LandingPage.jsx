@@ -9,7 +9,7 @@ export default function LandingPage() {
       <div className="relative w-full max-w-3xl h-64 mx-auto flex items-center overflow-hidden bg-transparent">
         {/* The Attacking Shark */}
         <motion.img 
-          src="/cloudguard-logo-fav.svg" 
+          src="/cloudguard-logo.svg" 
           alt="Shark"
           className="absolute z-20 w-40 h-40"
           initial={{ left: "-10%", opacity: 0 }}
