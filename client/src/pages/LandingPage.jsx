@@ -36,10 +36,10 @@ export default function LandingPage() {
               <Terminal size={14} className="text-[#8a8d91]" />
               <span className="text-[#8a8d91]">scan_status.py</span>
             </div>
-            > initializing deep scan...<br />
-            > random_forest_model: clean<br />
-            > virustotal_hash_check: 0 threats<br />
-            > status: safe_to_store
+            &gt; initializing deep scan...<br />
+            &gt; random_forest_model: clean<br />
+            &gt; virustotal_hash_check: 0 threats<br />
+            &gt; status: safe_to_store
           </div>
         </div>
 
