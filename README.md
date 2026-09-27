@@ -12,3 +12,6 @@ An AI-powered, enterprise-grade secure cloud storage platform designed to detect
 * **Backend Gateway:** Node.js, Express.js, Multer, Archiver, Mongoose
 * **AI Microservice:** Python 3, FastAPI, Uvicorn, Scikit-learn, Pefile
 * **Database:** MongoDB (Local / Atlas)
+
+Copyright (c) 2026 CloudGuard Team. All rights reserved.
+This repository is public strictly for portfolio demonstration purposes. No license is granted to use, copy, modify, or distribute this source code.
