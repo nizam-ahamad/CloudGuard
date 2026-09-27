@@ -10,8 +10,10 @@ An AI-powered, enterprise-grade secure cloud storage platform designed to detect
 ## 🛠️ Architecture & Tech Stack
 * **Frontend:** React 19, Vite, Tailwind CSS v4, Lucide Icons, Axios
 * **Backend Gateway:** Node.js, Express.js, Multer, Archiver, Mongoose
-* **AI Microservice:** Python 3, FastAPI, Uvicorn, Scikit-learn, Pefile
+* **AI Microservice:** Python 3, FastAPI, Uvicorn, Scikit-learn, Pefile, Random Forest, VirusTotal API (Fallback Verification)
+* **Cloud Storage:** AWS S3 / S3-Compatible Object Storage (Scaleway)
 * **Database:** MongoDB (Local / Atlas)
+* **Alerting Pipeline:** Google Apps Script Webhooks (Automated Email Threat Notifications)
 
 Copyright (c) 2026 CloudGuard. All rights reserved.
 This repository is public strictly for portfolio demonstration purposes. No license is granted to use, copy, modify, or distribute this source code.
