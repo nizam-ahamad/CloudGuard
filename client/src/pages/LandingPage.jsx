@@ -185,7 +185,7 @@ export default function LandingPage() {
       {/* Tech Stack Strip */}
       <div className="w-full py-10 bg-[#050505] border-t border-b border-[#222]">
         <div className="max-w-[1200px] mx-auto px-8 text-center">
-          <p className="text-xl md:text-5xl font-medium text-[#888] mb-3 tracking-tight">Powered by modern, scalable technologies</p>
+          <p className="text-xl md:text-sm font-medium text-[#888] mb-3 tracking-tight">Powered by modern, scalable technologies</p>
           <div className="flex flex-wrap justify-center items-center gap-6 md:gap-16 text-xl md:text-2xl font-semibold text-[#e3e3e3] tracking-tight">
             {/* <span className="hover:text-[#e3e3e3] transition-colors cursor-default">React & Vite</span>
             <span className="text-[#333]">/</span>
