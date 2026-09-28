@@ -7,6 +7,7 @@ import PasswordInput from './PasswordInput';
 import OTPVerification from './OTPVerification';
 import Toast from './Toast';
 import LandingPage from './pages/LandingPage';
+import AuthPage from './pages/AuthPage';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
@@ -912,7 +913,7 @@ function App() {
     return (
       <Routes>
         <Route path="/" element={<LandingPage />} />
-        <Route path="/login" element={authContent} />
+        <Route path="/login" element={<AuthPage />} />
         <Route path="/reset-password/:token" element={authContent} />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
