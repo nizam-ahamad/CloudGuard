@@ -64,7 +64,6 @@ export default function LandingPage() {
           <span className="text-2xl font-semibold tracking-tight text-[#e3e3e3]">CloudGuard</span>
         </div>
         <div className="flex items-center gap-6">
-          <a href="https://github.com/nizam-ahamad/CloudGuard" target="_blank" rel="noreferrer" className="font-mono text-sm text-[#888] hover:text-[#e3e3e3] transition-colors">GITHUB</a>
           <Link to="/login" className="px-6 py-2 bg-[#111] border border-[#333] hover:border-[#e3e3e3] transition-colors rounded text-sm font-mono text-[#e3e3e3]">
             LOGIN
           </Link>
