@@ -462,18 +462,24 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     }
     
     const scriptUrl = "https://script.google.com/macros/s/AKfycbwUtMYORet8Y6mkUtoNJ1ofJRr0Iq8UrGeYcIOjAVnXiVR2sSRSTdmVJ19cc7q3yS79/exec";
-  
-    const sendResetEmailAsync = (email, code) => {
-      fetch(scriptUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          to: email, 
-          type: 'reset',
-          otp: code,
-          secret: 'cloudguard-secure-secret-2024'
-        })
-      }).catch(error => console.error('Background GAS Email Error:', error));
+    const sendResetEmailAsync = async (email, code) => {
+      try {
+        const response = await fetch(scriptUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ 
+            to: email, 
+            type: 'reset',
+            otp: code,
+            secret: 'cloudguard-secure-secret-2024'
+          })
+        });
+        const responseText = await response.text();
+        console.log(`Webhook Status: ${response.status}`);
+        console.log(`Webhook Response: ${responseText}`);
+      } catch (error) {
+        console.error(`Email Thread Crashed: ${error.message || error}`);
+      }
     };
 
     sendResetEmailAsync(user.email, resetOtp);
