@@ -1,0 +1,12 @@
+[
+  {
+    "_id": "1790594319080",
+    "name": "Ben",
+    "email": "benten9210@gmail.com",
+    "password": "$2b$10$vfjWlmEsDZFXcjW5L98jNOeDI4NpEh4J3zZPHlsLdTQn5CIr35VLq",
+    "isVerified": true,
+    "otpAttempts": 0,
+    "resetPasswordToken": "515633",
+    "resetPasswordExpire": 1790600936048
+  }
+]

@@ -1,10 +1,13 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { Routes, Route, Navigate } from 'react-router-dom';
 import axios from 'axios';
 import ResetPassword from './ResetPassword';
 import CloudGuardLogo from './CloudGuardLogo';
 import PasswordInput from './PasswordInput';
 import OTPVerification from './OTPVerification';
 import Toast from './Toast';
+import LandingPage from './pages/LandingPage';
+import AuthPage from './pages/AuthPage';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
@@ -84,6 +87,7 @@ function App() {
   const [previewFile, setPreviewFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState("");
   const [previewText, setPreviewText] = useState("");
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -254,17 +258,7 @@ function App() {
       addToast('error', 'Please type DELETE to confirm.');
       return;
     }
-    setIsDeletingAccount(true);
-    try {
-      await axios.delete(`${API_BASE_URL}/api/auth/account`);
-      localStorage.clear();
-      sessionStorage.clear();
-      window.location.href = '/login';
-    } catch {
-      addToast('error', 'Failed to delete account.');
-    } finally {
-      setIsDeletingAccount(false);
-    }
+    setIsDeleteModalOpen(true);
   };
 
   const fetchFiles = useCallback(async () => {
@@ -689,34 +683,35 @@ function App() {
   ) : null;
 
   if (!token) {
-    if (window.location.pathname.startsWith('/reset-password/')) {
-      const resetToken = window.location.pathname.split('/reset-password/')[1];
-      return <ResetPassword token={resetToken} />;
-    }
+    const authContent = (() => {
+      if (window.location.pathname.startsWith('/reset-password/')) {
+        const resetToken = window.location.pathname.split('/reset-password/')[1];
+        return <ResetPassword token={resetToken} />;
+      }
 
-    if (authMode === 'verify') {
+      if (authMode === 'verify') {
+        return (
+          <div className="min-h-screen bg-white dark:bg-[#131314] text-slate-900 dark:text-zinc-100 flex items-center justify-center p-4">
+            <OTPVerification 
+              email={authForm.email} 
+              onVerifySuccess={(token, user) => {
+                if (token && user) {
+                  localStorage.setItem('token', token);
+                  localStorage.setItem('user', JSON.stringify(user));
+                  setToken(token);
+                  setUser(user);
+                } else {
+                  setAuthMode('login');
+                }
+              }}
+              onCancel={() => setAuthMode('login')}
+            />
+          </div>
+        );
+      }
+
       return (
         <div className="min-h-screen bg-white dark:bg-[#131314] text-slate-900 dark:text-zinc-100 flex items-center justify-center p-4">
-          <OTPVerification 
-            email={authForm.email} 
-            onVerifySuccess={(token, user) => {
-              if (token && user) {
-                localStorage.setItem('token', token);
-                localStorage.setItem('user', JSON.stringify(user));
-                setToken(token);
-                setUser(user);
-              } else {
-                setAuthMode('login');
-              }
-            }}
-            onCancel={() => setAuthMode('login')}
-          />
-        </div>
-      );
-    }
-
-    return (
-      <div className="min-h-screen bg-white dark:bg-[#131314] text-slate-900 dark:text-zinc-100 flex items-center justify-center p-4">
         <SplashOverlay />
         <div className="bg-surface dark:bg-[#1e1f20] w-full max-w-md rounded-2xl shadow-xl border border-outline-variant dark:border-zinc-800 p-8">
           <div className="flex flex-col items-center mb-8">
@@ -751,7 +746,7 @@ function App() {
                 <input 
                   type="text" 
                   required 
-                  className="w-full px-4 py-2 bg-surface-container-lowest dark:bg-[#1e1f20] dark:text-zinc-200 rounded-lg border-2 border-[#282a2c] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200"
+                  className="w-full px-4 py-2 bg-white dark:bg-[#1e1f20] dark:text-zinc-200 rounded-lg border-2 border-[#282a2c] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200"
                   value={authForm.name}
                   onChange={e => setAuthForm({...authForm, name: e.target.value})}
                 />
@@ -762,7 +757,7 @@ function App() {
               <input 
                 type="email" 
                 required 
-                className="w-full px-4 py-2 bg-surface-container-lowest dark:bg-[#1e1f20] dark:text-zinc-200 rounded-lg border-2 border-[#282a2c] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200"
+                className="w-full px-4 py-2 bg-white dark:bg-[#1e1f20] dark:text-zinc-200 rounded-lg border-2 border-[#282a2c] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200"
                 value={authForm.email}
                 onChange={e => setAuthForm({...authForm, email: e.target.value})}
               />
@@ -771,7 +766,7 @@ function App() {
               <label className="block text-sm font-medium text-on-surface dark:text-[#c4c7c5] mb-1">Password</label>
               <PasswordInput 
                 required 
-                className="w-full px-4 py-2 bg-surface-container-lowest dark:bg-[#1e1f20] dark:text-zinc-200 rounded-lg border-2 border-[#282a2c] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200"
+                className="w-full px-4 py-2 bg-white dark:bg-[#1e1f20] dark:text-zinc-200 rounded-lg border-2 border-[#282a2c] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200"
                 value={authForm.password}
                 onChange={e => setAuthForm({...authForm, password: e.target.value})}
               />
@@ -885,7 +880,7 @@ function App() {
                     <input 
                       type="email" 
                       required 
-                      className="w-full px-4 py-2 bg-surface-container-lowest dark:bg-[#131314] border border-outline-variant dark:border-zinc-700 dark:text-zinc-200 rounded-lg focus:ring-2 focus:ring-secondary outline-none transition-all mb-4"
+                      className="w-full px-4 py-2 bg-white dark:bg-[#131314] border border-outline-variant dark:border-zinc-700 dark:text-zinc-200 rounded-lg focus:ring-2 focus:ring-secondary outline-none transition-all mb-4"
                       value={forgotEmail}
                       onChange={e => setForgotEmail(e.target.value)}
                     />
@@ -903,17 +898,26 @@ function App() {
           </div>
         )}
       </div>
+      );
+    })();
+
+    return (
+      <Routes>
+        <Route path="/" element={<LandingPage />} />
+        <Route path="/login" element={<AuthPage />} />
+        <Route path="/reset-password/:token" element={authContent} />
+        <Route path="*" element={<Navigate to="/login" replace />} />
+      </Routes>
     );
   }
-
-  return (
+  const dashboardContent = (
     <div className="flex min-h-screen w-full bg-white dark:bg-[#131314] text-slate-900 dark:text-zinc-100">
       <SplashOverlay />
       
       {/* Onboarding Welcome Modal */}
       {showWelcomeModal && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-surface-container-lowest dark:bg-[#1e1f20] rounded-xl border border-outline-variant dark:border-zinc-800 w-full max-w-md p-6 relative shadow-xl">
+          <div className="bg-white dark:bg-[#1e1f20] rounded-xl border border-outline-variant dark:border-zinc-800 w-full max-w-md p-6 relative shadow-xl">
             <h3 className="font-title-lg text-on-surface dark:text-[#e3e3e3] text-xl font-bold">Welcome to your vault</h3>
             <p className="font-body-md text-on-surface-variant dark:text-[#c4c7c5] mt-2">
               Your secure digital space is ready. Upload documents, run malware scans, and manage your files safely.
@@ -933,21 +937,25 @@ function App() {
         </div>
       )}
       {/* SideNavBar */}
-      <nav className={`bg-surface-container-lowest dark:bg-[#1e1f20] h-screen ${isCollapsed ? 'w-20' : 'w-72'} fixed left-0 top-0 border-r border-outline-variant dark:border-zinc-800 flex flex-col py-stack-lg z-50 transform transition-all duration-300 ease-in-out overflow-x-hidden md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-        <div className={`px-6 mb-8 flex items-center gap-2 ${isCollapsed ? 'justify-center !px-0' : ''}`}>
-          <CloudGuardLogo className="h-10 w-auto flex-shrink-0" />
-          <div className={`overflow-hidden whitespace-nowrap transition-all duration-300 ease-in-out ${isCollapsed ? 'w-0 opacity-0' : 'w-auto opacity-100 delay-100'}`}>
-            <h1 className="font-headline-md text-headline-md font-bold text-primary dark:text-[#e3e3e3]">CloudGuard</h1>
+      <nav className={`bg-slate-50 dark:bg-[#1e1f20] h-screen ${isCollapsed ? 'w-20' : 'w-64'} fixed left-0 top-0 border-r border-slate-200 dark:border-zinc-800 flex flex-col py-stack-lg z-50 transform transition-all duration-300 ease-in-out overflow-x-hidden md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+        <div className="h-16 mb-6 flex items-center gap-2 px-4">
+          <div className="min-w-[3rem] flex justify-center items-center">
+            <CloudGuardLogo className="h-13 w-auto flex-shrink-0" />
+          </div>
+          <div className={`overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-40 opacity-100'}`}>
+            <h1 className="font-headline-md text-2xl font-bold text-primary dark:text-[#e3e3e3]">CloudGuard</h1>
           </div>
         </div>
         {/* Main Navigation */}
         <div className="flex-1 px-4 space-y-1">
           <button 
             onClick={() => { setViewMode('all'); setCurrentDirectory(''); setIsSidebarOpen(false); }}
-            className={`group relative w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4'} py-3 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${viewMode === 'all' ? 'text-secondary bg-surface-container-low dark:bg-[#282a2c] dark:text-[#e3e3e3]' : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'}`}
+            className={`group relative w-full flex items-center h-12 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${viewMode === 'all' ? 'text-secondary bg-surface-container-low dark:bg-[#282a2c] dark:text-[#e3e3e3]' : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'}`}
           >
-            <span className="material-symbols-outlined shrink-0" data-weight={viewMode === 'all' ? "fill" : ""}>folder_open</span>
-            <span className={`font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ease-in-out ${isCollapsed ? 'w-0 opacity-0' : 'w-auto opacity-100 delay-100'}`}>My Files</span>
+            <div className="min-w-[3rem] flex justify-center items-center">
+              <span className="material-symbols-outlined shrink-0" data-weight={viewMode === 'all' ? "fill" : ""}>folder_open</span>
+            </div>
+            <span className={`font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-32 opacity-100'}`}>My Files</span>
             {isCollapsed && (
               <div className="absolute left-full ml-4 px-3 py-1 bg-[#1e1f20] border border-zinc-800 text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
                 My Files
@@ -957,10 +965,12 @@ function App() {
           
           <button 
             onClick={() => { setViewMode('recent'); setCurrentDirectory(''); setIsSidebarOpen(false); }}
-            className={`group relative w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4'} py-3 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${viewMode === 'recent' ? 'text-secondary bg-surface-container-low dark:bg-[#282a2c] dark:text-[#e3e3e3]' : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'}`}
+            className={`group relative w-full flex items-center h-12 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${viewMode === 'recent' ? 'text-secondary bg-surface-container-low dark:bg-[#282a2c] dark:text-[#e3e3e3]' : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'}`}
           >
-            <span className="material-symbols-outlined shrink-0" data-weight={viewMode === 'recent' ? "fill" : ""}>history</span>
-            <span className={`font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ease-in-out ${isCollapsed ? 'w-0 opacity-0' : 'w-auto opacity-100 delay-100'}`}>Recent</span>
+            <div className="min-w-[3rem] flex justify-center items-center">
+              <span className="material-symbols-outlined shrink-0" data-weight={viewMode === 'recent' ? "fill" : ""}>history</span>
+            </div>
+            <span className={`font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-32 opacity-100'}`}>Recent</span>
             {isCollapsed && (
               <div className="absolute left-full ml-4 px-3 py-1 bg-[#1e1f20] border border-zinc-800 text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
                 Recent
@@ -970,13 +980,15 @@ function App() {
         </div>
 
         {/* Footer Navigation */}
-        <div className={`px-4 space-y-1 mt-auto border-t border-outline-variant pt-4 ${isCollapsed ? 'mx-2' : 'mx-4'}`}>
+        <div className="flex flex-col gap-2 mt-auto border-t border-outline-variant pt-4 mx-4">
           <button 
             onClick={() => { setViewMode('settings'); setIsSidebarOpen(false); }}
-            className={`group relative w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'gap-3 px-4'} py-3 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${viewMode === 'settings' ? 'bg-surface-container-low dark:bg-[#282a2c] dark:text-[#c4c7c5]' : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'}`}
+            className={`group relative w-full flex items-center h-12 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${viewMode === 'settings' ? 'bg-surface-container-low dark:bg-[#282a2c] dark:text-[#c4c7c5]' : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'}`}
           >
-            <span className="material-symbols-outlined shrink-0" data-weight={viewMode === 'settings' ? "fill" : ""}>settings</span>
-            <span className={`font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ease-in-out ${isCollapsed ? 'w-0 opacity-0' : 'w-auto opacity-100 delay-100'}`}>Settings</span>
+            <div className="min-w-[3rem] flex justify-center items-center">
+              <span className="material-symbols-outlined shrink-0" data-weight={viewMode === 'settings' ? "fill" : ""}>settings</span>
+            </div>
+            <span className={`font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-32 opacity-100'}`}>Settings</span>
             {isCollapsed && (
               <div className="absolute left-full ml-4 px-3 py-1 bg-[#1e1f20] border border-zinc-800 text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
                 Settings
@@ -986,7 +998,7 @@ function App() {
           
           <button 
             onClick={() => setIsCollapsed(!isCollapsed)}
-            className="hidden md:flex group relative w-full items-center justify-center py-2 mt-2 text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface dark:hover:text-white hover:bg-surface-container-high dark:hover:bg-white/5 rounded-lg transition-colors"
+            className="hidden md:flex group relative w-full items-center justify-center h-12 text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface dark:hover:text-white hover:bg-surface-container-high dark:hover:bg-white/5 rounded-xl transition-colors"
           >
             <span className="material-symbols-outlined transition-transform duration-300" style={{ transform: isCollapsed ? 'rotate(180deg)' : 'rotate(0deg)' }}>
               view_sidebar
@@ -999,7 +1011,7 @@ function App() {
       </nav>
 
       {/* TopAppBar */}
-      <header className={`bg-surface-container-lowest dark:bg-[#1e1f20] fixed top-0 right-0 w-full h-16 border-b border-outline-variant dark:border-zinc-800 flex justify-between items-center px-margin-mobile md:px-margin-desktop z-10 transition-all duration-300 ease-in-out ${isCollapsed ? 'md:w-[calc(100%-80px)]' : 'md:w-[calc(100%-288px)]'}`}>
+      <header className={`bg-slate-50 dark:bg-[#1e1f20] fixed top-0 right-0 w-full h-16 border-b border-slate-200 dark:border-zinc-800 flex justify-between items-center px-margin-mobile md:px-margin-desktop z-10 transition-all duration-300 ease-in-out ${isCollapsed ? 'md:w-[calc(100%-80px)]' : 'md:w-[calc(100%-256px)]'}`}>
         <div className="flex items-center gap-4">
           <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="md:hidden p-2 text-on-surface-variant hover:bg-surface-container-high rounded-full transition-colors">
             <span className="material-symbols-outlined">menu</span>
@@ -1062,37 +1074,37 @@ function App() {
       {/* Main Content Canvas */}
       <main 
         onClick={() => { setShowProfileMenu(false); setIsSidebarOpen(false); }} 
-        className={`pt-24 pb-12 px-margin-mobile md:px-margin-desktop max-w-container-max mx-auto w-full min-h-screen dark:bg-[#131314] transition-all duration-300 ease-in-out ${isCollapsed ? 'md:ml-20' : 'md:ml-72'}`}
+        className={`pt-24 pb-12 px-margin-mobile md:px-margin-desktop max-w-container-max mx-auto w-full min-h-screen bg-white dark:bg-[#131314] transition-all duration-300 ease-in-out ${isCollapsed ? 'md:ml-20' : 'md:ml-64'}`}
       >
         {viewMode === 'settings' ? (
           <div className="max-w-3xl mx-auto space-y-6">
             <h2 className="font-headline-md text-headline-md font-bold text-on-surface dark:text-[#e3e3e3] mb-8">Profile Settings</h2>
             
-            <div className="bg-surface-container-lowest dark:bg-[#1e1f20] border border-outline-variant dark:border-zinc-800 rounded-xl p-6 shadow-sm">
+            <div className="border border-gray-200 dark:border-[#333] bg-gray-50 dark:bg-transparent px-6 py-4 shadow-sm dark:shadow-none">
               <h3 className="font-title-md text-on-surface dark:text-[#e3e3e3] mb-4">Profile Details</h3>
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-on-surface-variant dark:text-[#c4c7c5] mb-1">Name</label>
-                  <input type="text" value={user?.name || ''} readOnly className="w-full bg-surface-container-low dark:bg-[#1e1f20] text-on-surface-variant dark:text-zinc-200 border border-outline-variant dark:border-zinc-700 rounded-lg px-4 py-2 opacity-70 cursor-not-allowed" />
+                  <label className="text-xs font-mono text-slate-500 dark:text-gray-400 uppercase tracking-wider mb-2 block">Name</label>
+                  <input type="text" value={user?.name || ''} readOnly className="w-full h-12 bg-transparent border border-slate-300 dark:border-[#333] focus:border-black dark:focus:border-white outline-none text-black dark:text-white px-4 transition-colors opacity-70 cursor-not-allowed" />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-on-surface-variant dark:text-[#c4c7c5] mb-1">Email</label>
-                  <input type="text" value={user?.email || ''} readOnly className="w-full bg-surface-container-low dark:bg-[#1e1f20] text-on-surface-variant dark:text-zinc-200 border border-outline-variant dark:border-zinc-700 rounded-lg px-4 py-2 opacity-70 cursor-not-allowed" />
+                  <label className="text-xs font-mono text-slate-500 dark:text-gray-400 uppercase tracking-wider mb-2 block">Email</label>
+                  <input type="text" value={user?.email || ''} readOnly className="w-full h-12 bg-transparent border border-slate-300 dark:border-[#333] focus:border-black dark:focus:border-white outline-none text-black dark:text-white px-4 transition-colors opacity-70 cursor-not-allowed" />
                 </div>
               </div>
             </div>
 
-            <div className="bg-surface-container-lowest dark:bg-[#1e1f20] border border-outline-variant dark:border-zinc-800 rounded-xl p-6 shadow-sm">
+            <div className="border border-gray-200 dark:border-[#333] bg-gray-50 dark:bg-transparent px-6 py-4 shadow-sm dark:shadow-none">
               <h3 className="font-title-md text-on-surface dark:text-[#e3e3e3] mb-4">Security</h3>
               <form onSubmit={handlePasswordUpdate} className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-on-surface-variant dark:text-[#c4c7c5] mb-1">Current Password</label>
-                  <PasswordInput value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} required className="w-full bg-surface dark:bg-[#1e1f20] text-on-surface dark:text-zinc-200 border border-outline-variant dark:border-zinc-700 focus:ring-2 focus:ring-secondary rounded-lg px-4 py-2 outline-none" />
+                  <label className="text-xs font-mono text-slate-500 dark:text-gray-400 uppercase tracking-wider mb-2 block">Current Password</label>
+                  <PasswordInput value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} required className="w-full h-12 bg-transparent border border-slate-300 dark:border-[#333] focus:border-black dark:focus:border-white outline-none text-black dark:text-white px-4 transition-colors" />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-on-surface-variant dark:text-[#c4c7c5] mb-1">New Password</label>
-                  <PasswordInput value={newPassword} onChange={e => setNewPassword(e.target.value)} required className="w-full bg-surface dark:bg-[#1e1f20] text-on-surface dark:text-zinc-200 border border-outline-variant dark:border-zinc-700 focus:ring-2 focus:ring-secondary rounded-lg px-4 py-2 outline-none" />
-                  <p className="text-xs text-on-surface-variant dark:text-[#c4c7c5] mt-1">Must be at least 8 characters with 1 letter and 1 number</p>
+                  <label className="text-xs font-mono text-slate-500 dark:text-gray-400 uppercase tracking-wider mb-2 block">New Password</label>
+                  <PasswordInput value={newPassword} onChange={e => setNewPassword(e.target.value)} required className="w-full h-12 bg-transparent border border-slate-300 dark:border-[#333] focus:border-black dark:focus:border-white outline-none text-black dark:text-white px-4 transition-colors" />
+                  <p className="text-xs font-mono text-slate-500 dark:text-[#777] mt-2">Must be at least 8 characters with 1 letter and 1 number</p>
                 </div>
                 <button type="submit" disabled={isUpdatingPassword} className={`px-6 py-2 bg-primary dark:bg-zinc-800 text-on-primary dark:text-[#e3e3e3] rounded-lg font-medium transition-colors shadow-sm ${isUpdatingPassword ? 'opacity-70 cursor-not-allowed' : 'hover:bg-primary/90 dark:hover:bg-zinc-700'}`}>
                   {isUpdatingPassword ? (
@@ -1107,7 +1119,7 @@ function App() {
               </form>
             </div>
 
-            <div className="bg-error/10 dark:bg-[#2c1215] border border-error/20 dark:border-[#521c21] rounded-xl p-6 dark:text-red-200">
+            <div className="border border-red-200 dark:border-red-500/50 bg-red-50/50 dark:bg-transparent px-6 py-4 dark:text-red-200 shadow-sm dark:shadow-none">
               <h3 className="font-title-md text-error dark:text-red-200 mb-2">Danger Zone</h3>
               <p className="text-sm text-on-surface-variant dark:text-red-200/80 mb-4">Once you delete your account, there is no going back. Please be certain.</p>
               <form onSubmit={handleAccountDelete} className="space-y-4">
@@ -1115,7 +1127,7 @@ function App() {
                   <label className="block text-sm font-medium text-on-surface-variant dark:text-red-200 mb-1">To verify, type <strong>DELETE</strong> below:</label>
                   <input type="text" value={deleteConfirmText} onChange={e => setDeleteConfirmText(e.target.value)} className="w-full bg-surface dark:bg-[#1e1f20] text-on-surface dark:text-zinc-200 border border-outline-variant dark:border-zinc-700 focus:ring-2 focus:ring-error rounded-lg px-4 py-2 outline-none" />
                 </div>
-                <button type="submit" disabled={deleteConfirmText !== 'DELETE' || isDeletingAccount} className={`px-6 py-2 rounded-lg font-medium transition-colors shadow-sm ${deleteConfirmText === 'DELETE' && !isDeletingAccount ? 'bg-error dark:bg-red-500/10 text-on-error dark:text-red-500 dark:border dark:border-red-500/30 hover:bg-[#b91c1c] dark:hover:bg-red-500/20' : 'bg-surface-dim dark:bg-zinc-900 text-on-surface-variant dark:text-zinc-500 cursor-not-allowed opacity-70'}`}>
+                <button type="submit" disabled={deleteConfirmText !== 'DELETE' || isDeletingAccount} className={`w-full h-12 border border-red-500 text-red-500 hover:bg-red-500 hover:text-white bg-transparent font-mono text-sm tracking-wider uppercase transition-colors ${deleteConfirmText !== 'DELETE' || isDeletingAccount ? 'opacity-50 cursor-not-allowed hover:bg-transparent hover:text-red-500' : ''}`}>
                   {isDeletingAccount ? (
                     <span className="flex items-center justify-center gap-2">
                       <span className="animate-spin inline-block w-4 h-4 border-[2px] border-current border-t-transparent rounded-full" role="status" aria-label="loading"></span>
@@ -1136,7 +1148,7 @@ function App() {
             <h2 className="font-headline-lg-mobile md:font-headline-lg text-headline-lg-mobile md:text-headline-lg font-bold text-on-surface dark:text-[#e3e3e3] mb-2">My Files</h2>
             <p className="font-body-md text-body-md text-on-surface-variant dark:text-zinc-400">Manage and secure your digital vault.</p>
           </div>
-          <div className="flex items-center gap-4 bg-surface-container-lowest dark:bg-[#1e1f20] p-4 rounded-xl border border-outline-variant dark:border-zinc-800/50 shadow-sm w-fit dark:text-zinc-300">
+          <div className="flex items-center gap-4 bg-white dark:bg-[#1e1f20] p-4 rounded-xl border border-outline-variant dark:border-zinc-800/50 shadow-sm w-fit dark:text-zinc-300">
             <div className="relative w-12 h-12">
               <svg className="w-full h-full transform -rotate-90" viewBox="0 0 36 36">
                 <path className="text-surface-dim" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" strokeWidth="3"></path>
@@ -1165,7 +1177,7 @@ function App() {
               onDrop={onDrop} 
               onDragOver={onDragOver} 
               onClick={triggerFileInput}
-              className="w-full border-2 border-dashed border-outline-variant dark:border-zinc-800/50 bg-surface-container-lowest dark:bg-[#1e1f20] dark:text-zinc-300 hover:bg-surface-container-low transition-colors duration-200 rounded-xl p-12 flex flex-col items-center justify-center cursor-pointer group"
+              className="w-full border-2 border-dashed border-outline-variant dark:border-zinc-800/50 bg-white dark:bg-[#1e1f20] dark:text-zinc-300 hover:bg-surface-container-low transition-colors duration-200 rounded-xl p-12 flex flex-col items-center justify-center cursor-pointer group"
             >
               <div className="w-16 h-16 rounded-full bg-surface-container flex items-center justify-center mb-4 group-hover:scale-110 transition-transform duration-300">
                 <span className="material-symbols-outlined text-secondary text-3xl">
@@ -1189,7 +1201,7 @@ function App() {
 
         {/* Upload Progress */}
         {uploading && (
-          <div className="mb-stack-lg p-4 bg-surface-container-lowest dark:bg-[#1e1f20] rounded-xl border border-outline-variant dark:border-zinc-800 shadow-sm">
+          <div className="mb-stack-lg p-4 bg-white dark:bg-[#1e1f20] rounded-xl border border-outline-variant dark:border-zinc-800 shadow-sm">
             <div className="flex justify-between items-center mb-2 font-label-md text-on-surface-variant">
               <span className="dark:text-[#e3e3e3]">Uploading... {uploadProgress}%</span>
               <div className="flex items-center gap-4">
@@ -1258,7 +1270,7 @@ function App() {
             </div>
           )}
 
-          <div className="bg-surface-container-lowest dark:bg-[#1e1f20] rounded-xl border border-outline-variant dark:border-zinc-800/50 shadow-sm overflow-hidden dark:text-zinc-300">
+          <div className="bg-white dark:bg-[#1e1f20] rounded-xl border border-outline-variant dark:border-zinc-800/50 shadow-sm overflow-hidden dark:text-zinc-300">
             <div className="overflow-x-auto custom-scrollbar">
               <table className="w-full text-left border-collapse min-w-[800px]">
                 <thead>
@@ -1414,7 +1426,7 @@ function App() {
           </div>
         ) : (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
-            <div className="bg-surface-container-lowest rounded-xl shadow-lg w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="bg-white rounded-xl shadow-lg w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
               <div className="flex items-center justify-between p-4 border-b border-outline-variant bg-surface">
                 <h3 className="font-title-lg text-on-surface truncate pr-4">{previewFile.name}</h3>
                 <div className="flex items-center gap-2">
@@ -1436,7 +1448,7 @@ function App() {
                 ) : previewFile.type.toLowerCase() === 'pdf' ? (
                   <iframe src={previewUrl} className="w-full h-[70vh] border-0" title="PDF Preview" />
                 ) : (previewFile.type.toLowerCase() === 'txt' || previewFile.type.toLowerCase() === 'md') ? (
-                  <pre className="w-full h-full text-left bg-surface-container-lowest p-6 rounded-lg overflow-auto text-sm font-mono whitespace-pre-wrap shadow-inner border border-outline-variant">
+                  <pre className="w-full h-full text-left bg-white p-6 rounded-lg overflow-auto text-sm font-mono whitespace-pre-wrap shadow-inner border border-outline-variant">
                     {previewText || "Loading..."}
                   </pre>
                 ) : (
@@ -1454,7 +1466,7 @@ function App() {
       {/* Delete Confirmation Modal */}
       {(fileToDelete || showBulkDeleteModal) && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-          <div className="bg-surface-container-lowest dark:bg-[#1e1f20] rounded-xl shadow-xl border border-outline-variant dark:border-zinc-800 w-full max-w-md p-6 flex flex-col gap-4">
+          <div className="bg-white dark:bg-[#1e1f20] rounded-xl shadow-xl border border-outline-variant dark:border-zinc-800 w-full max-w-md p-6 flex flex-col gap-4">
             <h3 className="font-title-lg text-on-surface dark:text-[#e3e3e3]">Confirm Delete</h3>
             <p className="font-body-md text-on-surface-variant dark:text-[#c4c7c5]">
               {showBulkDeleteModal ? (
@@ -1502,7 +1514,53 @@ function App() {
           </div>
         ))}
       </div>
+
+      {isDeleteModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="w-full max-w-md p-6 bg-white rounded-lg shadow-xl dark:bg-[#1a1a1a] border border-transparent dark:border-[#333]">
+            <h3 className="mb-2 text-lg font-semibold text-gray-900 dark:text-white">Confirm Delete</h3>
+            <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
+              Are you sure you want to permanently delete your CloudGuard account? All files will be lost.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setIsDeleteModalOpen(false)}
+                className="px-4 py-2 text-sm font-medium text-gray-700 transition-colors rounded-md dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  setIsDeleteModalOpen(false);
+                  setIsDeletingAccount(true);
+                  try {
+                    await axios.delete(`${API_BASE_URL}/api/auth/account`);
+                    localStorage.clear();
+                    sessionStorage.clear();
+                    window.location.href = '/login';
+                  } catch {
+                    addToast('error', 'Failed to delete account.');
+                  } finally {
+                    setIsDeletingAccount(false);
+                  }
+                }}
+                className="px-4 py-2 text-sm font-medium text-white transition-colors bg-red-600 rounded-md hover:bg-red-700"
+              >
+                Yes, Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
+  );
+
+  return (
+    <Routes>
+      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+      <Route path="/dashboard" element={dashboardContent} />
+      <Route path="*" element={<Navigate to="/dashboard" replace />} />
+    </Routes>
   );
 }
 

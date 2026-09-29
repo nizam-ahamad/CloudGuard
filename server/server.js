@@ -60,7 +60,10 @@ const FileModel = mongoose.model('File', FileSchema);
 // Connect to MongoDB
 let isDbConnected = false;
 const mongoURI = process.env.MONGO_URI || 'mongodb://localhost:27017/cloudguard';
-mongoose.connect(mongoURI, { serverSelectionTimeoutMS: 5000 })
+mongoose.connect(process.env.MONGO_URI, {
+  serverSelectionTimeoutMS: process.env.NODE_ENV === 'production' ? 5000 : 100,
+  connectTimeoutMS: process.env.NODE_ENV === 'production' ? 5000 : 100
+})
   .then(async () => {
     console.log('Connected to MongoDB');
     isDbConnected = true;
@@ -262,7 +265,7 @@ app.post('/api/auth/register', async (req, res) => {
 
 app.post('/api/auth/verify-otp', async (req, res) => {
   try {
-    const { email, otp } = req.body;
+    const { email, otp, type } = req.body;
     if (!email || !otp) return res.status(400).json({ error: 'Missing email or OTP' });
 
     let user = null;
@@ -278,6 +281,17 @@ app.post('/api/auth/verify-otp', async (req, res) => {
     }
 
     if (!user) return res.status(400).json({ error: 'User not found' });
+    
+    if (type === 'reset') {
+      if (!user.resetPasswordToken || user.resetPasswordToken !== otp) {
+        return res.status(400).json({ error: 'Invalid reset code' });
+      }
+      if (!user.resetPasswordExpire || new Date(user.resetPasswordExpire) < new Date()) {
+        return res.status(400).json({ error: 'Reset code expired' });
+      }
+      return res.status(200).json({ success: true, message: 'Reset code valid' });
+    }
+
     if (user.isVerified) return res.status(400).json({ error: 'User already verified' });
     
     if (user.otpAttempts >= 3) {
@@ -424,26 +438,28 @@ app.post('/api/auth/forgot-password', async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    // Create reset token
-    const resetToken = crypto.randomBytes(20).toString('hex');
-    const resetPasswordToken = crypto.createHash('sha256').update(resetToken).digest('hex');
-    const resetPasswordExpire = Date.now() + 15 * 60 * 1000; // 15 minutes
+    // Create reset OTP
+    const resetOtp = Math.floor(100000 + Math.random() * 900000).toString();
+    const resetPasswordExpire = Date.now() + 10 * 60 * 1000; // 10 minutes
 
-    if (isDbConnected || mongoose.connection.readyState === 1) {
-      user.resetPasswordToken = resetPasswordToken;
-      user.resetPasswordExpire = resetPasswordExpire;
-      await user.save();
-    } else {
+    try {
+      if (isDbConnected || mongoose.connection.readyState === 1) {
+        user.resetPasswordToken = resetOtp;
+        user.resetPasswordExpire = resetPasswordExpire;
+        await user.save();
+      } else {
+        throw new Error("Database offline");
+      }
+    } catch (saveError) {
+      console.warn("MongoDB save failed, falling back to users.json:", saveError.message);
       const users = JSON.parse(fs.readFileSync(usersFilePath));
       const userIndex = users.findIndex(u => u.email === email);
-      users[userIndex].resetPasswordToken = resetPasswordToken;
-      users[userIndex].resetPasswordExpire = resetPasswordExpire;
-      fs.writeFileSync(usersFilePath, JSON.stringify(users, null, 2));
+      if (userIndex !== -1) {
+        users[userIndex].resetPasswordToken = resetOtp;
+        users[userIndex].resetPasswordExpire = resetPasswordExpire;
+        fs.writeFileSync(usersFilePath, JSON.stringify(users, null, 2));
+      }
     }
-
-    const origin = frontendUrl || req.get('origin') || process.env.CLIENT_URL || 'http://localhost:5173';
-    const cleanOrigin = origin.replace(/\/$/, '');
-    const resetUrl = `${cleanOrigin}/reset-password/${resetToken}`;
     
     const scriptUrl = "https://script.google.com/macros/s/AKfycbwUtMYORet8Y6mkUtoNJ1ofJRr0Iq8UrGeYcIOjAVnXiVR2sSRSTdmVJ19cc7q3yS79/exec";
   
@@ -452,24 +468,28 @@ app.post('/api/auth/forgot-password', async (req, res) => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
-          to: email, 
-          link: resetUrl,
-          secret: process.env.GAS_SECRET 
+          to: user.email, 
+          type: 'reset',
+          otp: resetOtp,
+          secret: 'cloudguard-secure-secret-2024'
         })
       });
 
-      // Google Apps Script returns a redirect, so we don't necessarily need to parse JSON if it succeeds
       if (!response.ok) {
         throw new Error('Failed to reach Google Script');
       }
     } catch (error) {
       console.error('GAS Email Error:', error);
       
-      if (isDbConnected || mongoose.connection.readyState === 1) {
-        user.resetPasswordToken = undefined;
-        user.resetPasswordExpire = undefined;
-        await user.save({ validateBeforeSave: false });
-      } else {
+      try {
+        if (isDbConnected || mongoose.connection.readyState === 1) {
+          user.resetPasswordToken = undefined;
+          user.resetPasswordExpire = undefined;
+          await user.save({ validateBeforeSave: false });
+        } else {
+          throw new Error("Database offline");
+        }
+      } catch (revertError) {
         const users = JSON.parse(fs.readFileSync(usersFilePath));
         const userIndex = users.findIndex(u => u.email === email);
         if (userIndex !== -1) {
@@ -478,13 +498,13 @@ app.post('/api/auth/forgot-password', async (req, res) => {
           fs.writeFileSync(usersFilePath, JSON.stringify(users, null, 2));
         }
       }
-      return res.status(500).json({ error: 'Email could not be sent' });
+      return res.status(500).json({ success: false, message: 'Email could not be sent', error: error.message });
     }
 
-    res.json({ message: 'Password reset link sent to your email.' });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'There was an error processing your request. Try again later.' });
+    return res.status(200).json({ success: true, message: "OTP sent" });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, message: "Internal server error", error: error.message });
   }
 });
 
