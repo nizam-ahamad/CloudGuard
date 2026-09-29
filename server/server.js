@@ -486,19 +486,18 @@ app.post('/api/auth/forgot-password', async (req, res) => {
 // Reset Password Route
 app.put('/api/auth/reset-password/:token', async (req, res) => {
   try {
-    const resetPasswordToken = crypto.createHash('sha256').update(req.params.token).digest('hex');
     let user = null;
     let userIndex = -1;
     let users = [];
 
     if (isDbConnected || mongoose.connection.readyState === 1) {
       user = await User.findOne({
-        resetPasswordToken,
+        resetPasswordToken: req.params.token,
         resetPasswordExpire: { $gt: Date.now() }
       });
     } else {
       users = JSON.parse(fs.readFileSync(usersFilePath));
-      userIndex = users.findIndex(u => u.resetPasswordToken === resetPasswordToken && u.resetPasswordExpire > Date.now());
+      userIndex = users.findIndex(u => u.resetPasswordToken === req.params.token && u.resetPasswordExpire > Date.now());
       if (userIndex !== -1) user = users[userIndex];
     }
 
