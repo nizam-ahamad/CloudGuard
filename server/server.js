@@ -425,6 +425,7 @@ app.post('/api/auth/login', async (req, res) => {
 app.post('/api/auth/forgot-password', async (req, res) => {
   try {
     const { email, frontendUrl } = req.body;
+    console.log('\n>>> FORGOT PASSWORD ROUTE HIT FOR:', email);
     let user = null;
     
     if (isDbConnected || mongoose.connection.readyState === 1) {
@@ -464,17 +465,16 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     const scriptUrl = "https://script.google.com/macros/s/AKfycbwUtMYORet8Y6mkUtoNJ1ofJRr0Iq8UrGeYcIOjAVnXiVR2sSRSTdmVJ19cc7q3yS79/exec";
     fetch(scriptUrl, {
       method: "POST",
-      redirect: "follow",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        to: email,
-        type: 'reset',
+      body: JSON.stringify({ 
+        to: email, 
         otp: resetOtp,
-        secret: 'cloudguard-secure-secret-2024'
+        type: 'reset',
+        secret: process.env.GAS_SECRET 
       })
-    })
-    .then(async (res) => console.log(`GAS Status: ${res.status}`))
-    .catch(err => console.error(`GAS Background Error:`, err));
+    }).catch(fetchErr => {
+      console.error('Error sending reset webhook:', fetchErr);
+    });
 
     return res.status(200).json({ message: "Reset code sent" });
   } catch (error) {
