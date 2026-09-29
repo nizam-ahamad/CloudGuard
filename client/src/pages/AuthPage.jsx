@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { ArrowRight, Eye, EyeOff, CheckCircle, Loader2 } from 'lucide-react';
 import axios from 'axios';
 import CloudGuardLogo from '../CloudGuardLogo';
@@ -200,10 +200,10 @@ export default function AuthPage() {
     <div className="min-h-screen bg-[#050505] flex flex-col items-center justify-center p-4 font-sans text-[#e3e3e3]">
       
       {/* Brand Header */}
-      <div className="mb-8 flex items-center gap-2">
+      <Link to="/" className="mb-8 inline-flex items-center justify-center gap-2 transition-opacity hover:opacity-80">
         <CloudGuardLogo className="h-12 w-auto flex-shrink-0 text-[#e3e3e3] fill-current" />
         <span className="text-2xl font-bold tracking-tight">CloudGuard</span>
-      </div>
+      </Link>
 
       {/* Auth Card - STRICTLY ORIGINAL SHARP DESIGN */}
       <div className="w-full max-w-md bg-[#050505] border border-[#222] p-8 md:p-10 shadow-2xl relative overflow-hidden">
