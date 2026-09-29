@@ -4,6 +4,8 @@ import { ArrowRight, Eye, EyeOff, CheckCircle, Loader2 } from 'lucide-react';
 import axios from 'axios';
 import CloudGuardLogo from '../CloudGuardLogo';
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+
 export default function AuthPage() {
   const navigate = useNavigate();
   
@@ -83,9 +85,9 @@ export default function AuthPage() {
     setFormError('');
     try {
       if (isForgotPassword) {
-        await axios.post('http://localhost:5000/api/auth/forgot-password', { email });
+        await axios.post(`${API_BASE_URL}/api/auth/forgot-password`, { email });
       } else {
-        await axios.post('http://localhost:5000/api/auth/register', { name: email.split('@')[0] || 'User', email, password });
+        await axios.post(`${API_BASE_URL}/api/auth/register`, { name: email.split('@')[0] || 'User', email, password });
       }
       setTimer(60);
       setOtpValues(['', '', '', '', '', '']);
@@ -111,7 +113,7 @@ export default function AuthPage() {
         if (password !== confirmPassword) { setFormError("Passwords do not match."); setIsLoading(false); return; }
         
         try {
-          await axios.put(`http://localhost:5000/api/auth/reset-password/${otpValues.join('')}`, { password });
+          await axios.put(`${API_BASE_URL}/api/auth/reset-password/${otpValues.join('')}`, { password });
           setPassword('');
           setConfirmPassword('');
           setOtpValues(['', '', '', '', '', '']);
@@ -140,7 +142,7 @@ export default function AuthPage() {
         if (otpAttempts >= 3) { setOtpError("Too many failed attempts. Request a new code."); return; }
 
         try {
-          const response = await axios.post('http://localhost:5000/api/auth/verify-otp', { email, otp: enteredOtp, type: isForgotPassword ? 'reset' : 'signup' });
+          const response = await axios.post(`${API_BASE_URL}/api/auth/verify-otp`, { email, otp: enteredOtp, type: isForgotPassword ? 'reset' : 'signup' });
           
           if (response.data?.token) localStorage.setItem('token', response.data.token);
           if (response.data?.user) localStorage.setItem('user', JSON.stringify(response.data.user));
@@ -170,7 +172,7 @@ export default function AuthPage() {
         setOtpError('');
         setOtpAttempts(0);
         setFormError('');
-        await axios.post('http://localhost:5000/api/auth/forgot-password', { email });
+        await axios.post(`${API_BASE_URL}/api/auth/forgot-password`, { email });
         setIsOtpMode(true);
         setTimer(60);
       } else if (!isLogin) {
@@ -178,11 +180,11 @@ export default function AuthPage() {
         setOtpError('');
         setOtpAttempts(0);
         setFormError('');
-        await axios.post('http://localhost:5000/api/auth/register', { name, email, password });
+        await axios.post(`${API_BASE_URL}/api/auth/register`, { name, email, password });
         setIsOtpMode(true);
         setTimer(60);
       } else {
-        const response = await axios.post('http://localhost:5000/api/auth/login', { email, password });
+        const response = await axios.post(`${API_BASE_URL}/api/auth/login`, { email, password });
         if (response.data?.token) localStorage.setItem('token', response.data.token);
         if (response.data?.user) localStorage.setItem('user', JSON.stringify(response.data.user));
         
