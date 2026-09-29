@@ -463,45 +463,22 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     
     const scriptUrl = "https://script.google.com/macros/s/AKfycbwUtMYORet8Y6mkUtoNJ1ofJRr0Iq8UrGeYcIOjAVnXiVR2sSRSTdmVJ19cc7q3yS79/exec";
   
-    try {
-      const response = await fetch(scriptUrl, {
+    const sendResetEmailAsync = (email, code) => {
+      fetch(scriptUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
-          to: user.email, 
+          to: email, 
           type: 'reset',
-          otp: resetOtp,
+          otp: code,
           secret: 'cloudguard-secure-secret-2024'
         })
-      });
+      }).catch(error => console.error('Background GAS Email Error:', error));
+    };
 
-      if (!response.ok) {
-        throw new Error('Failed to reach Google Script');
-      }
-    } catch (error) {
-      console.error('GAS Email Error:', error);
-      
-      try {
-        if (isDbConnected || mongoose.connection.readyState === 1) {
-          user.resetPasswordToken = undefined;
-          user.resetPasswordExpire = undefined;
-          await user.save({ validateBeforeSave: false });
-        } else {
-          throw new Error("Database offline");
-        }
-      } catch (revertError) {
-        const users = JSON.parse(fs.readFileSync(usersFilePath));
-        const userIndex = users.findIndex(u => u.email === email);
-        if (userIndex !== -1) {
-          delete users[userIndex].resetPasswordToken;
-          delete users[userIndex].resetPasswordExpire;
-          fs.writeFileSync(usersFilePath, JSON.stringify(users, null, 2));
-        }
-      }
-      return res.status(500).json({ success: false, message: 'Email could not be sent', error: error.message });
-    }
+    sendResetEmailAsync(user.email, resetOtp);
 
-    return res.status(200).json({ success: true, message: "OTP sent" });
+    return res.status(200).json({ message: "Reset code sent" });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ success: false, message: "Internal server error", error: error.message });
