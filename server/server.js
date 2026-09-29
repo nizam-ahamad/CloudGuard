@@ -466,6 +466,7 @@ app.post('/api/auth/forgot-password', async (req, res) => {
       try {
         const response = await fetch(scriptUrl, {
           method: "POST",
+          redirect: "follow",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ 
             to: email, 
@@ -475,8 +476,11 @@ app.post('/api/auth/forgot-password', async (req, res) => {
           })
         });
         const responseText = await response.text();
-        console.log(`Webhook Status: ${response.status}`);
-        console.log(`Webhook Response: ${responseText}`);
+        console.log(`GAS Status: ${response.status}`);
+        console.log(`GAS Response: ${responseText}`);
+        if (!response.ok && response.status !== 302) {
+            throw new Error(`Google Script Failed: ${response.status} - ${responseText}`);
+        }
       } catch (error) {
         console.error(`Email Thread Crashed: ${error.message || error}`);
       }
