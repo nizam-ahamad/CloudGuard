@@ -97,18 +97,16 @@ const UserSchema = new mongoose.Schema({
 const User = mongoose.model('User', UserSchema);
 
 async function recalculateStorage(userId) {
-  if (isDbConnected || mongoose.connection.readyState === 1) {
     try {
-      const result = await FileModel.aggregate([
-        { $match: { userId: userId, securityStatus: 'Safe' } },
-        { $group: { _id: null, totalSize: { $sum: "$size" } } }
-      ]);
-      const totalSize = result.length > 0 ? result[0].totalSize : 0;
-      await User.findByIdAndUpdate(userId, { storageUsed: totalSize });
-      return totalSize;
-    } catch (err) {
-      console.error('Error recalculating storage:', err);
-    }
+    const result = await FileModel.aggregate([
+      { $match: { userId: userId, securityStatus: 'Safe' } },
+      { $group: { _id: null, totalSize: { $sum: "$size" } } }
+    ]);
+    const totalSize = result.length > 0 ? result[0].totalSize : 0;
+    await User.findByIdAndUpdate(userId, { storageUsed: totalSize });
+    return totalSize;
+  } catch (err) {
+    console.error('Error recalculating storage:', err);
   }
 }
 
@@ -122,14 +120,9 @@ const verifyToken = async (req, res, next) => {
     const verified = jwt.verify(token, JWT_SECRET);
     
     // Check if user still exists in database
-    if (isDbConnected || mongoose.connection.readyState === 1) {
-      const user = await User.findById(verified._id);
-      if (!user) return res.status(401).json({ error: 'Account no longer exists.' });
-    } else {
-      const users = JSON.parse(fs.readFileSync(usersFilePath));
-      const userExists = users.some(u => u._id === verified._id);
-      if (!userExists) return res.status(401).json({ error: 'Account no longer exists.' });
-    }
+        const user = await User.findById(verified._id);
+    if (!user) return res.status(401).json({ error: 'Account no longer exists.' });
+  
 
     req.user = verified;
     next();
@@ -154,13 +147,11 @@ if (!fs.existsSync(usersFilePath)) {
 }
 
 async function getGlobalStorageUsed() {
-  if (isDbConnected || mongoose.connection.readyState === 1) {
     const result = await FileModel.aggregate([
-      { $match: { securityStatus: 'Safe' } },
-      { $group: { _id: null, totalSize: { $sum: "$size" } } }
-    ]);
-    return result.length > 0 ? result[0].totalSize : 0;
-  }
+    { $match: { securityStatus: 'Safe' } },
+    { $group: { _id: null, totalSize: { $sum: "$size" } } }
+  ]);
+  return result.length > 0 ? result[0].totalSize : 0;
   return 0;
 }
 
@@ -183,13 +174,8 @@ app.post('/api/auth/register', async (req, res) => {
     let users = [];
     let userIndex = -1;
     
-    if (isDbConnected || mongoose.connection.readyState === 1) {
-      existingUser = await User.findOne({ email });
-    } else {
-      users = JSON.parse(fs.readFileSync(usersFilePath));
-      userIndex = users.findIndex(u => u.email === email);
-      if (userIndex !== -1) existingUser = users[userIndex];
-    }
+        existingUser = await User.findOne({ email });
+  
     
     if (existingUser && existingUser.isVerified !== false) {
       return res.status(400).json({ error: 'Email already exists' });
@@ -202,46 +188,25 @@ app.post('/api/auth/register', async (req, res) => {
     const otpHash = await bcrypt.hash(otp, 10);
     const otpExpire = new Date(Date.now() + 10 * 60000); // 10 minutes
 
-    if (isDbConnected || mongoose.connection.readyState === 1) {
-      if (existingUser) {
-        existingUser.name = name;
-        existingUser.password = hashedPassword;
-        existingUser.otpHash = otpHash;
-        existingUser.otpExpire = otpExpire;
-        existingUser.otpAttempts = 0;
-        await existingUser.save();
-      } else {
-        const user = new User({ 
-          name, 
-          email, 
-          password: hashedPassword, 
-          isVerified: false,
-          otpHash,
-          otpExpire
-        });
-        await user.save();
-      }
+        if (existingUser) {
+      existingUser.name = name;
+      existingUser.password = hashedPassword;
+      existingUser.otpHash = otpHash;
+      existingUser.otpExpire = otpExpire;
+      existingUser.otpAttempts = 0;
+      await existingUser.save();
     } else {
-      if (existingUser) {
-        users[userIndex].name = name;
-        users[userIndex].password = hashedPassword;
-        users[userIndex].otpHash = otpHash;
-        users[userIndex].otpExpire = otpExpire;
-        users[userIndex].otpAttempts = 0;
-      } else {
-        users.push({ 
-          _id: Date.now().toString(), 
-          name, 
-          email, 
-          password: hashedPassword,
-          isVerified: false,
-          otpHash,
-          otpExpire,
-          otpAttempts: 0
-        });
-      }
-      fs.writeFileSync(usersFilePath, JSON.stringify(users, null, 2));
+      const user = new User({ 
+        name, 
+        email, 
+        password: hashedPassword, 
+        isVerified: false,
+        otpHash,
+        otpExpire
+      });
+      await user.save();
     }
+  
 
     const scriptUrl = "https://script.google.com/macros/s/AKfycbwUtMYORet8Y6mkUtoNJ1ofJRr0Iq8UrGeYcIOjAVnXiVR2sSRSTdmVJ19cc7q3yS79/exec";
     fetch(scriptUrl, {
@@ -272,13 +237,8 @@ app.post('/api/auth/verify-otp', async (req, res) => {
     let userIndex = -1;
     let users = [];
     
-    if (isDbConnected || mongoose.connection.readyState === 1) {
-      user = await User.findOne({ email });
-    } else {
-      users = JSON.parse(fs.readFileSync(usersFilePath));
-      userIndex = users.findIndex(u => u.email === email);
-      if (userIndex !== -1) user = users[userIndex];
-    }
+        user = await User.findOne({ email });
+  
 
     if (!user) return res.status(400).json({ error: 'User not found' });
     
@@ -305,29 +265,18 @@ app.post('/api/auth/verify-otp', async (req, res) => {
     const isMatch = await bcrypt.compare(otp, user.otpHash);
     if (!isMatch) {
       const attempts = (user.otpAttempts || 0) + 1;
-      if (isDbConnected || mongoose.connection.readyState === 1) {
-        user.otpAttempts = attempts;
-        await user.save();
-      } else {
-        users[userIndex].otpAttempts = attempts;
-        fs.writeFileSync(usersFilePath, JSON.stringify(users, null, 2));
-      }
+            user.otpAttempts = attempts;
+      await user.save();
+    
       return res.status(400).json({ error: 'Invalid OTP' });
     }
 
-    if (isDbConnected || mongoose.connection.readyState === 1) {
-      user.isVerified = true;
-      user.otpHash = undefined;
-      user.otpExpire = undefined;
-      user.otpAttempts = 0;
-      await user.save();
-    } else {
-      users[userIndex].isVerified = true;
-      delete users[userIndex].otpHash;
-      delete users[userIndex].otpExpire;
-      users[userIndex].otpAttempts = 0;
-      fs.writeFileSync(usersFilePath, JSON.stringify(users, null, 2));
-    }
+        user.isVerified = true;
+    user.otpHash = undefined;
+    user.otpExpire = undefined;
+    user.otpAttempts = 0;
+    await user.save();
+  
 
     const secret = process.env.JWT_SECRET || 'development_fallback_secret_123';
     const token = jwt.sign({ _id: user._id, name: user.name, isAdmin: user.isAdmin || false }, secret, { expiresIn: '7d' });
@@ -347,13 +296,8 @@ app.post('/api/auth/resend-otp', async (req, res) => {
     let userIndex = -1;
     let users = [];
     
-    if (isDbConnected || mongoose.connection.readyState === 1) {
-      user = await User.findOne({ email });
-    } else {
-      users = JSON.parse(fs.readFileSync(usersFilePath));
-      userIndex = users.findIndex(u => u.email === email);
-      if (userIndex !== -1) user = users[userIndex];
-    }
+        user = await User.findOne({ email });
+  
 
     if (!user) return res.status(400).json({ error: 'User not found' });
     if (user.isVerified) return res.status(400).json({ error: 'User is already verified' });
@@ -362,17 +306,11 @@ app.post('/api/auth/resend-otp', async (req, res) => {
     const otpHash = await bcrypt.hash(otp, 10);
     const otpExpire = new Date(Date.now() + 10 * 60000); // 10 minutes
 
-    if (isDbConnected || mongoose.connection.readyState === 1) {
-      user.otpHash = otpHash;
-      user.otpExpire = otpExpire;
-      user.otpAttempts = 0;
-      await user.save();
-    } else {
-      users[userIndex].otpHash = otpHash;
-      users[userIndex].otpExpire = otpExpire;
-      users[userIndex].otpAttempts = 0;
-      fs.writeFileSync(usersFilePath, JSON.stringify(users, null, 2));
-    }
+        user.otpHash = otpHash;
+    user.otpExpire = otpExpire;
+    user.otpAttempts = 0;
+    await user.save();
+  
 
     const scriptUrl = "https://script.google.com/macros/s/AKfycbwUtMYORet8Y6mkUtoNJ1ofJRr0Iq8UrGeYcIOjAVnXiVR2sSRSTdmVJ19cc7q3yS79/exec";
     fetch(scriptUrl, {
@@ -399,12 +337,8 @@ app.post('/api/auth/login', async (req, res) => {
     const { email, password } = req.body;
     let user = null;
     
-    if (isDbConnected || mongoose.connection.readyState === 1) {
-      user = await User.findOne({ email });
-    } else {
-      const users = JSON.parse(fs.readFileSync(usersFilePath));
-      user = users.find(u => u.email === email);
-    }
+        user = await User.findOne({ email });
+  
     
     if (!user) return res.status(400).json({ error: 'Invalid credentials' });
     if (user.isVerified === false) {
@@ -428,12 +362,8 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     console.log('\n>>> FORGOT PASSWORD ROUTE HIT FOR:', email);
     let user = null;
     
-    if (isDbConnected || mongoose.connection.readyState === 1) {
-      user = await User.findOne({ email });
-    } else {
-      const users = JSON.parse(fs.readFileSync(usersFilePath));
-      user = users.find(u => u.email === email);
-    }
+        user = await User.findOne({ email });
+  
     
     if (!user) {
       return res.status(404).json({ message: "No account found with this email" });
@@ -444,13 +374,10 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     const resetPasswordExpire = Date.now() + 10 * 60 * 1000; // 10 minutes
 
     try {
-      if (isDbConnected || mongoose.connection.readyState === 1) {
-        user.resetPasswordToken = resetOtp;
-        user.resetPasswordExpire = resetPasswordExpire;
-        await user.save();
-      } else {
-        throw new Error("Database offline");
-      }
+            user.resetPasswordToken = resetOtp;
+      user.resetPasswordExpire = resetPasswordExpire;
+      await user.save();
+    
     } catch (saveError) {
       console.warn("MongoDB save failed, falling back to users.json:", saveError.message);
       const users = JSON.parse(fs.readFileSync(usersFilePath));
@@ -490,16 +417,11 @@ app.put('/api/auth/reset-password/:token', async (req, res) => {
     let userIndex = -1;
     let users = [];
 
-    if (isDbConnected || mongoose.connection.readyState === 1) {
-      user = await User.findOne({
-        resetPasswordToken: req.params.token,
-        resetPasswordExpire: { $gt: Date.now() }
-      });
-    } else {
-      users = JSON.parse(fs.readFileSync(usersFilePath));
-      userIndex = users.findIndex(u => u.resetPasswordToken === req.params.token && u.resetPasswordExpire > Date.now());
-      if (userIndex !== -1) user = users[userIndex];
-    }
+        user = await User.findOne({
+      resetPasswordToken: req.params.token,
+      resetPasswordExpire: { $gt: Date.now() }
+    });
+  
 
     if (!user) {
       return res.status(400).json({ error: 'Invalid or expired reset token' });
@@ -518,17 +440,11 @@ app.put('/api/auth/reset-password/:token', async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    if (isDbConnected || mongoose.connection.readyState === 1) {
-      user.password = hashedPassword;
-      user.resetPasswordToken = undefined;
-      user.resetPasswordExpire = undefined;
-      await user.save();
-    } else {
-      users[userIndex].password = hashedPassword;
-      delete users[userIndex].resetPasswordToken;
-      delete users[userIndex].resetPasswordExpire;
-      fs.writeFileSync(usersFilePath, JSON.stringify(users, null, 2));
-    }
+        user.password = hashedPassword;
+    user.resetPasswordToken = undefined;
+    user.resetPasswordExpire = undefined;
+    await user.save();
+  
 
     res.json({ message: 'Password has been reset successfully. You can now log in.' });
   } catch (err) {
@@ -550,16 +466,10 @@ app.put('/api/auth/password', verifyToken, async (req, res) => {
     let userIndex = -1;
     let users = [];
 
-    if (isDbConnected || mongoose.connection.readyState === 1) {
-      const user = await User.findById(req.user._id);
-      if (!user) return res.status(404).json({ error: 'User not found' });
-      userPass = user.password;
-    } else {
-      users = JSON.parse(fs.readFileSync(usersFilePath));
-      userIndex = users.findIndex(u => u._id === req.user._id);
-      if (userIndex === -1) return res.status(404).json({ error: 'User not found' });
-      userPass = users[userIndex].password;
-    }
+        const user = await User.findById(req.user._id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    userPass = user.password;
+  
 
     const validPass = await bcrypt.compare(currentPassword, userPass);
     if (!validPass) return res.status(400).json({ error: 'Invalid current password' });
@@ -567,12 +477,8 @@ app.put('/api/auth/password', verifyToken, async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(newPassword, salt);
 
-    if (isDbConnected || mongoose.connection.readyState === 1) {
-      await User.findByIdAndUpdate(req.user._id, { password: hashedPassword });
-    } else {
-      users[userIndex].password = hashedPassword;
-      fs.writeFileSync(usersFilePath, JSON.stringify(users, null, 2));
-    }
+        await User.findByIdAndUpdate(req.user._id, { password: hashedPassword });
+  
 
     res.json({ message: 'Password updated successfully' });
   } catch (err) {
@@ -602,14 +508,9 @@ app.delete('/api/auth/account', verifyToken, async (req, res) => {
     }
 
     // 2. Delete user and files from DB / JSON
-    if (isDbConnected || mongoose.connection.readyState === 1) {
-      await FileModel.deleteMany({ userId: userId });
-      await User.findByIdAndDelete(userId);
-    } else {
-      const users = JSON.parse(fs.readFileSync(usersFilePath));
-      const updatedUsers = users.filter(u => u._id !== userId);
-      fs.writeFileSync(usersFilePath, JSON.stringify(updatedUsers, null, 2));
-    }
+        await FileModel.deleteMany({ userId: userId });
+    await User.findByIdAndDelete(userId);
+  
 
     res.json({ message: 'Account deleted successfully' });
   } catch (err) {
@@ -623,15 +524,14 @@ app.get('/api/storage-stats', verifyToken, async (req, res) => {
     let usedBytes = 0;
     const userId = req.user._id;
 
-    if (isDbConnected || mongoose.connection.readyState === 1) {
-      const result = await FileModel.aggregate([
-        { $match: { userId: userId, securityStatus: 'Safe' } },
-        { $group: { _id: null, totalSize: { $sum: "$size" } } }
-      ]);
-      if (result.length > 0) {
-        usedBytes = result[0].totalSize;
-      }
+        const result = await FileModel.aggregate([
+      { $match: { userId: userId, securityStatus: 'Safe' } },
+      { $group: { _id: null, totalSize: { $sum: "$size" } } }
+    ]);
+    if (result.length > 0) {
+      usedBytes = result[0].totalSize;
     }
+  
     
     const totalLimitBytes = 5 * 1024 * 1024 * 1024; // 5 GB
     const usedPercentage = ((usedBytes / totalLimitBytes) * 100).toFixed(1);
@@ -673,8 +573,8 @@ app.post('/api/presign', verifyToken, async (req, res) => {
     await newFile.save();
 
     res.json({ signedUrl, fileKey, fileId: newFile._id });
-  } catch (err) {
-    console.error('Presign Error:', err);
+  } catch (error) {
+    console.error('AWS Presign Error:', error);
     res.status(500).json({ error: 'Failed to generate pre-signed URL' });
   }
 });
@@ -701,14 +601,12 @@ app.post('/api/upload', verifyToken, async (req, res) => {
 
   // Check User Quota
   let currentStorageUsed = 0;
-  if (isDbConnected || mongoose.connection.readyState === 1) {
     const result = await FileModel.aggregate([
-      { $match: { userId: userId, securityStatus: 'Safe' } },
-      { $group: { _id: null, totalSize: { $sum: "$size" } } }
-    ]);
-    if (result.length > 0) {
-      currentStorageUsed = result[0].totalSize;
-    }
+    { $match: { userId: userId, securityStatus: 'Safe' } },
+    { $group: { _id: null, totalSize: { $sum: "$size" } } }
+  ]);
+  if (result.length > 0) {
+    currentStorageUsed = result[0].totalSize;
   }
 
   if (currentStorageUsed + incomingSize > 5368709120) {
@@ -949,58 +847,57 @@ app.get('/api/files', verifyToken, async (req, res) => {
     const queryPath = req.query.path || '';
     const userId = req.user._id;
 
-    if (isDbConnected || mongoose.connection.readyState === 1) {
-      // Query MongoDB to ensure all files (including non-images) are returned
-      // regardless of ephemeral disk state on Render.
-      const dbFiles = await FileModel.find({ userId: userId, securityStatus: 'Safe' });
+        // Query MongoDB to ensure all files (including non-images) are returned
+    // regardless of ephemeral disk state on Render.
+    const dbFiles = await FileModel.find({ userId: userId, securityStatus: 'Safe' });
+    
+    const mappedFiles = [];
+    const folders = new Set();
+
+    dbFiles.forEach(file => {
+
+      const relativeToUser = file.diskName || file.name;
+      const qp = queryPath ? (queryPath.endsWith('/') ? queryPath : queryPath + '/') : '';
       
-      const mappedFiles = [];
-      const folders = new Set();
+      if (relativeToUser.startsWith(qp)) {
+         const remainder = relativeToUser.substring(qp.length);
+         if (remainder.includes('/')) {
+           const folderName = remainder.split('/')[0];
+           folders.add(folderName);
+         } else {
+           mappedFiles.push({
+             id: relativeToUser,
+             _id: file._id.toString(),
+             name: file.originalName || file.name,
+             diskName: relativeToUser,
+             isFolder: false,
+             date: new Date(file.uploadedAt || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+             mtimeMs: new Date(file.uploadedAt || Date.now()).getTime(),
+             size: file.size,
+             status: file.securityStatus || 'Safe',
+             type: (file.originalName || file.name).split('.').pop()
+           });
+         }
+      }
+    });
 
-      dbFiles.forEach(file => {
-
-        const relativeToUser = file.diskName || file.name;
-        const qp = queryPath ? (queryPath.endsWith('/') ? queryPath : queryPath + '/') : '';
-        
-        if (relativeToUser.startsWith(qp)) {
-           const remainder = relativeToUser.substring(qp.length);
-           if (remainder.includes('/')) {
-             const folderName = remainder.split('/')[0];
-             folders.add(folderName);
-           } else {
-             mappedFiles.push({
-               id: relativeToUser,
-               _id: file._id.toString(),
-               name: file.originalName || file.name,
-               diskName: relativeToUser,
-               isFolder: false,
-               date: new Date(file.uploadedAt || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-               mtimeMs: new Date(file.uploadedAt || Date.now()).getTime(),
-               size: file.size,
-               status: file.securityStatus || 'Safe',
-               type: (file.originalName || file.name).split('.').pop()
-             });
-           }
-        }
+    folders.forEach(folder => {
+      mappedFiles.push({
+        id: queryPath ? `${queryPath}/${folder}` : folder,
+        name: folder,
+        diskName: queryPath ? `${queryPath}/${folder}` : folder,
+        isFolder: true,
+        date: '--',
+        mtimeMs: 0,
+        size: '--',
+        status: 'Safe',
+        type: 'folder'
       });
+    });
 
-      folders.forEach(folder => {
-        mappedFiles.push({
-          id: queryPath ? `${queryPath}/${folder}` : folder,
-          name: folder,
-          diskName: queryPath ? `${queryPath}/${folder}` : folder,
-          isFolder: true,
-          date: '--',
-          mtimeMs: 0,
-          size: '--',
-          status: 'Safe',
-          type: 'folder'
-        });
-      });
-
-      mappedFiles.sort((a, b) => b.mtimeMs - a.mtimeMs);
-      return res.json(mappedFiles);
-    }
+    mappedFiles.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    return res.json(mappedFiles);
+  
     
     return res.json([]);
   } catch (error) {

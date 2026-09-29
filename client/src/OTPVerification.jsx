@@ -69,7 +69,7 @@ export default function OTPVerification({ email, onVerifySuccess, onCancel }) {
     inputRefs.current[nextIndex].focus();
   };
 
-  const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+  const API_BASE_URL = import.meta.env.PROD ? import.meta.env.VITE_API_URL : (import.meta.env.VITE_API_URL || 'http://localhost:5000');
 
   const handleSubmit = async (e) => {
     e.preventDefault();
