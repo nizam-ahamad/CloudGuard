@@ -462,31 +462,19 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     }
     
     const scriptUrl = "https://script.google.com/macros/s/AKfycbwUtMYORet8Y6mkUtoNJ1ofJRr0Iq8UrGeYcIOjAVnXiVR2sSRSTdmVJ19cc7q3yS79/exec";
-    const sendResetEmailAsync = async (email, code) => {
-      try {
-        const response = await fetch(scriptUrl, {
-          method: "POST",
-          redirect: "follow",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ 
-            to: email, 
-            type: 'reset',
-            otp: code,
-            secret: 'cloudguard-secure-secret-2024'
-          })
-        });
-        const responseText = await response.text();
-        console.log(`GAS Status: ${response.status}`);
-        console.log(`GAS Response: ${responseText}`);
-        if (!response.ok && response.status !== 302) {
-            throw new Error(`Google Script Failed: ${response.status} - ${responseText}`);
-        }
-      } catch (error) {
-        console.error(`Email Thread Crashed: ${error.message || error}`);
-      }
-    };
-
-    sendResetEmailAsync(user.email, resetOtp);
+    fetch(scriptUrl, {
+      method: "POST",
+      redirect: "follow",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        to: email,
+        type: 'reset',
+        otp: resetOtp,
+        secret: 'cloudguard-secure-secret-2024'
+      })
+    })
+    .then(async (res) => console.log(`GAS Status: ${res.status}`))
+    .catch(err => console.error(`GAS Background Error:`, err));
 
     return res.status(200).json({ message: "Reset code sent" });
   } catch (error) {
