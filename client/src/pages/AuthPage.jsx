@@ -192,7 +192,7 @@ export default function AuthPage() {
       }
     } catch (error) {
       console.error("Backend Rejection Data:", error.response?.data);
-      setFormError(error.response?.data?.message || "Network error. Is your backend running?");
+      setFormError(error.response?.data?.message || error.response?.data?.error || "Network error. Is your backend running?");
     } finally {
       setIsLoading(false);
     }
