@@ -940,7 +940,7 @@ function App() {
       <nav className={`bg-slate-50 dark:bg-[#1e1f20] h-screen ${isCollapsed ? 'w-20' : 'w-64'} fixed left-0 top-0 border-r border-slate-200 dark:border-zinc-800 flex flex-col py-stack-lg z-50 transform transition-all duration-300 ease-in-out overflow-x-hidden md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="h-16 mb-6 flex items-center gap-2 px-4">
           <div className="min-w-[3rem] flex justify-center items-center">
-            <CloudGuardLogo className="w-10 h-auto flex-shrink-0" />
+            <CloudGuardLogo className="h-13 w-auto flex-shrink-0" />
           </div>
           <div className={`overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-40 opacity-100'}`}>
             <h1 className="font-headline-md text-2xl font-bold text-primary dark:text-[#e3e3e3]">CloudGuard</h1>
@@ -1012,12 +1012,12 @@ function App() {
 
       {/* TopAppBar */}
       <header className={`bg-slate-50 dark:bg-[#1e1f20] fixed top-0 right-0 w-full h-16 border-b border-slate-200 dark:border-zinc-800 flex justify-between items-center px-margin-mobile md:px-margin-desktop z-10 transition-all duration-300 ease-in-out ${isCollapsed ? 'md:w-[calc(100%-80px)]' : 'md:w-[calc(100%-256px)]'}`}>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-4">
           <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="md:hidden p-2 text-on-surface-variant hover:bg-surface-container-high rounded-full transition-colors">
             <span className="material-symbols-outlined">menu</span>
           </button>
-          <CloudGuardLogo className="w-10 h-auto flex-shrink-0 md:hidden" />
-          <h1 className="font-headline-md text-headline-md font-bold text-primary dark:text-[#e3e3e3] md:hidden">CloudGuard</h1>
+          <CloudGuardLogo className="h-10 w-auto md:hidden shrink-0" />
+          <h1 className="font-headline-md text-headline-md font-bold text-primary dark:text-[#e3e3e3] md:hidden -ml-2">CloudGuard</h1>
         </div>
           <div className="hidden md:flex flex-1 max-w-md ml-4 mr-8">
             <div className="relative w-full focus-within:ring-2 focus-within:ring-secondary rounded-lg transition-all">
