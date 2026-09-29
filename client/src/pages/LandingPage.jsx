@@ -50,7 +50,7 @@ export default function LandingPage() {
   }, [lineIndex]);
 
   return (
-    <div className="min-h-screen bg-black text-[#e3e3e3] font-sans">
+    <div className="min-h-screen w-full overflow-x-hidden bg-black text-[#e3e3e3] font-sans">
       
       {/* Subtle Grid Background */}
       <div className="absolute inset-0 z-0 opacity-20 pointer-events-none" 
@@ -75,9 +75,9 @@ export default function LandingPage() {
         
         {/* Left Side: Hero Text */}
         <div className="w-full lg:w-1/2 text-left lg:pt-4">
-          <h1 className="text-6xl lg:text-7xl font-medium mb-8 tracking-tighter text-[#e3e3e3] leading-[1.1]">
+          <h1 className="text-4xl sm:text-5xl lg:text-7xl font-medium mb-8 tracking-tighter text-[#e3e3e3] leading-[1.1]">
             CloudGuard Vault. <br />
-            <span className="text-[#888] whitespace-nowrap">{heroText}<span className="text-white animate-pulse">|</span></span>
+            <span className="text-[#888] whitespace-normal break-words">{heroText}<span className="text-white animate-pulse">|</span></span>
           </h1>
           <p className="text-xl text-[#888] max-w-xl mb-12 font-light leading-relaxed">
             A highly secure file management system built on scalable cloud infrastructure. Every upload is analyzed in real-time by a custom Python microservice utilizing Random Forest machine learning and VirusTotal API fallbacks.
