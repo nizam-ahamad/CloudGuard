@@ -209,17 +209,16 @@ function App() {
   };
 
   const [files, setFiles] = useState([]);
-  const [uploading, setUploading] = useState(false);
   const [sortOrder, setSortOrder] = useState('newest');
   const [fileToDelete, setFileToDelete] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [uploadStats, setUploadStats] = useState({ loaded: 0, total: 0 });
-  const [uploadSpeed, setUploadSpeed] = useState(0);
-  const [uploadAbortController, setUploadAbortController] = useState(null);
+  
+  const [uploadQueue, setUploadQueue] = useState([]);
+  const [isUploadDrawerOpen, setIsUploadDrawerOpen] = useState(true);
+  const isQueueProcessing = useRef(false);
   const [toasts, setToasts] = useState([]);
   const [viewMode, setViewMode] = useState('all');
   const [currentDirectory, setCurrentDirectory] = useState('');
@@ -375,6 +374,109 @@ function App() {
     return () => axios.interceptors.response.eject(interceptor);
   }, []);
 
+  const processQueue = async () => {
+    if (isQueueProcessing.current) return;
+    isQueueProcessing.current = true;
+
+    while (true) {
+      let nextItem = null;
+      setUploadQueue(prev => {
+        nextItem = prev.find(item => item.status === 'queued');
+        return prev;
+      });
+
+      if (!nextItem) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+        let retryItem = null;
+        setUploadQueue(prev => {
+          retryItem = prev.find(item => item.status === 'queued');
+          return prev;
+        });
+        if (!retryItem) break;
+        nextItem = retryItem;
+      }
+
+      const { id, file, name, size } = nextItem;
+      const controller = new AbortController();
+
+      setUploadQueue(prev => prev.map(item => item.id === id ? { ...item, status: 'uploading', abortController: controller } : item));
+
+      let finalStatus = 'completed';
+      let errorMsg = null;
+      let securityThreat = false;
+      let currentFileId = null;
+
+      try {
+        const s3Axios = axios.create();
+        const presignRes = await axios.post(`${API_BASE_URL}/api/presign`, {
+          filename: name,
+          contentType: file.type || 'application/octet-stream'
+        });
+        const { signedUrl, fileKey, fileId } = presignRes.data;
+        currentFileId = fileId;
+        
+        await s3Axios.put(signedUrl, file, {
+          headers: { 
+            'Content-Type': file.type || 'application/octet-stream',
+            'Authorization': undefined
+          },
+          signal: controller.signal,
+          onUploadProgress: (progressEvent) => {
+            const percentCompleted = Math.round((progressEvent.loaded * 100) / size);
+            setUploadQueue(prev => prev.map(item => item.id === id ? { ...item, progress: percentCompleted } : item));
+          }
+        });
+
+        setUploadQueue(prev => prev.map(item => item.id === id ? { ...item, status: 'analyzing' } : item));
+        
+        const uploadRes = await axios.post(`${API_BASE_URL}/api/upload`, {
+          fileKey,
+          originalName: name,
+          fileSize: size,
+          relativePaths: file.webkitRelativePath || file.customPath || ''
+        });
+
+        const { blockedFiles } = uploadRes.data;
+        if (blockedFiles && blockedFiles.length > 0) {
+          finalStatus = 'threat_detected';
+          securityThreat = true;
+        }
+      } catch (err) {
+        if (axios.isCancel(err) || err.name === 'CanceledError') {
+          finalStatus = 'failed';
+          errorMsg = 'Canceled';
+          if (currentFileId) {
+             try { await axios.delete(`${API_BASE_URL}/api/files/${currentFileId}`); } catch(e){}
+          }
+        } else {
+          finalStatus = err.response?.status === 406 ? 'threat_detected' : 'failed';
+          errorMsg = err.response?.data?.error || 'Upload failed';
+        }
+      }
+
+      setUploadQueue(prev => {
+        const currentItem = prev.find(i => i.id === id);
+        if (currentItem && currentItem.status === 'failed' && currentItem.error === 'Canceled') {
+           return prev; 
+        }
+        return prev.map(item => item.id === id ? { ...item, status: finalStatus, error: errorMsg, abortController: null } : item);
+      });
+      
+      if (securityThreat) {
+         addToast('error', `Security Alert: Blocked threat in ${name}`);
+      } else if (finalStatus === 'completed') {
+         addToast('success', `Uploaded: ${name}`);
+      } else if (finalStatus === 'failed' && errorMsg !== 'Canceled') {
+         addToast('error', errorMsg || `Upload failed for ${name}`);
+      }
+
+      await fetchFiles();
+      await fetchStorageStats();
+    }
+
+    isQueueProcessing.current = false;
+  };
+
   const handleFileUpload = async (filesToUpload) => {
     if (!filesToUpload || filesToUpload.length === 0) return;
 
@@ -382,150 +484,25 @@ function App() {
     const availableBytes = storageStats.totalLimitBytes - storageStats.usedBytes;
     
     if (totalUploadSize > availableBytes) {
-      addToast('error', "Upload Failed: Insufficient storage space. This file exceeds your available account limit.");
+      addToast('error', "Upload Failed: Insufficient storage space.");
       return;
     }
 
-    try {
-      setUploading(true);
-      setUploadProgress(0);
-      setUploadStats({ loaded: 0, total: (totalUploadSize / (1024 * 1024)).toFixed(1) });
-      
-      const controller = new AbortController();
-      setUploadAbortController(controller);
-      
-      prevUploadRef.current = { time: Date.now(), loaded: 0 };
-      setUploadSpeed(0);
-      
-      const allUploadedFiles = [];
-      const allBlockedFiles = [];
-      let totalLoaded = 0;
-      
-      const s3Axios = axios.create();
+    const newItems = Array.from(filesToUpload).map(file => ({
+      id: Date.now() + Math.random().toString(36).substr(2, 9),
+      file,
+      name: file.name,
+      size: file.size,
+      progress: 0,
+      status: 'queued',
+      error: null,
+      abortController: null
+    }));
 
-      for (const file of filesToUpload) {
-        let currentFileId = null;
-        try {
-          // 1. Presign
-          const presignRes = await axios.post(`${API_BASE_URL}/api/presign`, {
-            filename: file.name,
-            contentType: file.type || 'application/octet-stream'
-          });
-          const { signedUrl, fileKey, fileId } = presignRes.data;
-          currentFileId = fileId;
-
-          // 2. Direct Upload to S3
-          await s3Axios.put(signedUrl, file, {
-            headers: { 
-              'Content-Type': file.type || 'application/octet-stream',
-              'Authorization': undefined
-            },
-            signal: controller.signal,
-            onUploadProgress: (progressEvent) => {
-              const currentLoaded = progressEvent.loaded;
-              const overallLoaded = totalLoaded + currentLoaded;
-              
-              const now = Date.now();
-              const timeElapsed = now - prevUploadRef.current.time;
-              
-              if (timeElapsed >= 500) {
-                const bytesLoadedSinceLast = overallLoaded - prevUploadRef.current.loaded;
-                const speedBps = (bytesLoadedSinceLast / timeElapsed) * 1000;
-                const speedMbps = (speedBps / (1024 * 1024)).toFixed(1);
-                
-                setUploadSpeed(speedMbps);
-                prevUploadRef.current = { time: now, loaded: overallLoaded };
-              }
-
-              setUploadProgress(Math.round((overallLoaded * 100) / totalUploadSize));
-              setUploadStats({
-                loaded: (overallLoaded / (1024 * 1024)).toFixed(1),
-                total: (totalUploadSize / (1024 * 1024)).toFixed(1)
-              });
-            }
-          });
-          totalLoaded += file.size;
-
-          // 3. Trigger Scan
-          const uploadRes = await axios.post(`${API_BASE_URL}/api/upload`, {
-            fileKey,
-            originalName: file.name,
-            fileSize: file.size,
-            relativePaths: file.webkitRelativePath || file.customPath || ''
-          });
-
-          const { uploadedFiles, blockedFiles } = uploadRes.data;
-          if (uploadedFiles) allUploadedFiles.push(...uploadedFiles);
-          if (blockedFiles) allBlockedFiles.push(...blockedFiles);
-
-        } catch (err) {
-           if (axios.isCancel(err) || err.name === 'CanceledError') {
-             console.log(`Upload canceled for ${file.name}`);
-             addToast('error', `Upload canceled for ${file.name}`);
-             if (currentFileId) {
-               try {
-                 await axios.delete(`${API_BASE_URL}/api/files/${currentFileId}`);
-               } catch (deleteErr) {
-                 console.error("Cleanup failed for canceled file:", deleteErr);
-               }
-             }
-             break; // Stop uploading remaining files if aborted
-           }
-           if (err.response) {
-             const status = err.response.status;
-             if (status === 406) {
-               allBlockedFiles.push(file.name);
-             } else if (err.response.data && err.response.data.error) {
-               addToast('error', `Upload failed for ${file.name}: ${err.response.data.error}`);
-             } else {
-               addToast('error', `Upload failed for ${file.name}: Server Error`);
-             }
-           } else {
-             addToast('error', `Upload failed for ${file.name}: Network or Local Error`);
-           }
-           console.error(`Error uploading ${file.name}:`, err);
-        }
-      }
-
-      await fetchFiles();
-      await fetchStorageStats();
-      
-      if (allBlockedFiles.length > 0) {
-        const blockedNames = allBlockedFiles.join(', ');
-        addToast('error', `Security Alert: Blocked threats: ${blockedNames}`);
-      }
-      if (allUploadedFiles.length > 0) {
-        const fileNames = allUploadedFiles.map(f => f.originalName || f.name).join(', ');
-        addToast('success', `Successfully uploaded: ${fileNames}`);
-      }
-
-    } catch (error) {
-      if (error.response && error.response.status === 401) {
-        localStorage.clear();
-        sessionStorage.clear();
-        window.location.href = '/';
-        return;
-      }
-      if (error.response && error.response.data && error.response.data.error) {
-        addToast('error', error.response.data.error);
-      } else if (!error.response) {
-        addToast('error', 'Upload failed: File blocked locally or network error.');
-      } else {
-        addToast('error', 'Error uploading files.');
-      }
-      console.error(error);
-    } finally {
-      setUploading(false);
-      setUploadProgress(0);
-      setUploadAbortController(null);
-    }
-  };
-
-  const handleCancelUpload = () => {
-    if (uploadAbortController) {
-      uploadAbortController.abort();
-      setUploadAbortController(null);
-    }
+    setUploadQueue(prev => [...prev, ...newItems]);
+    setIsUploadDrawerOpen(true);
+    
+    processQueue();
   };
 
   const getFilesFromEntry = async (entry, path = '') => {
@@ -1200,27 +1177,7 @@ function App() {
           </section>
         )}
 
-        {/* Upload Progress */}
-        {uploading && (
-          <div className="mb-stack-lg p-4 bg-white dark:bg-[#1e1f20] rounded-xl border border-outline-variant dark:border-zinc-800 shadow-sm">
-            <div className="flex justify-between items-center mb-2 font-label-md text-on-surface-variant">
-              <span className="dark:text-[#e3e3e3]">Uploading... {uploadProgress}%</span>
-              <div className="flex items-center gap-4">
-                <span className="dark:text-[#c4c7c5]">{uploadStats.loaded} MB / {uploadStats.total} MB &bull; {uploadSpeed} MB/s</span>
-                <button 
-                  onClick={handleCancelUpload}
-                  className="text-error dark:text-zinc-400 dark:hover:text-red-400 hover:bg-error/10 p-1 rounded-full transition-colors flex items-center justify-center"
-                  title="Cancel Upload"
-                >
-                  <span className="material-symbols-outlined text-[20px]">close</span>
-                </button>
-              </div>
-            </div>
-            <div className="w-full bg-surface-container-high dark:bg-[#131314] rounded-full h-2.5">
-              <div className="bg-gradient-to-r from-indigo-500 via-blue-500 to-cyan-400 relative overflow-hidden h-2.5 rounded-full transition-all duration-300" style={{ width: `${uploadProgress}%` }}></div>
-            </div>
-          </div>
-        )}
+
 
         {/* Recent Files Table */}
         <section>
@@ -1548,6 +1505,76 @@ function App() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Upload Queue Drawer */}
+      {uploadQueue.length > 0 && (
+        <div className={`fixed bottom-4 right-4 z-[70] w-80 md:w-96 bg-white dark:bg-[#1e1f20] rounded-t-xl rounded-b-lg shadow-2xl border border-outline-variant dark:border-zinc-800 transition-all duration-300 flex flex-col ${isUploadDrawerOpen ? 'max-h-[60vh] h-[400px]' : 'h-12'}`}>
+          <div 
+            className="flex items-center justify-between px-4 py-3 bg-surface-container-high dark:bg-[#2d2e30] rounded-t-xl cursor-pointer"
+            onClick={() => setIsUploadDrawerOpen(!isUploadDrawerOpen)}
+          >
+            <span className="font-title-sm font-medium text-on-surface dark:text-[#e3e3e3]">
+              Uploading {uploadQueue.filter(i => i.status === 'uploading' || i.status === 'queued' || i.status === 'analyzing').length} of {uploadQueue.length} items
+            </span>
+            <div className="flex items-center gap-1">
+              <span className="material-symbols-outlined text-on-surface-variant dark:text-zinc-400">
+                {isUploadDrawerOpen ? 'expand_more' : 'expand_less'}
+              </span>
+            </div>
+          </div>
+          
+          {isUploadDrawerOpen && (
+            <div className="flex-1 overflow-y-auto p-2 flex flex-col gap-2 custom-scrollbar">
+              {uploadQueue.map(item => (
+                <div key={item.id} className="flex flex-col p-3 rounded-lg hover:bg-surface-container-low dark:hover:bg-zinc-800/50 transition-colors border border-transparent dark:border-zinc-800/30">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-label-md truncate pr-2 text-on-surface dark:text-[#e3e3e3]" title={item.name}>{item.name}</span>
+                    <div className="flex items-center shrink-0 gap-2">
+                      {(item.status === 'uploading' || item.status === 'queued' || item.status === 'analyzing') && (
+                        <button 
+                          onClick={(e) => { 
+                            e.stopPropagation(); 
+                            if (item.abortController) item.abortController.abort();
+                            setUploadQueue(prev => prev.map(i => i.id === item.id ? { ...i, status: 'failed', error: 'Canceled' } : i));
+                          }}
+                          className="p-1 text-on-surface-variant hover:text-error dark:text-zinc-400 dark:hover:text-red-400 rounded-full hover:bg-error/10 transition-colors"
+                          title="Cancel"
+                        >
+                          <span className="material-symbols-outlined text-[16px]">close</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between text-[11px] text-on-surface-variant dark:text-zinc-400 mb-1.5">
+                    <span>{(item.size / (1024 * 1024)).toFixed(1)} MB</span>
+                    <span className={
+                      item.status === 'completed' ? 'text-primary dark:text-green-400 font-medium' :
+                      item.status === 'threat_detected' || item.status === 'failed' ? 'text-error dark:text-red-400 font-medium' : ''
+                    }>
+                      {item.status === 'queued' && 'Waiting in queue...'}
+                      {item.status === 'uploading' && `${item.progress}%`}
+                      {item.status === 'analyzing' && 'Scanning with AI...'}
+                      {item.status === 'completed' && 'Done'}
+                      {item.status === 'threat_detected' && 'Malware Blocked'}
+                      {item.status === 'failed' && (item.error || 'Failed')}
+                    </span>
+                  </div>
+                  {item.status === 'uploading' && (
+                    <div className="w-full bg-surface-container-high dark:bg-[#131314] rounded-full h-1.5 mt-1">
+                      <div className="bg-primary relative overflow-hidden h-1.5 rounded-full transition-all duration-200" style={{ width: `${item.progress}%` }}></div>
+                    </div>
+                  )}
+                  {item.status === 'analyzing' && (
+                    <div className="w-full bg-surface-container-high dark:bg-[#131314] rounded-full h-1.5 mt-1 overflow-hidden">
+                      <div className="bg-secondary h-full rounded-full animate-pulse w-full"></div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
