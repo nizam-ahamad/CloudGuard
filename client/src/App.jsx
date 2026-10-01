@@ -1552,7 +1552,7 @@ function App() {
 
       {/* Upload Queue Drawer */}
       {uploadQueue.length > 0 && (
-        <div className={`fixed bottom-4 right-4 z-[70] w-80 md:w-96 bg-white dark:bg-[#1e1f20] rounded-t-xl rounded-b-lg shadow-2xl border border-outline-variant dark:border-zinc-800 transition-all duration-300 flex flex-col ${isUploadDrawerOpen ? 'max-h-[60vh] h-[400px]' : 'h-12'}`}>
+        <div className={`fixed bottom-28 right-4 z-[70] w-80 md:w-96 bg-white dark:bg-[#1e1f20] rounded-t-xl rounded-b-lg shadow-2xl border border-outline-variant dark:border-zinc-800 transition-all duration-300 flex flex-col ${isUploadDrawerOpen ? 'max-h-[60vh] h-[400px]' : 'h-12'}`}>
           <div 
             className="flex items-center justify-between px-4 py-3 bg-surface-container-high dark:bg-[#2d2e30] rounded-t-xl cursor-pointer"
             onClick={() => setIsUploadDrawerOpen(!isUploadDrawerOpen)}
@@ -1605,12 +1605,12 @@ function App() {
                   </div>
                   {item.status === 'uploading' && (
                     <div className="w-full bg-surface-container-high dark:bg-[#131314] rounded-full h-1.5 mt-1">
-                      <div className="bg-primary relative overflow-hidden h-1.5 rounded-full transition-all duration-200" style={{ width: `${item.progress}%` }}></div>
+                      <div className="bg-gradient-to-r from-indigo-500 via-blue-500 to-cyan-400 relative overflow-hidden h-1.5 rounded-full transition-all duration-200" style={{ width: `${item.progress}%` }}></div>
                     </div>
                   )}
                   {item.status === 'analyzing' && (
                     <div className="w-full bg-surface-container-high dark:bg-[#131314] rounded-full h-1.5 mt-1 overflow-hidden">
-                      <div className="bg-secondary h-full rounded-full animate-pulse w-full"></div>
+                      <div className="bg-gradient-to-r from-indigo-500 via-blue-500 to-cyan-400 h-full rounded-full animate-pulse w-full"></div>
                     </div>
                   )}
                 </div>
