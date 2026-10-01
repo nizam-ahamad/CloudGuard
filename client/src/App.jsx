@@ -1271,9 +1271,9 @@ function App() {
           )}
 
           <div className="bg-white dark:bg-[#1e1f20] rounded-xl border border-outline-variant dark:border-zinc-800/50 shadow-sm overflow-hidden dark:text-zinc-300">
-            <div className="overflow-x-auto custom-scrollbar">
-              <table className="w-full text-left border-collapse min-w-[800px]">
-                <thead>
+            <div className="md:overflow-x-auto custom-scrollbar w-full">
+              <table className="w-full text-left md:border-collapse block md:table md:min-w-[800px]">
+                <thead className="hidden md:table-header-group">
                   <tr className="border-b border-outline-variant dark:border-zinc-800/50 bg-surface-container-low dark:bg-[#1e1f20] text-on-surface-variant dark:text-zinc-300 font-label-md text-label-md uppercase tracking-wider">
                     <th className="py-4 px-6 font-medium w-12 text-center">
                       <input 
@@ -1296,10 +1296,10 @@ function App() {
                     <th className="py-4 px-6 font-medium text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="font-body-md text-body-md text-on-surface dark:text-zinc-300 divide-y divide-outline-variant/50 dark:divide-zinc-800/50">
+                <tbody className="block md:table-row-group font-body-md text-body-md text-on-surface dark:text-zinc-300 divide-y divide-outline-variant/50 dark:divide-zinc-800/50">
                   {filteredFiles.length === 0 ? (
-                    <tr>
-                      <td colSpan="6" className="py-8 text-center text-on-surface-variant">
+                    <tr className="block md:table-row">
+                      <td colSpan="6" className="py-8 text-center text-on-surface-variant block md:table-cell">
                         {files.length === 0 ? "No files have been uploaded yet." : "No files match your search."}
                       </td>
                     </tr>
@@ -1308,9 +1308,9 @@ function App() {
                     <tr 
                       key={file._id || file.id} 
                       onClick={() => file.isFolder ? setCurrentDirectory(file.diskName) : handlePreview(file)}
-                      className={`hover:bg-surface-bright dark:hover:bg-zinc-800/70 dark:text-zinc-300 transition-colors group h-14 ${file.isFolder || (file.diskName && file.status === 'Safe') ? 'cursor-pointer' : ''}`}
+                      className={`flex flex-wrap md:table-row items-center py-3 px-4 md:p-0 hover:bg-surface-bright dark:hover:bg-zinc-800/70 dark:text-zinc-300 transition-colors group md:h-14 ${file.isFolder || (file.diskName && file.status === 'Safe') ? 'cursor-pointer' : ''}`}
                     >
-                      <td className="py-3 px-6 w-12 text-center" onClick={(e) => e.stopPropagation()}>
+                      <td className="pr-3 md:pr-0 md:py-3 md:px-6 w-auto md:w-12 block md:table-cell md:text-center" onClick={(e) => e.stopPropagation()}>
                         {!file.isFolder && (
                           <input 
                             type="checkbox" 
@@ -1326,17 +1326,23 @@ function App() {
                           />
                         )}
                       </td>
-                      <td className="py-3 px-6">
+                      <td className="flex-1 min-w-0 block md:table-cell md:py-3 md:px-6">
                         <div className="flex items-center gap-3">
                           <div className="w-8 h-8 rounded flex items-center justify-center shrink-0 bg-surface-dim text-on-surface-variant">
                             <span className="material-symbols-outlined text-sm">{getIconForType(file.type)}</span>
                           </div>
-                          <span className="font-medium truncate max-w-[250px]">{file.name}</span>
+                          <div className="flex flex-col min-w-0 w-full">
+                            <span className="font-medium truncate block max-w-full md:max-w-[250px]">{file.name}</span>
+                            <div className="md:hidden flex flex-col text-xs text-gray-500 dark:text-zinc-400 mt-0.5">
+                              <span>{file.date}</span>
+                              <span>{formatSize(file.size)}</span>
+                            </div>
+                          </div>
                         </div>
                       </td>
-                      <td className="py-3 px-6 text-on-surface-variant dark:text-[#c4c7c5]">{file.date}</td>
-                      <td className="py-3 px-6 text-on-surface-variant dark:text-[#c4c7c5]">{formatSize(file.size)}</td>
-                      <td className="py-3 px-6">
+                      <td className="hidden md:table-cell py-3 px-6 text-on-surface-variant dark:text-[#c4c7c5]">{file.date}</td>
+                      <td className="hidden md:table-cell py-3 px-6 text-on-surface-variant dark:text-[#c4c7c5]">{formatSize(file.size)}</td>
+                      <td className="block md:table-cell ml-auto md:ml-0 md:py-3 md:px-6">
                         {!file.isFolder && (
                           file.status === 'Safe' ? (
                             <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#dcfce7] text-[#166534] border border-[#bbf7d0]">
@@ -1356,7 +1362,7 @@ function App() {
                           )
                         )}
                       </td>
-                      <td className="py-3 px-6 text-right">
+                      <td className="block md:table-cell ml-2 md:ml-0 md:py-3 md:px-6 md:text-right">
                         <div className="flex items-center justify-end gap-1">
                           {!file.isFolder && (
                             <button 
