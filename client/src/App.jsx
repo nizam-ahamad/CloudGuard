@@ -375,130 +375,120 @@ function App() {
     return () => axios.interceptors.response.eject(interceptor);
   }, []);
 
-  const processQueue = async () => {
-    if (isQueueProcessing.current) return;
-    isQueueProcessing.current = true;
+  useEffect(() => {
+    const processNext = async () => {
+      if (isQueueProcessing.current) return;
 
-    try {
-      while (true) {
-        let nextItem = null;
-        setUploadQueue(prev => {
-          nextItem = prev.find(item => item.status === 'queued');
-          return prev;
+      const activeUpload = uploadQueue.find(f => f.status === 'uploading' || f.status === 'analyzing');
+      if (activeUpload) return; 
+
+      const nextItem = uploadQueue.find(f => f.status === 'queued');
+      if (!nextItem) return;
+
+      isQueueProcessing.current = true;
+
+      const { id, file, name, size } = nextItem;
+      const controller = new AbortController();
+
+      setUploadQueue(prev => prev.map(item => item.id === id ? { ...item, status: 'uploading', abortController: controller } : item));
+      prevUploadRef.current = { time: Date.now(), loaded: 0, speed: 0 };
+
+      let finalStatus = 'completed';
+      let errorMsg = null;
+      let securityThreat = false;
+      let currentFileId = null;
+
+      try {
+        const s3Axios = axios.create();
+        const presignRes = await axios.post(`${API_BASE_URL}/api/presign`, {
+          filename: name,
+          contentType: file.type || 'application/octet-stream'
         });
-
-        if (!nextItem) {
-          await new Promise(resolve => setTimeout(resolve, 50));
-          let retryItem = null;
-          setUploadQueue(prev => {
-            retryItem = prev.find(item => item.status === 'queued');
-            return prev;
-          });
-          if (!retryItem) break;
-          nextItem = retryItem;
-        }
-
-        const { id, file, name, size } = nextItem;
-        const controller = new AbortController();
-
-        setUploadQueue(prev => prev.map(item => item.id === id ? { ...item, status: 'uploading', abortController: controller } : item));
-        prevUploadRef.current = { time: Date.now(), loaded: 0, speed: 0 };
-
-        let finalStatus = 'completed';
-        let errorMsg = null;
-        let securityThreat = false;
-        let currentFileId = null;
-
-        try {
-          const s3Axios = axios.create();
-          const presignRes = await axios.post(`${API_BASE_URL}/api/presign`, {
-            filename: name,
-            contentType: file.type || 'application/octet-stream'
-          });
-          const { signedUrl, fileKey, fileId } = presignRes.data;
-          currentFileId = fileId;
-          
-          await s3Axios.put(signedUrl, file, {
-            headers: { 
-              'Content-Type': file.type || 'application/octet-stream',
-              'Authorization': undefined
-            },
-            signal: controller.signal,
-            onUploadProgress: (progressEvent) => {
-              const percentCompleted = Math.round((progressEvent.loaded * 100) / size);
-              
-              const now = Date.now();
-              const timeElapsed = now - prevUploadRef.current.time;
-              if (timeElapsed >= 500) {
-                const bytesLoadedSinceLast = progressEvent.loaded - prevUploadRef.current.loaded;
-                const speedBps = (bytesLoadedSinceLast / timeElapsed) * 1000;
-                const speedMbps = (speedBps / (1024 * 1024)).toFixed(1);
-                prevUploadRef.current = { time: now, loaded: progressEvent.loaded, speed: speedMbps };
-              }
-
-              setUploadQueue(prev => prev.map(item => item.id === id ? { 
-                ...item, 
-                progress: percentCompleted, 
-                loadedBytes: progressEvent.loaded, 
-                speed: prevUploadRef.current.speed 
-              } : item));
-            }
-          });
-
-          setUploadQueue(prev => prev.map(item => item.id === id ? { ...item, status: 'analyzing' } : item));
-          
-          const uploadRes = await axios.post(`${API_BASE_URL}/api/upload`, {
-            fileKey,
-            originalName: name,
-            fileSize: size,
-            relativePaths: file.webkitRelativePath || file.customPath || ''
-          });
-
-          const { blockedFiles } = uploadRes.data;
-          if (blockedFiles && blockedFiles.length > 0) {
-            finalStatus = 'threat_detected';
-            securityThreat = true;
-          }
-        } catch (err) {
-          if (axios.isCancel(err) || err.name === 'CanceledError') {
-            finalStatus = 'failed';
-            errorMsg = 'Canceled';
-            if (currentFileId) {
-               try { await axios.delete(`${API_BASE_URL}/api/files/${currentFileId}`); } catch(e){}
-            }
-          } else {
-            finalStatus = err.response?.status === 406 ? 'threat_detected' : 'failed';
-            errorMsg = err.response?.data?.error || 'Upload failed';
-          }
-        }
-
-        setUploadQueue(prev => {
-          const currentItem = prev.find(i => i.id === id);
-          if (currentItem && currentItem.status === 'failed' && currentItem.error === 'Canceled') {
-             return prev; 
-          }
-          return prev.map(item => item.id === id ? { ...item, status: finalStatus, error: errorMsg, abortController: null } : item);
-        });
+        const { signedUrl, fileKey, fileId } = presignRes.data;
+        currentFileId = fileId;
         
-        if (securityThreat) {
-           addToast('error', `Security Alert: Blocked threat in ${name}`);
-        } else if (finalStatus === 'completed') {
-           addToast('success', `Uploaded: ${name}`);
-        } else if (finalStatus === 'failed' && errorMsg !== 'Canceled') {
-           addToast('error', errorMsg || `Upload failed for ${name}`);
-        }
+        await s3Axios.put(signedUrl, file, {
+          headers: { 
+            'Content-Type': file.type || 'application/octet-stream',
+            'Authorization': undefined
+          },
+          signal: controller.signal,
+          onUploadProgress: (progressEvent) => {
+            const percentCompleted = Math.round((progressEvent.loaded * 100) / size);
+            
+            const now = Date.now();
+            const timeElapsed = now - prevUploadRef.current.time;
+            if (timeElapsed >= 500) {
+              const bytesLoadedSinceLast = progressEvent.loaded - prevUploadRef.current.loaded;
+              const speedBps = (bytesLoadedSinceLast / timeElapsed) * 1000;
+              const speedMbps = (speedBps / (1024 * 1024)).toFixed(1);
+              prevUploadRef.current = { time: now, loaded: progressEvent.loaded, speed: speedMbps };
+            }
 
-        try {
-          await fetchFiles();
-          await fetchStorageStats();
-        } catch (err) {
-          console.error("Failed to fetch updates:", err);
+            setUploadQueue(prev => prev.map(item => item.id === id ? { 
+              ...item, 
+              progress: percentCompleted, 
+              loadedBytes: progressEvent.loaded, 
+              speed: prevUploadRef.current.speed 
+            } : item));
+          }
+        });
+
+        setUploadQueue(prev => prev.map(item => item.id === id ? { ...item, status: 'analyzing' } : item));
+        
+        const uploadRes = await axios.post(`${API_BASE_URL}/api/upload`, {
+          fileKey,
+          originalName: name,
+          fileSize: size,
+          relativePaths: file.webkitRelativePath || file.customPath || ''
+        });
+
+        const { blockedFiles } = uploadRes.data;
+        if (blockedFiles && blockedFiles.length > 0) {
+          finalStatus = 'threat_detected';
+          securityThreat = true;
+        }
+      } catch (err) {
+        if (axios.isCancel(err) || err.name === 'CanceledError') {
+          finalStatus = 'failed';
+          errorMsg = 'Canceled';
+          if (currentFileId) {
+             try { await axios.delete(`${API_BASE_URL}/api/files/${currentFileId}`); } catch(e){}
+          }
+        } else {
+          finalStatus = err.response?.status === 406 ? 'threat_detected' : 'failed';
+          errorMsg = err.response?.data?.error || 'Upload failed';
         }
       }
-    } finally {
+
+      setUploadQueue(prev => {
+        const currentItem = prev.find(i => i.id === id);
+        if (currentItem && currentItem.status === 'failed' && currentItem.error === 'Canceled') {
+           return prev; 
+        }
+        return prev.map(item => item.id === id ? { ...item, status: finalStatus, error: errorMsg, abortController: null } : item);
+      });
+      
+      if (securityThreat) {
+         addToast('error', `Security Alert: Blocked threat in ${name}`);
+      } else if (finalStatus === 'completed') {
+         addToast('success', `Uploaded: ${name}`);
+      } else if (finalStatus === 'failed' && errorMsg !== 'Canceled') {
+         addToast('error', errorMsg || `Upload failed for ${name}`);
+      }
+
+      try {
+        await fetchFiles();
+        await fetchStorageStats();
+      } catch (err) {
+        console.error("Failed to fetch updates:", err);
+      }
+      
       isQueueProcessing.current = false;
-    }
-  };
+    };
+
+    processNext();
+  }, [uploadQueue, fetchFiles, fetchStorageStats]);
 
   const handleFileUpload = async (filesToUpload) => {
     if (!filesToUpload || filesToUpload.length === 0) return;
@@ -526,8 +516,6 @@ function App() {
 
     setUploadQueue(prev => [...prev, ...newItems]);
     setIsUploadDrawerOpen(true);
-    
-    processQueue();
   };
 
   const getFilesFromEntry = async (entry, path = '') => {
@@ -1204,20 +1192,22 @@ function App() {
 
         {/* Active Upload Progress (Main Area) */}
         {(() => {
-          const activeItem = uploadQueue.find(i => i.status === 'uploading' || i.status === 'analyzing');
-          if (!activeItem) return null;
+          const activeUpload = uploadQueue.find(f => f.status === 'uploading' || f.status === 'analyzing');
+          if (!activeUpload) return null;
           return (
             <div className="mb-stack-lg p-4 bg-white dark:bg-[#1e1f20] rounded-xl border border-outline-variant dark:border-zinc-800 shadow-sm">
               <div className="flex justify-between items-center mb-2 font-label-md text-on-surface-variant">
-                <span className="dark:text-[#e3e3e3] truncate max-w-[200px] sm:max-w-xs">{activeItem.name} ({activeItem.status === 'analyzing' ? 'Analyzing...' : `Uploading... ${activeItem.progress}%`})</span>
-                <div className="flex items-center gap-4 shrink-0">
-                  <span className="dark:text-[#c4c7c5] hidden sm:inline">
-                    {activeItem.status === 'analyzing' ? 'Scanning for threats...' : `${((activeItem.loadedBytes || 0) / (1024 * 1024)).toFixed(1)} MB / ${(activeItem.size / (1024 * 1024)).toFixed(1)} MB • ${activeItem.speed || 0} MB/s`}
+                <span className="dark:text-[#e3e3e3]">
+                  {activeUpload.status === 'analyzing' ? `Analyzing...` : `Uploading... ${activeUpload.progress}%`}
+                </span>
+                <div className="flex items-center gap-4">
+                  <span className="dark:text-[#c4c7c5]">
+                    {activeUpload.status === 'analyzing' ? 'Scanning...' : `${((activeUpload.loadedBytes || 0) / (1024 * 1024)).toFixed(1)} MB / ${(activeUpload.size / (1024 * 1024)).toFixed(1)} MB • ${activeUpload.speed || 0} MB/s`}
                   </span>
                   <button 
                     onClick={() => {
-                      if (activeItem.abortController) activeItem.abortController.abort();
-                      setUploadQueue(prev => prev.map(i => i.id === activeItem.id ? { ...i, status: 'failed', error: 'Canceled' } : i));
+                      if (activeUpload.abortController) activeUpload.abortController.abort();
+                      setUploadQueue(prev => prev.map(i => i.id === activeUpload.id ? { ...i, status: 'failed', error: 'Canceled' } : i));
                     }}
                     className="text-error dark:text-zinc-400 dark:hover:text-red-400 hover:bg-error/10 p-1 rounded-full transition-colors flex items-center justify-center"
                     title="Cancel Upload"
@@ -1226,11 +1216,11 @@ function App() {
                   </button>
                 </div>
               </div>
-              <div className="w-full bg-surface-container-high dark:bg-[#131314] rounded-full h-2.5 overflow-hidden relative">
-                {activeItem.status === 'uploading' ? (
-                  <div className="bg-gradient-to-r from-indigo-500 via-blue-500 to-cyan-400 relative h-2.5 rounded-full transition-all duration-300" style={{ width: `${activeItem.progress}%` }}></div>
+              <div className="w-full bg-surface-container-high dark:bg-[#131314] rounded-full h-2.5">
+                {activeUpload.status === 'uploading' ? (
+                  <div className="bg-gradient-to-r from-indigo-500 via-blue-500 to-cyan-400 relative overflow-hidden h-2.5 rounded-full transition-all duration-300" style={{ width: `${activeUpload.progress}%` }}></div>
                 ) : (
-                  <div className="bg-secondary h-full rounded-full animate-pulse w-full"></div>
+                  <div className="bg-secondary relative overflow-hidden h-2.5 rounded-full animate-pulse w-full"></div>
                 )}
               </div>
             </div>
