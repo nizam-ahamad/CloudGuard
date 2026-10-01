@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
+import { API_BASE_URL } from './config';
 
 export default function OTPVerification({ email, onVerifySuccess, onCancel }) {
   const [otp, setOtp] = useState(new Array(6).fill(''));
@@ -69,7 +70,7 @@ export default function OTPVerification({ email, onVerifySuccess, onCancel }) {
     inputRefs.current[nextIndex].focus();
   };
 
-  const API_BASE_URL = import.meta.env.PROD ? import.meta.env.VITE_API_URL : (import.meta.env.VITE_API_URL || 'http://localhost:5000');
+
 
   const handleSubmit = async (e) => {
     e.preventDefault();

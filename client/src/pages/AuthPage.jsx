@@ -4,7 +4,7 @@ import { ArrowRight, Eye, EyeOff, CheckCircle, Loader2 } from 'lucide-react';
 import axios from 'axios';
 import CloudGuardLogo from '../CloudGuardLogo';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+import { API_BASE_URL } from "../config";
 
 export default function AuthPage() {
   const navigate = useNavigate();

@@ -9,7 +9,7 @@ import Toast from './Toast';
 import LandingPage from './pages/LandingPage';
 import AuthPage from './pages/AuthPage';
 
-const API_BASE_URL = import.meta.env.PROD ? import.meta.env.VITE_API_URL : (import.meta.env.VITE_API_URL || 'http://localhost:5000');
+import { API_BASE_URL } from "./config";
 
 function App() {
   const [isLoading, setIsLoading] = useState(true);
