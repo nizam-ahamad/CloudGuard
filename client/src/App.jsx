@@ -230,6 +230,7 @@ function App() {
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
+  const [activeMenuId, setActiveMenuId] = useState(null);
 
   const handlePasswordUpdate = async (e) => {
     e.preventDefault();
@@ -1073,7 +1074,7 @@ function App() {
 
       {/* Main Content Canvas */}
       <main 
-        onClick={() => { setShowProfileMenu(false); setIsSidebarOpen(false); }} 
+        onClick={() => { setShowProfileMenu(false); setIsSidebarOpen(false); setActiveMenuId(null); }} 
         className={`pt-24 pb-12 px-margin-mobile md:px-margin-desktop max-w-container-max mx-auto w-full min-h-screen bg-white dark:bg-[#131314] transition-all duration-300 ease-in-out ${isCollapsed ? 'md:ml-20' : 'md:ml-64'}`}
       >
         {viewMode === 'settings' ? (
@@ -1362,8 +1363,9 @@ function App() {
                           )
                         )}
                       </td>
-                      <td className="block md:table-cell ml-2 md:ml-0 md:py-3 md:px-6 md:text-right">
-                        <div className="flex items-center justify-end gap-1">
+                      <td className="block md:table-cell ml-2 md:ml-0 md:py-3 md:px-6 md:text-right relative">
+                        {/* Desktop Actions */}
+                        <div className="hidden md:flex items-center justify-end gap-1">
                           {!file.isFolder && (
                             <button 
                               onClick={(e) => { e.stopPropagation(); handlePreview(file); }}
@@ -1389,6 +1391,34 @@ function App() {
                           >
                             <span className="material-symbols-outlined text-[18px]">delete</span>
                           </button>
+                        </div>
+
+                        {/* Mobile Actions Menu */}
+                        <div className="flex md:hidden relative justify-end">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setActiveMenuId(activeMenuId === (file._id || file.id) ? null : (file._id || file.id)); }}
+                            className="p-1 text-on-surface-variant dark:text-[#c4c7c5] hover:text-secondary dark:hover:text-[#e3e3e3] rounded hover:bg-surface-container-high transition-colors"
+                          >
+                            <span className="material-symbols-outlined text-[20px]">more_vert</span>
+                          </button>
+                          
+                          {activeMenuId === (file._id || file.id) && (
+                            <div className="absolute right-0 top-full mt-2 w-36 bg-white dark:bg-[#1e1f20] rounded-xl shadow-xl border border-outline-variant dark:border-zinc-800 z-[60] overflow-hidden flex flex-col py-1">
+                              {!file.isFolder && (
+                                <button onClick={(e) => { e.stopPropagation(); handlePreview(file); setActiveMenuId(null); }} className="w-full text-left px-4 py-2.5 text-sm text-on-surface dark:text-[#e3e3e3] hover:bg-surface-container-high dark:hover:bg-zinc-800/70 transition-colors flex items-center gap-3">
+                                  <span className="material-symbols-outlined text-[18px]">visibility</span> Preview
+                                </button>
+                              )}
+                              {!file.isFolder && file.diskName && file.status === 'Safe' && (
+                                <button onClick={(e) => { e.stopPropagation(); handleDownload(file); setActiveMenuId(null); }} className="w-full text-left px-4 py-2.5 text-sm text-on-surface dark:text-[#e3e3e3] hover:bg-surface-container-high dark:hover:bg-zinc-800/70 transition-colors flex items-center gap-3">
+                                  <span className="material-symbols-outlined text-[18px]">download</span> Download
+                                </button>
+                              )}
+                              <button onClick={(e) => { e.stopPropagation(); setFileToDelete(file); setActiveMenuId(null); }} className="w-full text-left px-4 py-2.5 text-sm text-error dark:text-red-400 hover:bg-error/10 dark:hover:bg-red-950/30 transition-colors flex items-center gap-3">
+                                <span className="material-symbols-outlined text-[18px]">delete</span> Delete
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </td>
                     </tr>
