@@ -441,8 +441,8 @@ function App() {
           relativePaths: file.webkitRelativePath || file.customPath || ''
         });
 
-        const { blockedFiles } = uploadRes.data;
-        if (blockedFiles && blockedFiles.length > 0) {
+        const { blockedFiles, error } = uploadRes.data;
+        if ((blockedFiles && blockedFiles.length > 0) || error === 'File blocked: Malicious content detected') {
           finalStatus = 'threat_detected';
           securityThreat = true;
         }
@@ -453,6 +453,10 @@ function App() {
           if (currentFileId) {
              try { await axios.delete(`${API_BASE_URL}/api/files/${currentFileId}`); } catch(e){}
           }
+        } else if (err.response?.data?.error === 'File blocked: Malicious content detected') {
+          finalStatus = 'threat_detected';
+          securityThreat = true;
+          errorMsg = 'Malware blocked';
         } else {
           finalStatus = err.response?.status === 406 ? 'threat_detected' : 'failed';
           errorMsg = err.response?.data?.error || 'Upload failed';
