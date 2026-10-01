@@ -234,6 +234,15 @@ function App() {
   const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
   const [activeMenuId, setActiveMenuId] = useState(null);
 
+  useEffect(() => {
+    if (showMalwarePopup) {
+      const timer = setTimeout(() => {
+        setShowMalwarePopup(false);
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [showMalwarePopup]);
+
   const handlePasswordUpdate = async (e) => {
     e.preventDefault();
     const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/;
@@ -1609,22 +1618,20 @@ function App() {
       </div>
 
       {/* Malware Detection Popup */}
-      {showMalwarePopup && (
-        <div className="fixed bottom-6 right-6 z-50">
-          <div className="bg-surface-container-highest border border-outline-variant rounded-xl shadow-xl p-4 flex items-center gap-3 min-w-[300px]">
-            <div className="w-8 h-8 rounded-full bg-[#fef2f2] flex items-center justify-center shrink-0">
-              <span className="material-symbols-outlined text-error text-sm">warning</span>
-            </div>
-            <p className="font-body-md text-on-surface flex-1">Security Alert: Malware detected! {malwareFileName}</p>
-            <button 
-              onClick={() => setShowMalwarePopup(false)}
-              className="text-on-surface-variant hover:text-on-surface transition-colors p-1"
-            >
-              <span className="material-symbols-outlined text-sm">close</span>
-            </button>
+      <div className={`fixed bottom-6 right-6 z-50 transition-all duration-300 ease-in-out ${showMalwarePopup ? 'translate-y-0 opacity-100 pointer-events-auto' : 'translate-y-4 opacity-0 pointer-events-none'}`}>
+        <div className="bg-gray-900 border border-red-500/50 text-gray-100 shadow-xl rounded-lg px-4 py-3 flex items-center gap-3 min-w-[300px]">
+          <div className="w-8 h-8 rounded-full bg-red-900/50 flex items-center justify-center shrink-0">
+            <span className="material-symbols-outlined text-red-400 text-sm">warning</span>
           </div>
+          <p className="font-body-md flex-1">Security Alert: Malware detected! {malwareFileName}</p>
+          <button 
+            onClick={() => setShowMalwarePopup(false)}
+            className="text-gray-400 hover:text-gray-200 transition-colors p-1"
+          >
+            <span className="material-symbols-outlined text-sm">close</span>
+          </button>
         </div>
-      )}
+      </div>
 
       {isDeleteModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
