@@ -218,8 +218,6 @@ function App() {
   
   const [uploadQueue, setUploadQueue] = useState([]);
   const [isUploadDrawerOpen, setIsUploadDrawerOpen] = useState(true);
-  const [showMalwarePopup, setShowMalwarePopup] = useState(false);
-  const [malwareFileName, setMalwareFileName] = useState("");
   const isQueueProcessing = useRef(false);
   const isUploading = uploadQueue.some(item => ['uploading', 'queued', 'analyzing'].includes(item.status));
   const [toasts, setToasts] = useState([]);
@@ -233,15 +231,6 @@ function App() {
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
   const [activeMenuId, setActiveMenuId] = useState(null);
-
-  useEffect(() => {
-    if (showMalwarePopup) {
-      const timer = setTimeout(() => {
-        setShowMalwarePopup(false);
-      }, 5000);
-      return () => clearTimeout(timer);
-    }
-  }, [showMalwarePopup]);
 
   const handlePasswordUpdate = async (e) => {
     e.preventDefault();
@@ -481,8 +470,7 @@ function App() {
       });
       
       if (securityThreat) {
-         setMalwareFileName(name);
-         setShowMalwarePopup(true);
+         addToast('error', `Security Alert: Malware detected! ${name}`);
       } else if (finalStatus === 'completed') {
          addToast('success', `Uploaded: ${name}`);
       } else if (finalStatus === 'failed' && errorMsg !== 'Canceled') {
@@ -1617,21 +1605,6 @@ function App() {
         ))}
       </div>
 
-      {/* Malware Detection Popup */}
-      <div className={`fixed bottom-6 right-6 z-50 transition-all duration-300 ease-in-out ${showMalwarePopup ? 'translate-y-0 opacity-100 pointer-events-auto' : 'translate-y-4 opacity-0 pointer-events-none'}`}>
-        <div className="bg-gray-900 border border-red-500/50 text-gray-100 shadow-xl rounded-lg px-4 py-3 flex items-center gap-3 min-w-[300px]">
-          <div className="w-8 h-8 rounded-full bg-red-900/50 flex items-center justify-center shrink-0">
-            <span className="material-symbols-outlined text-red-400 text-sm">warning</span>
-          </div>
-          <p className="font-body-md flex-1">Security Alert: Malware detected! {malwareFileName}</p>
-          <button 
-            onClick={() => setShowMalwarePopup(false)}
-            className="text-gray-400 hover:text-gray-200 transition-colors p-1"
-          >
-            <span className="material-symbols-outlined text-sm">close</span>
-          </button>
-        </div>
-      </div>
 
       {isDeleteModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
