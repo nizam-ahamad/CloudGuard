@@ -219,6 +219,7 @@ function App() {
   const [uploadQueue, setUploadQueue] = useState([]);
   const [isUploadDrawerOpen, setIsUploadDrawerOpen] = useState(true);
   const isQueueProcessing = useRef(false);
+  const isUploading = uploadQueue.some(item => ['uploading', 'queued', 'analyzing'].includes(item.status));
   const [toasts, setToasts] = useState([]);
   const [viewMode, setViewMode] = useState('all');
   const [currentDirectory, setCurrentDirectory] = useState('');
@@ -1159,11 +1160,11 @@ function App() {
             >
               <div className="w-16 h-16 rounded-full bg-surface-container flex items-center justify-center mb-4 group-hover:scale-110 transition-transform duration-300">
                 <span className="material-symbols-outlined text-secondary text-3xl">
-                  {uploading ? 'sync' : 'cloud_upload'}
+                  {isUploading ? 'sync' : 'cloud_upload'}
                 </span>
               </div>
               <h3 className="font-title-lg text-title-lg text-on-surface dark:text-zinc-200 mb-2">
-                {uploading ? 'Uploading...' : 'Drag & drop files or folders here'}
+                {isUploading ? 'Uploading...' : 'Drag & drop files or folders here'}
               </h3>
               <p className="font-body-md text-body-md text-on-surface-variant dark:text-zinc-400 text-center max-w-md mb-6">Securely upload documents, images, and archives. Maximum file size 5GB.</p>
               
