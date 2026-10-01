@@ -1166,11 +1166,11 @@ function App() {
             >
               <div className="w-16 h-16 rounded-full bg-surface-container flex items-center justify-center mb-4 group-hover:scale-110 transition-transform duration-300">
                 <span className="material-symbols-outlined text-secondary text-3xl">
-                  {isUploading ? 'sync' : 'cloud_upload'}
+                  cloud_upload
                 </span>
               </div>
               <h3 className="font-title-lg text-title-lg text-on-surface dark:text-zinc-200 mb-2">
-                {isUploading ? 'Uploading...' : 'Drag & drop files or folders here'}
+                Drag & drop files or folders here
               </h3>
               <p className="font-body-md text-body-md text-on-surface-variant dark:text-zinc-400 text-center max-w-md mb-6">Securely upload documents, images, and archives. Maximum file size 5GB.</p>
               
@@ -1184,39 +1184,74 @@ function App() {
           </section>
         )}
 
-        {/* Active Upload Progress (Main Area) */}
+        {/* Stacked Dashboard Queue Area */}
         {(() => {
-          const activeUpload = uploadQueue.find(f => f.status === 'uploading' || f.status === 'analyzing');
-          if (!activeUpload) return null;
+          const activeOrQueuedItems = uploadQueue.filter(i => ['uploading', 'analyzing', 'queued'].includes(i.status));
+          if (activeOrQueuedItems.length === 0) return null;
+          
+          const activeUpload = activeOrQueuedItems.find(f => f.status === 'uploading' || f.status === 'analyzing');
+          const queuedItems = activeOrQueuedItems.filter(f => f.status === 'queued');
+
           return (
-            <div className="mb-stack-lg p-4 bg-white dark:bg-[#1e1f20] rounded-xl border border-outline-variant dark:border-zinc-800 shadow-sm">
-              <div className="flex justify-between items-center mb-2 font-label-md text-on-surface-variant">
-                <span className="dark:text-[#e3e3e3]">
-                  {activeUpload.status === 'analyzing' ? `Analyzing...` : `Uploading... ${activeUpload.progress}%`}
-                </span>
-                <div className="flex items-center gap-4">
-                  <span className="dark:text-[#c4c7c5]">
-                    {activeUpload.status === 'analyzing' ? 'Scanning...' : `${((activeUpload.loadedBytes || 0) / (1024 * 1024)).toFixed(1)} MB / ${(activeUpload.size / (1024 * 1024)).toFixed(1)} MB • ${activeUpload.speed || 0} MB/s`}
-                  </span>
-                  <button 
-                    onClick={() => {
-                      if (activeUpload.abortController) activeUpload.abortController.abort();
-                      setUploadQueue(prev => prev.map(i => i.id === activeUpload.id ? { ...i, status: 'failed', error: 'Canceled' } : i));
-                    }}
-                    className="text-error dark:text-zinc-400 dark:hover:text-red-400 hover:bg-error/10 p-1 rounded-full transition-colors flex items-center justify-center"
-                    title="Cancel Upload"
-                  >
-                    <span className="material-symbols-outlined text-[20px]">close</span>
-                  </button>
+            <div className="mb-stack-lg flex flex-col gap-4">
+              {activeUpload && (
+                <div className="p-4 bg-white dark:bg-[#1e1f20] rounded-xl border border-outline-variant dark:border-zinc-800 shadow-sm">
+                  <div className="flex justify-between items-center mb-2 font-label-md text-on-surface-variant">
+                    <span className="dark:text-[#e3e3e3] truncate max-w-[200px] sm:max-w-xs" title={activeUpload.name}>
+                      {activeUpload.status === 'analyzing' ? `Analyzing ${activeUpload.name}...` : `Uploading ${activeUpload.name}... ${activeUpload.progress}%`}
+                    </span>
+                    <div className="flex items-center gap-4 shrink-0">
+                      <span className="dark:text-[#c4c7c5] hidden sm:inline">
+                        {activeUpload.status === 'analyzing' ? 'Scanning...' : `${((activeUpload.loadedBytes || 0) / (1024 * 1024)).toFixed(1)} MB / ${(activeUpload.size / (1024 * 1024)).toFixed(1)} MB • ${activeUpload.speed || 0} MB/s`}
+                      </span>
+                      <button 
+                        onClick={() => {
+                          if (activeUpload.abortController) activeUpload.abortController.abort();
+                          setUploadQueue(prev => prev.map(i => i.id === activeUpload.id ? { ...i, status: 'failed', error: 'Canceled' } : i));
+                        }}
+                        className="text-error dark:text-zinc-400 dark:hover:text-red-400 hover:bg-error/10 p-1 rounded-full transition-colors flex items-center justify-center"
+                        title="Cancel Upload"
+                      >
+                        <span className="material-symbols-outlined text-[20px]">close</span>
+                      </button>
+                    </div>
+                  </div>
+                  <div className="w-full bg-surface-container-high dark:bg-[#131314] rounded-full h-2.5">
+                    {activeUpload.status === 'uploading' ? (
+                      <div className="bg-gradient-to-r from-indigo-500 via-blue-500 to-cyan-400 relative overflow-hidden h-2.5 rounded-full transition-all duration-300" style={{ width: `${activeUpload.progress}%` }}></div>
+                    ) : (
+                      <div className="bg-secondary relative overflow-hidden h-2.5 rounded-full animate-pulse w-full"></div>
+                    )}
+                  </div>
                 </div>
-              </div>
-              <div className="w-full bg-surface-container-high dark:bg-[#131314] rounded-full h-2.5">
-                {activeUpload.status === 'uploading' ? (
-                  <div className="bg-gradient-to-r from-indigo-500 via-blue-500 to-cyan-400 relative overflow-hidden h-2.5 rounded-full transition-all duration-300" style={{ width: `${activeUpload.progress}%` }}></div>
-                ) : (
-                  <div className="bg-secondary relative overflow-hidden h-2.5 rounded-full animate-pulse w-full"></div>
-                )}
-              </div>
+              )}
+
+              {queuedItems.length > 0 && (
+                <div className="flex flex-col gap-2">
+                  <h4 className="font-label-md text-on-surface-variant dark:text-zinc-400 ml-1">Up Next ({queuedItems.length})</h4>
+                  {queuedItems.map(item => (
+                    <div key={item.id} className="flex items-center justify-between p-3 bg-white/50 dark:bg-[#1e1f20]/50 border border-outline-variant/50 dark:border-zinc-800/50 rounded-lg">
+                      <div className="flex items-center gap-3 overflow-hidden">
+                        <span className="material-symbols-outlined text-secondary text-lg">schedule</span>
+                        <span className="font-body-sm text-on-surface dark:text-[#e3e3e3] truncate" title={item.name}>{item.name}</span>
+                      </div>
+                      <div className="flex items-center gap-3 shrink-0">
+                        <span className="text-xs text-on-surface-variant dark:text-zinc-400 hidden sm:inline">{(item.size / (1024 * 1024)).toFixed(1)} MB</span>
+                        <span className="text-xs text-on-surface-variant dark:text-zinc-500 italic">Waiting in queue...</span>
+                        <button 
+                          onClick={() => { 
+                            setUploadQueue(prev => prev.map(i => i.id === item.id ? { ...i, status: 'failed', error: 'Canceled' } : i));
+                          }}
+                          className="text-error dark:text-zinc-400 hover:bg-error/10 dark:hover:text-red-400 p-1 rounded-full transition-colors flex items-center justify-center ml-2"
+                          title="Cancel"
+                        >
+                          <span className="material-symbols-outlined text-[16px]">close</span>
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           );
         })()}
@@ -1550,75 +1585,7 @@ function App() {
         </div>
       )}
 
-      {/* Upload Queue Drawer */}
-      {uploadQueue.length > 0 && (
-        <div className={`fixed bottom-28 right-4 z-[70] w-80 md:w-96 bg-white dark:bg-[#1e1f20] rounded-t-xl rounded-b-lg shadow-2xl border border-outline-variant dark:border-zinc-800 transition-all duration-300 flex flex-col ${isUploadDrawerOpen ? 'max-h-[60vh] h-[400px]' : 'h-12'}`}>
-          <div 
-            className="flex items-center justify-between px-4 py-3 bg-surface-container-high dark:bg-[#2d2e30] rounded-t-xl cursor-pointer"
-            onClick={() => setIsUploadDrawerOpen(!isUploadDrawerOpen)}
-          >
-            <span className="font-title-sm font-medium text-on-surface dark:text-[#e3e3e3]">
-              Uploading {uploadQueue.filter(i => i.status === 'uploading' || i.status === 'queued' || i.status === 'analyzing').length} of {uploadQueue.length} items
-            </span>
-            <div className="flex items-center gap-1">
-              <span className="material-symbols-outlined text-on-surface-variant dark:text-zinc-400">
-                {isUploadDrawerOpen ? 'expand_more' : 'expand_less'}
-              </span>
-            </div>
-          </div>
-          
-          {isUploadDrawerOpen && (
-            <div className="flex-1 overflow-y-auto p-2 flex flex-col gap-2 custom-scrollbar">
-              {uploadQueue.map(item => (
-                <div key={item.id} className="flex flex-col p-3 rounded-lg hover:bg-surface-container-low dark:hover:bg-zinc-800/50 transition-colors border border-transparent dark:border-zinc-800/30">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="font-label-md truncate pr-2 text-on-surface dark:text-[#e3e3e3]" title={item.name}>{item.name}</span>
-                    <div className="flex items-center shrink-0 gap-2">
-                      {(item.status === 'uploading' || item.status === 'queued' || item.status === 'analyzing') && (
-                        <button 
-                          onClick={(e) => { 
-                            e.stopPropagation(); 
-                            if (item.abortController) item.abortController.abort();
-                            setUploadQueue(prev => prev.map(i => i.id === item.id ? { ...i, status: 'failed', error: 'Canceled' } : i));
-                          }}
-                          className="p-1 text-on-surface-variant hover:text-error dark:text-zinc-400 dark:hover:text-red-400 rounded-full hover:bg-error/10 transition-colors"
-                          title="Cancel"
-                        >
-                          <span className="material-symbols-outlined text-[16px]">close</span>
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-between text-[11px] text-on-surface-variant dark:text-zinc-400 mb-1.5">
-                    <span>{(item.size / (1024 * 1024)).toFixed(1)} MB</span>
-                    <span className={
-                      item.status === 'completed' ? 'text-primary dark:text-green-400 font-medium' :
-                      item.status === 'threat_detected' || item.status === 'failed' ? 'text-error dark:text-red-400 font-medium' : ''
-                    }>
-                      {item.status === 'queued' && 'Waiting in queue...'}
-                      {item.status === 'uploading' && `${item.progress}%`}
-                      {item.status === 'analyzing' && 'Scanning with AI...'}
-                      {item.status === 'completed' && 'Done'}
-                      {item.status === 'threat_detected' && 'Malware Blocked'}
-                      {item.status === 'failed' && (item.error || 'Failed')}
-                    </span>
-                  </div>
-                  {item.status === 'uploading' && (
-                    <div className="w-full bg-surface-container-high dark:bg-[#131314] rounded-full h-1.5 mt-1">
-                      <div className="bg-gradient-to-r from-indigo-500 via-blue-500 to-cyan-400 relative overflow-hidden h-1.5 rounded-full transition-all duration-200" style={{ width: `${item.progress}%` }}></div>
-                    </div>
-                  )}
-                  {item.status === 'analyzing' && (
-                    <div className="w-full bg-surface-container-high dark:bg-[#131314] rounded-full h-1.5 mt-1 overflow-hidden">
-                      <div className="bg-gradient-to-r from-indigo-500 via-blue-500 to-cyan-400 h-full rounded-full animate-pulse w-full"></div>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+
 
       {/* Toast Notification */}
       <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-2 pointer-events-none">
