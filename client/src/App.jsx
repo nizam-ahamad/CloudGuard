@@ -466,7 +466,7 @@ function App() {
       });
       
       if (securityThreat) {
-         addToast('error', 'Security Alert: Malware detected! Files quarantined/deleted.');
+         addToast('error', `Security Alert: Malware detected! ${name}`);
       } else if (finalStatus === 'completed') {
          addToast('success', `Uploaded: ${name}`);
       } else if (finalStatus === 'failed' && errorMsg !== 'Canceled') {
