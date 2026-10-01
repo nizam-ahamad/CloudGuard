@@ -218,6 +218,8 @@ function App() {
   
   const [uploadQueue, setUploadQueue] = useState([]);
   const [isUploadDrawerOpen, setIsUploadDrawerOpen] = useState(true);
+  const [showMalwarePopup, setShowMalwarePopup] = useState(false);
+  const [malwareFileName, setMalwareFileName] = useState("");
   const isQueueProcessing = useRef(false);
   const isUploading = uploadQueue.some(item => ['uploading', 'queued', 'analyzing'].includes(item.status));
   const [toasts, setToasts] = useState([]);
@@ -466,7 +468,8 @@ function App() {
       });
       
       if (securityThreat) {
-         addToast('error', `Security Alert: Malware detected! ${name}`);
+         setMalwareFileName(name);
+         setShowMalwarePopup(true);
       } else if (finalStatus === 'completed') {
          addToast('success', `Uploaded: ${name}`);
       } else if (finalStatus === 'failed' && errorMsg !== 'Canceled') {
@@ -1600,6 +1603,24 @@ function App() {
           </div>
         ))}
       </div>
+
+      {/* Malware Detection Popup */}
+      {showMalwarePopup && (
+        <div className="fixed bottom-6 right-6 z-50">
+          <div className="bg-surface-container-highest border border-outline-variant rounded-xl shadow-xl p-4 flex items-center gap-3 min-w-[300px]">
+            <div className="w-8 h-8 rounded-full bg-[#fef2f2] flex items-center justify-center shrink-0">
+              <span className="material-symbols-outlined text-error text-sm">warning</span>
+            </div>
+            <p className="font-body-md text-on-surface flex-1">Security Alert: Malware detected! {malwareFileName}</p>
+            <button 
+              onClick={() => setShowMalwarePopup(false)}
+              className="text-on-surface-variant hover:text-on-surface transition-colors p-1"
+            >
+              <span className="material-symbols-outlined text-sm">close</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {isDeleteModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
