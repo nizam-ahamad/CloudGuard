@@ -1418,23 +1418,21 @@ function App() {
                             <span className="material-symbols-outlined text-[20px]">more_vert</span>
                           </button>
                           
-                          {activeMenuId === (file._id || file.id) && (
-                            <div className="absolute right-0 top-full mt-2 w-36 bg-white dark:bg-[#1e1f20] rounded-xl shadow-xl border border-outline-variant dark:border-zinc-800 z-[60] overflow-hidden flex flex-col py-1">
-                              {!file.isFolder && (
-                                <button onClick={(e) => { e.stopPropagation(); handlePreview(file); setActiveMenuId(null); }} className="w-full text-left px-4 py-2.5 text-sm text-on-surface dark:text-[#e3e3e3] hover:bg-surface-container-high dark:hover:bg-zinc-800/70 transition-colors flex items-center gap-3">
-                                  <span className="material-symbols-outlined text-[18px]">visibility</span> Preview
-                                </button>
-                              )}
-                              {!file.isFolder && file.diskName && file.status === 'Safe' && (
-                                <button onClick={(e) => { e.stopPropagation(); handleDownload(file); setActiveMenuId(null); }} className="w-full text-left px-4 py-2.5 text-sm text-on-surface dark:text-[#e3e3e3] hover:bg-surface-container-high dark:hover:bg-zinc-800/70 transition-colors flex items-center gap-3">
-                                  <span className="material-symbols-outlined text-[18px]">download</span> Download
-                                </button>
-                              )}
-                              <button onClick={(e) => { e.stopPropagation(); setFileToDelete(file); setActiveMenuId(null); }} className="w-full text-left px-4 py-2.5 text-sm text-error dark:text-red-400 hover:bg-error/10 dark:hover:bg-red-950/30 transition-colors flex items-center gap-3">
-                                <span className="material-symbols-outlined text-[18px]">delete</span> Delete
+                          <div className={`absolute right-0 top-full mt-2 w-36 bg-white dark:bg-[#1e1f20] rounded-xl shadow-xl border border-outline-variant dark:border-zinc-800 z-[60] overflow-hidden flex flex-col py-1 transition-all duration-200 ease-out origin-top-right ${activeMenuId === (file._id || file.id) ? 'opacity-100 scale-100 pointer-events-auto' : 'opacity-0 scale-95 pointer-events-none'}`}>
+                            {!file.isFolder && (
+                              <button onClick={(e) => { e.stopPropagation(); handlePreview(file); setActiveMenuId(null); }} className="w-full text-left px-4 py-2.5 text-sm text-on-surface dark:text-[#e3e3e3] hover:bg-surface-container-high dark:hover:bg-zinc-800/70 transition-colors flex items-center gap-3">
+                                <span className="material-symbols-outlined text-[18px]">visibility</span> Preview
                               </button>
-                            </div>
-                          )}
+                            )}
+                            {!file.isFolder && file.diskName && file.status === 'Safe' && (
+                              <button onClick={(e) => { e.stopPropagation(); handleDownload(file); setActiveMenuId(null); }} className="w-full text-left px-4 py-2.5 text-sm text-on-surface dark:text-[#e3e3e3] hover:bg-surface-container-high dark:hover:bg-zinc-800/70 transition-colors flex items-center gap-3">
+                                <span className="material-symbols-outlined text-[18px]">download</span> Download
+                              </button>
+                            )}
+                            <button onClick={(e) => { e.stopPropagation(); setFileToDelete(file); setActiveMenuId(null); }} className="w-full text-left px-4 py-2.5 text-sm text-error dark:text-red-400 hover:bg-error/10 dark:hover:bg-red-950/30 transition-colors flex items-center gap-3">
+                              <span className="material-symbols-outlined text-[18px]">delete</span> Delete
+                            </button>
+                          </div>
                         </div>
                       </td>
                     </tr>
