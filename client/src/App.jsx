@@ -377,15 +377,11 @@ function App() {
 
   useEffect(() => {
     const processNext = async () => {
-      if (isQueueProcessing.current) return;
-
-      const activeUpload = uploadQueue.find(f => f.status === 'uploading' || f.status === 'analyzing');
-      if (activeUpload) return; 
+      const isProcessing = uploadQueue.some(f => f.status === 'uploading' || f.status === 'analyzing');
+      if (isProcessing) return;
 
       const nextItem = uploadQueue.find(f => f.status === 'queued');
       if (!nextItem) return;
-
-      isQueueProcessing.current = true;
 
       const { id, file, name, size } = nextItem;
       const controller = new AbortController();
@@ -483,8 +479,6 @@ function App() {
       } catch (err) {
         console.error("Failed to fetch updates:", err);
       }
-      
-      isQueueProcessing.current = false;
     };
 
     processNext();
