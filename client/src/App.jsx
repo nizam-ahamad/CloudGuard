@@ -1332,7 +1332,7 @@ function App() {
                             <span className="material-symbols-outlined text-sm">{getIconForType(file.type)}</span>
                           </div>
                           <div className="flex flex-col min-w-0 w-full">
-                            <span className="font-medium truncate block max-w-full md:max-w-[250px]">{file.name}</span>
+                            <span className="font-medium line-clamp-2 break-all md:block md:truncate max-w-full md:max-w-[250px]">{file.name}</span>
                             <div className="md:hidden flex flex-col text-xs text-gray-500 dark:text-zinc-400 mt-0.5">
                               <span>{file.date}</span>
                               <span>{formatSize(file.size)}</span>
