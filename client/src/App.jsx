@@ -1225,9 +1225,25 @@ function App() {
         {/* Recent Files Table */}
         <section>
           <div className="flex items-center justify-between mb-stack-md">
-            <h3 className="font-title-lg text-title-lg text-on-surface dark:text-[#e3e3e3]">
-              {viewMode === 'recent' ? 'Recent Files' : 'All Files'}
-            </h3>
+            <div className="flex items-center gap-3">
+              <div className="flex md:hidden items-center">
+                <input 
+                  type="checkbox" 
+                  className="cursor-pointer w-4 h-4 rounded border-outline-variant text-primary focus:ring-primary focus:ring-offset-surface"
+                  checked={filteredFiles.length > 0 && selectedFiles.length === filteredFiles.filter(f => !f.isFolder).length}
+                  onChange={(e) => {
+                    if (e.target.checked) {
+                      setSelectedFiles(filteredFiles.filter(f => !f.isFolder).map(f => f._id));
+                    } else {
+                      setSelectedFiles([]);
+                    }
+                  }}
+                />
+              </div>
+              <h3 className="font-title-lg text-title-lg text-on-surface dark:text-[#e3e3e3]">
+                {viewMode === 'recent' ? 'Recent Files' : 'All Files'}
+              </h3>
+            </div>
             <div className="flex items-center gap-4">
               <button 
                 onClick={toggleSort}
