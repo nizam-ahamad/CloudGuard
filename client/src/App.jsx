@@ -225,6 +225,7 @@ function App() {
   const [currentDirectory, setCurrentDirectory] = useState('');
   const fileInputRef = useRef(null);
   const prevUploadRef = useRef({ time: 0, loaded: 0 });
+  const abortControllerRef = useRef(null);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
@@ -384,9 +385,9 @@ function App() {
       if (!nextItem) return;
 
       const { id, file, name, size } = nextItem;
-      const controller = new AbortController();
+      abortControllerRef.current = new AbortController();
 
-      setUploadQueue(prev => prev.map(item => item.id === id ? { ...item, status: 'uploading', abortController: controller } : item));
+      setUploadQueue(prev => prev.map(item => item.id === id ? { ...item, status: 'uploading' } : item));
       prevUploadRef.current = { time: Date.now(), loaded: 0, speed: 0 };
 
       let finalStatus = 'completed';
@@ -408,7 +409,7 @@ function App() {
             'Content-Type': file.type || 'application/octet-stream',
             'Authorization': undefined
           },
-          signal: controller.signal,
+          signal: abortControllerRef.current.signal,
           onUploadProgress: (progressEvent) => {
             const percentCompleted = Math.round((progressEvent.loaded * 100) / size);
             
@@ -445,7 +446,7 @@ function App() {
           securityThreat = true;
         }
       } catch (err) {
-        if (axios.isCancel(err) || err.name === 'CanceledError') {
+        if (axios.isCancel(err)) {
           finalStatus = 'failed';
           errorMsg = 'Canceled';
           if (currentFileId) {
@@ -466,7 +467,7 @@ function App() {
         if (currentItem && currentItem.status === 'failed' && currentItem.error === 'Canceled') {
            return prev; 
         }
-        return prev.map(item => item.id === id ? { ...item, status: finalStatus, error: errorMsg, abortController: null } : item);
+        return prev.map(item => item.id === id ? { ...item, status: finalStatus, error: errorMsg } : item);
       });
       
       if (securityThreat) {
@@ -508,8 +509,7 @@ function App() {
       loadedBytes: 0,
       speed: 0,
       status: 'queued',
-      error: null,
-      abortController: null
+      error: null
     }));
 
     setUploadQueue(prev => [...prev, ...newItems]);
@@ -1200,17 +1200,17 @@ function App() {
             <div className="mb-stack-lg flex flex-col gap-4">
               {activeUpload && (
                 <div className="p-4 bg-white dark:bg-[#1e1f20] rounded-xl border border-outline-variant dark:border-zinc-800 shadow-sm">
-                  <div className="flex justify-between items-center mb-2 font-label-md text-on-surface-variant">
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-2 font-label-md text-on-surface-variant">
                     <span className="dark:text-[#e3e3e3] truncate max-w-[200px] sm:max-w-xs" title={activeUpload.name}>
                       {activeUpload.status === 'analyzing' ? `Analyzing ${activeUpload.name}...` : `Uploading ${activeUpload.name}... ${activeUpload.progress}%`}
                     </span>
                     <div className="flex items-center gap-4 shrink-0">
-                      <span className="dark:text-[#c4c7c5] hidden sm:inline">
+                      <span className="dark:text-[#c4c7c5]">
                         {activeUpload.status === 'analyzing' ? 'Scanning...' : `${((activeUpload.loadedBytes || 0) / (1024 * 1024)).toFixed(1)} MB / ${(activeUpload.size / (1024 * 1024)).toFixed(1)} MB • ${activeUpload.speed || 0} MB/s`}
                       </span>
                       <button 
                         onClick={() => {
-                          if (activeUpload.abortController) activeUpload.abortController.abort();
+                          if (abortControllerRef.current) abortControllerRef.current.abort();
                           setUploadQueue(prev => prev.map(i => i.id === activeUpload.id ? { ...i, status: 'failed', error: 'Canceled' } : i));
                         }}
                         className="text-error dark:text-zinc-400 dark:hover:text-red-400 hover:bg-error/10 p-1 rounded-full transition-colors flex items-center justify-center"
