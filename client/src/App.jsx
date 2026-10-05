@@ -630,7 +630,7 @@ function App() {
       setCurrentDirectory(file.diskName);
       return;
     }
-    if (!file.diskName || file.status !== 'Safe') return;
+    if (!file.diskName || (file.status !== 'Safe' && file.status !== 'unscanned_too_large')) return;
     
     try {
       setPreviewText('Loading...');
@@ -1454,7 +1454,7 @@ function App() {
                           {!file.isFolder && (
                             <button 
                               onClick={(e) => { e.stopPropagation(); handlePreview(file); }}
-                              className="p-1.5 text-on-surface-variant dark:text-[#c4c7c5] hover:text-secondary dark:hover:text-[#e3e3e3] rounded hover:bg-surface-container-high transition-colors"
+                              className="p-1.5 text-neutral-500 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-neutral-700 rounded transition-colors"
                               title="Preview"
                             >
                               <span className="material-symbols-outlined text-[18px]">visibility</span>
@@ -1463,7 +1463,7 @@ function App() {
                           {!file.isFolder && file.diskName && (file.status === 'Safe' || file.status === 'unscanned_too_large') && (
                             <button 
                               onClick={(e) => { e.stopPropagation(); handleDownload(file); }}
-                              className="p-1.5 text-on-surface-variant dark:text-[#c4c7c5] hover:text-secondary dark:hover:text-[#e3e3e3] rounded hover:bg-surface-container-high transition-colors"
+                              className="p-1.5 text-neutral-500 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-neutral-700 rounded transition-colors"
                               title="Download"
                             >
                               <span className="material-symbols-outlined text-[18px]">download</span>
@@ -1471,7 +1471,7 @@ function App() {
                           )}
                           <button 
                             onClick={(e) => { e.stopPropagation(); setFileToDelete(file); }}
-                            className="p-1.5 text-on-surface-variant dark:text-[#c4c7c5] hover:text-error dark:hover:text-red-400 rounded hover:bg-error/10 transition-colors"
+                            className="p-1.5 text-neutral-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded transition-colors"
                             title="Delete"
                           >
                             <span className="material-symbols-outlined text-[18px]">delete</span>
@@ -1482,23 +1482,23 @@ function App() {
                         <div className="flex md:hidden relative justify-end">
                           <button
                             onClick={(e) => { e.stopPropagation(); setActiveMenuId(activeMenuId === (file._id || file.id) ? null : (file._id || file.id)); }}
-                            className="p-1 text-on-surface-variant dark:text-[#c4c7c5] hover:text-secondary dark:hover:text-[#e3e3e3] rounded hover:bg-surface-container-high transition-colors"
+                            className="p-1 text-neutral-500 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-neutral-700 rounded transition-colors"
                           >
                             <span className="material-symbols-outlined text-[20px]">more_vert</span>
                           </button>
                           
                           <div className={`absolute right-0 w-36 bg-white dark:bg-[#1e1f20] rounded-xl shadow-xl border border-outline-variant dark:border-zinc-800 z-[60] overflow-hidden flex flex-col py-1 transition-all duration-200 ease-out ${index >= filteredFiles.length - 2 && filteredFiles.length > 3 ? 'bottom-full mb-2 origin-bottom-right' : 'top-full mt-2 origin-top-right'} ${activeMenuId === (file._id || file.id) ? 'opacity-100 scale-100 pointer-events-auto' : 'opacity-0 scale-95 pointer-events-none'}`}>
                             {!file.isFolder && (
-                              <button onClick={(e) => { e.stopPropagation(); handlePreview(file); setActiveMenuId(null); }} className="w-full text-left px-4 py-2.5 text-sm text-on-surface dark:text-[#e3e3e3] hover:bg-surface-container-high dark:hover:bg-zinc-800/70 transition-colors flex items-center gap-3">
+                              <button onClick={(e) => { e.stopPropagation(); handlePreview(file); setActiveMenuId(null); }} className="w-full text-left px-4 py-2.5 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-neutral-700 transition-colors flex items-center gap-3">
                                 <span className="material-symbols-outlined text-[18px]">visibility</span> Preview
                               </button>
                             )}
                             {!file.isFolder && file.diskName && (file.status === 'Safe' || file.status === 'unscanned_too_large') && (
-                              <button onClick={(e) => { e.stopPropagation(); handleDownload(file); setActiveMenuId(null); }} className="w-full text-left px-4 py-2.5 text-sm text-on-surface dark:text-[#e3e3e3] hover:bg-surface-container-high dark:hover:bg-zinc-800/70 transition-colors flex items-center gap-3">
+                              <button onClick={(e) => { e.stopPropagation(); handleDownload(file); setActiveMenuId(null); }} className="w-full text-left px-4 py-2.5 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-neutral-700 transition-colors flex items-center gap-3">
                                 <span className="material-symbols-outlined text-[18px]">download</span> Download
                               </button>
                             )}
-                            <button onClick={(e) => { e.stopPropagation(); setFileToDelete(file); setActiveMenuId(null); }} className="w-full text-left px-4 py-2.5 text-sm text-error dark:text-red-400 hover:bg-error/10 dark:hover:bg-red-950/30 transition-colors flex items-center gap-3">
+                            <button onClick={(e) => { e.stopPropagation(); setFileToDelete(file); setActiveMenuId(null); }} className="w-full text-left px-4 py-2.5 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors flex items-center gap-3">
                               <span className="material-symbols-outlined text-[18px]">delete</span> Delete
                             </button>
                           </div>
