@@ -148,7 +148,7 @@ if (!fs.existsSync(usersFilePath)) {
 
 async function getGlobalStorageUsed() {
     const result = await FileModel.aggregate([
-    { $match: { securityStatus: 'Safe' } },
+    { $match: { securityStatus: { $in: ['Safe', 'unscanned_too_large'] } } },
     { $group: { _id: null, totalSize: { $sum: "$size" } } }
   ]);
   return result.length > 0 ? result[0].totalSize : 0;
@@ -525,7 +525,7 @@ app.get('/api/storage-stats', verifyToken, async (req, res) => {
     const userId = req.user._id;
 
         const result = await FileModel.aggregate([
-      { $match: { userId: userId, securityStatus: 'Safe' } },
+      { $match: { userId: userId, securityStatus: { $in: ['Safe', 'unscanned_too_large'] } } },
       { $group: { _id: null, totalSize: { $sum: "$size" } } }
     ]);
     if (result.length > 0) {
@@ -809,7 +809,7 @@ app.post('/api/upload', verifyToken, async (req, res) => {
 app.get('/api/view/:filename(*)', verifyToken, async (req, res) => {
   const filename = req.params.filename;
   try {
-    const fileRecord = await FileModel.findOne({ userId: req.user._id, diskName: filename, securityStatus: 'Safe' });
+    const fileRecord = await FileModel.findOne({ userId: req.user._id, diskName: filename, securityStatus: { $in: ['Safe', 'unscanned_too_large'] } });
     if (!fileRecord || !fileRecord.s3Key) return res.status(404).json({ error: 'File not found' });
     
     const command = new GetObjectCommand({
@@ -831,7 +831,7 @@ app.get('/api/view/:filename(*)', verifyToken, async (req, res) => {
 app.get('/api/download/:filename(*)', verifyToken, async (req, res) => {
   const filename = req.params.filename;
   try {
-    const fileRecord = await FileModel.findOne({ userId: req.user._id, diskName: filename, securityStatus: 'Safe' });
+    const fileRecord = await FileModel.findOne({ userId: req.user._id, diskName: filename, securityStatus: { $in: ['Safe', 'unscanned_too_large'] } });
     if (!fileRecord || !fileRecord.s3Key) return res.status(404).json({ error: 'File not found' });
     
     const command = new GetObjectCommand({
@@ -959,7 +959,7 @@ app.get('/api/files', verifyToken, async (req, res) => {
 // Access File Endpoint (Presigned URL)
 app.get('/api/files/:id/access', verifyToken, async (req, res) => {
   try {
-    let query = { _id: req.params.id, securityStatus: 'Safe' };
+    let query = { _id: req.params.id, securityStatus: { $in: ['Safe', 'unscanned_too_large'] } };
     if (!req.user.isAdmin) {
       query.userId = req.user._id;
     }
