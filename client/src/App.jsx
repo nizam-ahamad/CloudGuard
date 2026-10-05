@@ -1331,8 +1331,8 @@ function App() {
             </div>
           )}
 
-          <div className="bg-white dark:bg-[#1e1f20] rounded-xl border border-outline-variant dark:border-zinc-800/50 shadow-sm overflow-hidden dark:text-zinc-300">
-            <div className="md:overflow-x-auto custom-scrollbar w-full">
+          <div className="bg-white dark:bg-[#1e1f20] rounded-xl border border-outline-variant dark:border-zinc-800/50 shadow-sm dark:text-zinc-300">
+            <div className="md:overflow-x-auto custom-scrollbar w-full pb-32">
               <table className="w-full text-left md:border-collapse block md:table md:min-w-[800px]">
                 <thead className="hidden md:table-header-group">
                   <tr className="border-b border-outline-variant dark:border-zinc-800/50 bg-surface-container-low dark:bg-[#1e1f20] text-on-surface-variant dark:text-zinc-300 font-label-md text-label-md uppercase tracking-wider">
