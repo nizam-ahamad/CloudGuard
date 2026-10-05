@@ -99,7 +99,7 @@ const User = mongoose.model('User', UserSchema);
 async function recalculateStorage(userId) {
     try {
     const result = await FileModel.aggregate([
-      { $match: { userId: userId, securityStatus: 'Safe' } },
+      { $match: { userId: userId, securityStatus: { $in: ['Safe', 'unscanned_too_large'] } } },
       { $group: { _id: null, totalSize: { $sum: "$size" } } }
     ]);
     const totalSize = result.length > 0 ? result[0].totalSize : 0;
@@ -602,7 +602,7 @@ app.post('/api/upload', verifyToken, async (req, res) => {
   // Check User Quota
   let currentStorageUsed = 0;
     const result = await FileModel.aggregate([
-    { $match: { userId: userId, securityStatus: 'Safe' } },
+    { $match: { userId: userId, securityStatus: { $in: ['Safe', 'unscanned_too_large'] } } },
     { $group: { _id: null, totalSize: { $sum: "$size" } } }
   ]);
   if (result.length > 0) {
@@ -899,7 +899,7 @@ app.get('/api/files', verifyToken, async (req, res) => {
 
         // Query MongoDB to ensure all files (including non-images) are returned
     // regardless of ephemeral disk state on Render.
-    const dbFiles = await FileModel.find({ userId: userId, securityStatus: 'Safe' });
+    const dbFiles = await FileModel.find({ userId: userId, securityStatus: { $in: ['Safe', 'unscanned_too_large'] } });
     
     const mappedFiles = [];
     const folders = new Set();

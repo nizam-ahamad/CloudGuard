@@ -1385,11 +1385,11 @@ function App() {
                       </td>
                     </tr>
                   ) : 
-                    filteredFiles.map(file => (
+                    filteredFiles.map((file, index) => (
                     <ErrorBoundary key={file?._id || file?.id || Math.random()}>
                     <tr 
                       onClick={() => file.isFolder ? setCurrentDirectory(file.diskName) : handlePreview(file)}
-                      className={`flex flex-wrap md:table-row items-center py-3 px-4 md:p-0 hover:bg-surface-bright dark:hover:bg-zinc-800/70 dark:text-zinc-300 transition-colors group md:h-14 ${file.isFolder || (file.diskName && file.status === 'Safe') ? 'cursor-pointer' : ''}`}
+                      className={`flex flex-wrap md:table-row items-center py-3 px-4 md:p-0 hover:bg-surface-bright dark:hover:bg-zinc-800/70 dark:text-zinc-300 transition-colors group md:h-14 ${file.isFolder || (file.diskName && (file.status === 'Safe' || file.status === 'unscanned_too_large')) ? 'cursor-pointer' : ''}`}
                     >
                       <td className="pr-3 md:pr-0 md:py-3 md:px-6 w-auto md:w-12 block md:table-cell md:text-center" onClick={(e) => e.stopPropagation()}>
                         {!file.isFolder && (
@@ -1430,6 +1430,11 @@ function App() {
                               <span className="material-symbols-outlined text-[14px]">check_circle</span>
                               <span className="font-label-md text-[11px]">Safe</span>
                             </div>
+                          ) : file.status === 'unscanned_too_large' ? (
+                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-surface-container-high text-on-surface-variant border border-outline-variant">
+                              <span className="material-symbols-outlined text-[14px] text-yellow-500">bolt</span>
+                              <span className="font-label-md text-[11px]">Skipped (Large)</span>
+                            </div>
                           ) : file.status === 'Malicious' || file.status === 'malware' ? (
                             <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-error/10 text-error border border-error/20">
                               <span className="material-symbols-outlined text-[14px]">warning</span>
@@ -1455,7 +1460,7 @@ function App() {
                               <span className="material-symbols-outlined text-[18px]">visibility</span>
                             </button>
                           )}
-                          {!file.isFolder && file.diskName && file.status === 'Safe' && (
+                          {!file.isFolder && file.diskName && (file.status === 'Safe' || file.status === 'unscanned_too_large') && (
                             <button 
                               onClick={(e) => { e.stopPropagation(); handleDownload(file); }}
                               className="p-1.5 text-on-surface-variant dark:text-[#c4c7c5] hover:text-secondary dark:hover:text-[#e3e3e3] rounded hover:bg-surface-container-high transition-colors"
@@ -1482,13 +1487,13 @@ function App() {
                             <span className="material-symbols-outlined text-[20px]">more_vert</span>
                           </button>
                           
-                          <div className={`absolute right-0 top-full mt-2 w-36 bg-white dark:bg-[#1e1f20] rounded-xl shadow-xl border border-outline-variant dark:border-zinc-800 z-[60] overflow-hidden flex flex-col py-1 transition-all duration-200 ease-out origin-top-right ${activeMenuId === (file._id || file.id) ? 'opacity-100 scale-100 pointer-events-auto' : 'opacity-0 scale-95 pointer-events-none'}`}>
+                          <div className={`absolute right-0 w-36 bg-white dark:bg-[#1e1f20] rounded-xl shadow-xl border border-outline-variant dark:border-zinc-800 z-[60] overflow-hidden flex flex-col py-1 transition-all duration-200 ease-out ${index >= filteredFiles.length - 2 && filteredFiles.length > 3 ? 'bottom-full mb-2 origin-bottom-right' : 'top-full mt-2 origin-top-right'} ${activeMenuId === (file._id || file.id) ? 'opacity-100 scale-100 pointer-events-auto' : 'opacity-0 scale-95 pointer-events-none'}`}>
                             {!file.isFolder && (
                               <button onClick={(e) => { e.stopPropagation(); handlePreview(file); setActiveMenuId(null); }} className="w-full text-left px-4 py-2.5 text-sm text-on-surface dark:text-[#e3e3e3] hover:bg-surface-container-high dark:hover:bg-zinc-800/70 transition-colors flex items-center gap-3">
                                 <span className="material-symbols-outlined text-[18px]">visibility</span> Preview
                               </button>
                             )}
-                            {!file.isFolder && file.diskName && file.status === 'Safe' && (
+                            {!file.isFolder && file.diskName && (file.status === 'Safe' || file.status === 'unscanned_too_large') && (
                               <button onClick={(e) => { e.stopPropagation(); handleDownload(file); setActiveMenuId(null); }} className="w-full text-left px-4 py-2.5 text-sm text-on-surface dark:text-[#e3e3e3] hover:bg-surface-container-high dark:hover:bg-zinc-800/70 transition-colors flex items-center gap-3">
                                 <span className="material-symbols-outlined text-[18px]">download</span> Download
                               </button>
