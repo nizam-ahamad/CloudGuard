@@ -418,8 +418,7 @@ function App() {
             if (timeElapsed >= 500) {
               const bytesLoadedSinceLast = progressEvent.loaded - prevUploadRef.current.loaded;
               const speedBps = (bytesLoadedSinceLast / timeElapsed) * 1000;
-              const speedMbps = (speedBps / (1024 * 1024)).toFixed(1);
-              prevUploadRef.current = { time: now, loaded: progressEvent.loaded, speed: speedMbps };
+              prevUploadRef.current = { time: now, loaded: progressEvent.loaded, speed: speedBps };
             }
 
             setUploadQueue(prev => prev.map(item => item.id === id ? { 
@@ -446,7 +445,7 @@ function App() {
           securityThreat = true;
         }
       } catch (err) {
-        if (axios.isCancel(err)) {
+        if (axios.isCancel(err) || err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED') {
           finalStatus = 'failed';
           errorMsg = 'Canceled';
           if (currentFileId) {
@@ -1200,32 +1199,36 @@ function App() {
             <div className="mb-stack-lg flex flex-col gap-4">
               {activeUpload && (
                 <div className="p-4 bg-white dark:bg-[#1e1f20] rounded-xl border border-outline-variant dark:border-zinc-800 shadow-sm">
-                  <div className="flex flex-wrap items-center justify-between gap-2 mb-2 font-label-md text-on-surface-variant">
-                    <span className="dark:text-[#e3e3e3] truncate max-w-[200px] sm:max-w-xs" title={activeUpload.name}>
-                      {activeUpload.status === 'analyzing' ? `Analyzing ${activeUpload.name}...` : `Uploading ${activeUpload.name}... ${activeUpload.progress}%`}
+                  <div className="flex items-center justify-between gap-2 mb-1.5">
+                    <span className="text-sm font-medium text-on-surface dark:text-[#e3e3e3] truncate">
+                      {activeUpload.status === 'analyzing' ? `Analyzing ${activeUpload.name}...` : `Uploading ${activeUpload.name}...`}
                     </span>
-                    <div className="flex items-center gap-4 shrink-0">
-                      <span className="dark:text-[#c4c7c5]">
-                        {activeUpload.status === 'analyzing' ? 'Scanning...' : `${((activeUpload.loadedBytes || 0) / (1024 * 1024)).toFixed(1)} MB / ${(activeUpload.size / (1024 * 1024)).toFixed(1)} MB • ${activeUpload.speed || 0} MB/s`}
-                      </span>
-                      <button 
-                        onClick={() => {
-                          if (abortControllerRef.current) abortControllerRef.current.abort();
-                          setUploadQueue(prev => prev.map(i => i.id === activeUpload.id ? { ...i, status: 'failed', error: 'Canceled' } : i));
-                        }}
-                        className="text-error dark:text-zinc-400 dark:hover:text-red-400 hover:bg-error/10 p-1 rounded-full transition-colors flex items-center justify-center"
-                        title="Cancel Upload"
-                      >
-                        <span className="material-symbols-outlined text-[20px]">close</span>
-                      </button>
-                    </div>
+                    <button 
+                      onClick={() => {
+                        addToast('info', 'Upload canceled');
+                        if (abortControllerRef.current) abortControllerRef.current.abort();
+                        setUploadQueue(prev => prev.map(i => i.id === activeUpload.id ? { ...i, status: 'failed', error: 'Canceled' } : i));
+                      }}
+                      className="text-error dark:text-zinc-400 dark:hover:text-red-400 hover:bg-error/10 p-1 rounded-full transition-colors flex items-center justify-center shrink-0"
+                      title="Cancel Upload"
+                    >
+                      <span className="material-symbols-outlined text-[20px]">close</span>
+                    </button>
                   </div>
-                  <div className="w-full bg-surface-container-high dark:bg-[#131314] rounded-full h-2.5">
+                  <div className="w-full bg-neutral-200 dark:bg-neutral-800 rounded-full h-1.5 overflow-hidden mb-2">
                     {activeUpload.status === 'uploading' ? (
-                      <div className="bg-gradient-to-r from-indigo-500 via-blue-500 to-cyan-400 relative overflow-hidden h-2.5 rounded-full transition-all duration-300" style={{ width: `${activeUpload.progress}%` }}></div>
+                      <div className="bg-gradient-to-r from-indigo-500 via-blue-500 to-cyan-400 relative h-full transition-all duration-300" style={{ width: `${activeUpload.progress}%` }}></div>
                     ) : (
-                      <div className="bg-secondary relative overflow-hidden h-2.5 rounded-full animate-pulse w-full"></div>
+                      <div className="bg-secondary relative h-full animate-pulse w-full"></div>
                     )}
+                  </div>
+                  <div className="flex items-center justify-between text-xs text-neutral-500 dark:text-neutral-400 font-mono">
+                    <span>
+                      {activeUpload.status === 'analyzing' ? 'Scanning...' : `${formatBytes(activeUpload.loadedBytes || 0)} / ${formatBytes(activeUpload.size)} (${activeUpload.progress}%)`}
+                    </span>
+                    <span className="text-right">
+                      {activeUpload.status === 'analyzing' ? '' : (activeUpload.speed ? `${formatBytes(activeUpload.speed)}/s` : '-- KB/s')}
+                    </span>
                   </div>
                 </div>
               )}
