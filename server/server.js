@@ -642,6 +642,82 @@ app.post('/api/upload', verifyToken, async (req, res) => {
         return res.status(404).json({ error: "File record not found or already processed" });
       }
 
+      // 1. Calculate file metadata
+      let relativePath = '';
+      if (req.body.relativePaths) {
+        relativePath = Array.isArray(req.body.relativePaths) ? req.body.relativePaths[i] : req.body.relativePaths;
+      }
+      let nestedRelativePath = targetFile.originalname;
+      if (relativePath) {
+        const relativeDir = path.dirname(relativePath);
+        if (relativeDir && relativeDir !== '.') {
+          nestedRelativePath = path.posix.join(relativeDir.split(path.sep).join('/'), targetFile.originalname);
+        }
+      }
+
+      let exactFileSize = targetFile.size;
+      if (!exactFileSize) {
+          try {
+              const headData = await s3.send(new HeadObjectCommand({
+                  Bucket: process.env.AWS_BUCKET_NAME,
+                  Key: targetFile.key || targetFile.s3Key
+              }));
+              exactFileSize = headData.ContentLength;
+          } catch (err) {
+              console.error("[S3 Size Check Error]:", err);
+              exactFileSize = 0;
+          }
+      }
+
+      // 2. Magic Byte Verification
+      let isMZ = false;
+      try {
+        const getObjectParams = {
+          Bucket: process.env.AWS_BUCKET_NAME,
+          Key: targetFile.key || targetFile.s3Key,
+          Range: 'bytes=0-1'
+        };
+        const magicBytesResponse = await s3.send(new GetObjectCommand(getObjectParams));
+        const chunks = [];
+        for await (const chunk of magicBytesResponse.Body) {
+          chunks.push(chunk);
+        }
+        const buffer = Buffer.concat(chunks);
+        if (buffer.length >= 2 && buffer[0] === 0x4D && buffer[1] === 0x5A) {
+          isMZ = true;
+        }
+      } catch (mbErr) {
+        console.error('[Magic Byte Check Error]:', mbErr.message);
+      }
+
+      const ext = path.extname(targetFile.originalname).toLowerCase();
+      const mediaExtensions = ['.mp4', '.mkv', '.avi', '.mov', '.webm', '.ogg'];
+      const isMediaExt = mediaExtensions.includes(ext);
+
+      if (isMZ && isMediaExt) {
+        console.error('[Spoofing Detected] File has media extension but MZ magic bytes:', targetFile.originalname);
+        if (targetFile.key) {
+          try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key })); } catch (e) {}
+        }
+        fileRecord.securityStatus = 'MALICIOUS';
+        await fileRecord.save();
+        return res.status(406).json({ error: "File blocked: Malicious content detected" });
+      }
+
+      // 3. The 512MB Hard Cap & Safe Media Bypass
+      if (exactFileSize > 512 * 1024 * 1024 && isMediaExt && !isMZ) {
+        console.log('[Bypass] Skipping ML scan for massive media file:', targetFile.originalname);
+        fileRecord.diskName = nestedRelativePath;
+        fileRecord.relativePath = relativePath;
+        fileRecord.size = exactFileSize;
+        fileRecord.status = 'safe';
+        fileRecord.securityStatus = 'unscanned_too_large';
+        await fileRecord.save();
+        uploadedFiles.push(fileRecord);
+        continue;
+      }
+
+      // 4. Continue to AI Scanner if no bypass
       fileRecord.securityStatus = 'SCANNING';
       await fileRecord.save();
 
@@ -676,32 +752,6 @@ app.post('/api/upload', verifyToken, async (req, res) => {
 
           if (scanResult !== 'safe') {
              throw new Error(`AI Service returned unexpected status: ${scanResult}`);
-          }
-
-          let relativePath = '';
-          if (req.body.relativePaths) {
-            relativePath = Array.isArray(req.body.relativePaths) ? req.body.relativePaths[i] : req.body.relativePaths;
-          }
-          let nestedRelativePath = targetFile.originalname;
-          if (relativePath) {
-            const relativeDir = path.dirname(relativePath);
-            if (relativeDir && relativeDir !== '.') {
-              nestedRelativePath = path.posix.join(relativeDir.split(path.sep).join('/'), targetFile.originalname);
-            }
-          }
-
-          let exactFileSize = targetFile.size;
-          if (!exactFileSize) {
-              try {
-                  const headData = await s3.send(new HeadObjectCommand({
-                      Bucket: process.env.AWS_BUCKET_NAME,
-                      Key: targetFile.key || targetFile.s3Key
-                  }));
-                  exactFileSize = headData.ContentLength;
-              } catch (err) {
-                  console.error("[S3 Size Check Error]:", err);
-                  exactFileSize = 0;
-              }
           }
           
           fileRecord.diskName = nestedRelativePath;
