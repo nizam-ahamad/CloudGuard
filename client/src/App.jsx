@@ -439,13 +439,18 @@ function App() {
           relativePaths: file.webkitRelativePath || file.customPath || ''
         }, {
           signal: abortControllerRef.current.signal,
-          timeout: 300000
+          timeout: 0
         });
 
-        const { blockedFiles, error } = uploadRes.data;
+        const { blockedFiles, error, uploadedFiles } = uploadRes.data;
         if ((blockedFiles && blockedFiles.length > 0) || error === 'File blocked: Malicious content detected') {
           finalStatus = 'threat_detected';
           securityThreat = true;
+        } else if (uploadedFiles && uploadedFiles.length > 0) {
+          setFiles(prevFiles => {
+            const newFiles = uploadedFiles.filter(uf => !prevFiles.some(pf => pf._id === uf._id));
+            return [...newFiles, ...prevFiles];
+          });
         }
       } catch (err) {
         if (axios.isCancel(err) || err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED') {
