@@ -11,6 +11,19 @@ import AuthPage from './pages/AuthPage';
 
 import { API_BASE_URL } from "./config";
 
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError(error) { return { hasError: true }; }
+  componentDidCatch(error, errorInfo) { console.error("ErrorBoundary caught an error", error, errorInfo); }
+  render() {
+    if (this.state.hasError) return <tr className="block md:table-row"><td colSpan="6" className="py-4 text-center text-red-500">Error rendering file item.</td></tr>;
+    return this.props.children; 
+  }
+}
+
 function App() {
   const [isLoading, setIsLoading] = useState(true);
 
@@ -446,10 +459,11 @@ function App() {
         if ((blockedFiles && blockedFiles.length > 0) || error === 'File blocked: Malicious content detected') {
           finalStatus = 'threat_detected';
           securityThreat = true;
-        } else if (uploadedFiles && uploadedFiles.length > 0) {
+        } else if (Array.isArray(uploadedFiles) && uploadedFiles.length > 0) {
           setFiles(prevFiles => {
-            const newFiles = uploadedFiles.filter(uf => !prevFiles.some(pf => pf._id === uf._id));
-            return [...newFiles, ...prevFiles];
+            const safePrevFiles = Array.isArray(prevFiles) ? prevFiles : [];
+            const newFiles = uploadedFiles.filter(uf => uf && !safePrevFiles.some(pf => pf?._id === uf?._id));
+            return [...newFiles, ...safePrevFiles];
           });
         }
       } catch (err) {
@@ -595,6 +609,7 @@ function App() {
   };
 
   const getIconForType = (type) => {
+    if (!type || typeof type !== 'string') return 'insert_drive_file';
     switch (type.toLowerCase()) {
       case 'pdf': return 'picture_as_pdf';
       case 'zip': return 'folder_zip';
@@ -1371,8 +1386,8 @@ function App() {
                     </tr>
                   ) : 
                     filteredFiles.map(file => (
+                    <ErrorBoundary key={file?._id || file?.id || Math.random()}>
                     <tr 
-                      key={file._id || file.id} 
                       onClick={() => file.isFolder ? setCurrentDirectory(file.diskName) : handlePreview(file)}
                       className={`flex flex-wrap md:table-row items-center py-3 px-4 md:p-0 hover:bg-surface-bright dark:hover:bg-zinc-800/70 dark:text-zinc-300 transition-colors group md:h-14 ${file.isFolder || (file.diskName && file.status === 'Safe') ? 'cursor-pointer' : ''}`}
                     >
@@ -1485,6 +1500,7 @@ function App() {
                         </div>
                       </td>
                     </tr>
+                    </ErrorBoundary>
                   ))}
                 </tbody>
               </table>
@@ -1497,7 +1513,7 @@ function App() {
 
       {/* Preview Modal */}
       {previewFile && (
-        ['mp4', 'webm', 'ogg', 'mov', 'mkv'].includes(previewFile.type.toLowerCase()) ? (
+        ['mp4', 'webm', 'ogg', 'mov', 'mkv'].includes((previewFile.type || '').toLowerCase()) ? (
           <div className="fixed inset-0 z-50 flex flex-col bg-black/95 backdrop-blur-md">
             <div className="flex items-center justify-between p-4 bg-transparent text-white w-full">
               <div className="flex items-center gap-3">
