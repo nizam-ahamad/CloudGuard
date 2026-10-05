@@ -437,6 +437,9 @@ function App() {
           originalName: name,
           fileSize: size,
           relativePaths: file.webkitRelativePath || file.customPath || ''
+        }, {
+          signal: abortControllerRef.current.signal,
+          timeout: 300000
         });
 
         const { blockedFiles, error } = uploadRes.data;
