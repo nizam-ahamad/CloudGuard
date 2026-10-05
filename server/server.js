@@ -691,11 +691,11 @@ app.post('/api/upload', verifyToken, async (req, res) => {
       }
 
       const ext = path.extname(targetFile.originalname).toLowerCase();
-      const mediaExtensions = ['.mp4', '.mkv', '.avi', '.mov', '.webm', '.ogg'];
-      const isMediaExt = mediaExtensions.includes(ext);
+      const execExtensions = ['.exe', '.dll', '.sys', '.scr'];
+      const isExecExt = execExtensions.includes(ext);
 
-      if (isMZ && isMediaExt) {
-        console.error('[Spoofing Detected] File has media extension but MZ magic bytes:', targetFile.originalname);
+      if (isMZ && !isExecExt) {
+        console.error('[Spoofing Detected] File has MZ magic bytes but non-executable extension:', targetFile.originalname);
         if (targetFile.key) {
           try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key })); } catch (e) {}
         }
@@ -704,9 +704,9 @@ app.post('/api/upload', verifyToken, async (req, res) => {
         return res.status(406).json({ error: "File blocked: Malicious content detected" });
       }
 
-      // 3. The 512MB Hard Cap & Safe Media Bypass
-      if (exactFileSize > 512 * 1024 * 1024 && isMediaExt && !isMZ) {
-        console.log('[Bypass] Skipping ML scan for massive media file:', targetFile.originalname);
+      // 3. The 512MB Hard Cap & Safe Bypass
+      if (exactFileSize > 512 * 1024 * 1024 && !isMZ) {
+        console.log('[Bypass] Skipping ML scan for massive non-executable file:', targetFile.originalname);
         fileRecord.diskName = nestedRelativePath;
         fileRecord.relativePath = relativePath;
         fileRecord.size = exactFileSize;
