@@ -60,7 +60,7 @@ export default function LandingPage() {
       {/* Top Navigation Bar */}
       <nav className="w-full flex items-center justify-between px-8 py-6 border-b border-[#222] bg-black/50 backdrop-blur-md sticky top-0 z-50">
         <div className="flex items-center gap-3">
-          <CloudGuardLogo className="h-10 w-auto flex-shrink-0 text-[#e3e3e3] fill-current" />
+          <CloudGuardLogo className="h-10 w-auto flex-shrink-0 text-[#e3e3e3] fill-current invert dark:invert" />
           <span className="text-2xl font-semibold tracking-tight text-[#e3e3e3]">CloudGuard</span>
         </div>
         <div className="flex items-center gap-6">

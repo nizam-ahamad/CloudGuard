@@ -203,7 +203,7 @@ export default function AuthPage() {
       
       {/* Brand Header */}
       <Link to="/" className="mb-8 inline-flex items-center justify-center gap-2 transition-opacity hover:opacity-80">
-        <CloudGuardLogo className="h-12 w-auto flex-shrink-0 text-[#e3e3e3] fill-current" />
+        <CloudGuardLogo className="h-12 w-auto flex-shrink-0 text-[#e3e3e3] fill-current invert dark:invert" />
         <span className="text-2xl font-bold tracking-tight">CloudGuard</span>
       </Link>
 
