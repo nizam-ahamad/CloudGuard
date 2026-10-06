@@ -41,9 +41,20 @@ const s3 = new S3Client({
   }
 });
 
+// Folder Metadata Schema
+const FolderSchema = new mongoose.Schema({
+  name: { type: String, required: true, trim: true },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  parentId: { type: mongoose.Schema.Types.ObjectId, ref: 'Folder', default: null },
+  createdAt: { type: Date, default: Date.now }
+});
+FolderSchema.index({ userId: 1, parentId: 1 });
+const FolderModel = mongoose.model('Folder', FolderSchema);
+
 // File Metadata Schema
 const FileSchema = new mongoose.Schema({
   userId: { type: String, required: true },
+  folderId: { type: mongoose.Schema.Types.ObjectId, ref: 'Folder', default: null },
   name: { type: String, required: true },
   originalName: { type: String },
   s3Key: { type: String, required: true },
@@ -546,7 +557,7 @@ app.get('/api/storage-stats', verifyToken, async (req, res) => {
 // Presign Endpoint
 app.post('/api/presign', verifyToken, async (req, res) => {
   try {
-    const { filename, contentType } = req.body;
+    const { filename, contentType, folderId } = req.body;
     if (!filename) return res.status(400).json({ error: 'Filename is required' });
 
     const userId = req.user?._id || req.user?.id || req.userId || 'anonymous';
@@ -562,6 +573,7 @@ app.post('/api/presign', verifyToken, async (req, res) => {
     
     const fileData = {
       userId: userId,
+      folderId: folderId || null,
       name: filename,
       originalName: filename,
       s3Key: fileKey,
@@ -581,7 +593,7 @@ app.post('/api/presign', verifyToken, async (req, res) => {
 
 // Upload Endpoint
 app.post('/api/upload', verifyToken, async (req, res) => {
-  const { fileKey, originalName, fileSize } = req.body;
+  const { fileKey, originalName, fileSize, folderId } = req.body;
   if (!fileKey || !originalName) return res.status(400).json({ error: "No file data provided" });
 
   const filesToProcess = [{ key: fileKey, originalname: originalName, size: fileSize || 0 }];
@@ -640,6 +652,10 @@ app.post('/api/upload', verifyToken, async (req, res) => {
           }
         }
         return res.status(404).json({ error: "File record not found or already processed" });
+      }
+      
+      if (folderId !== undefined) {
+        fileRecord.folderId = folderId || null;
       }
 
       // 1. Calculate file metadata
@@ -889,70 +905,68 @@ app.get('/api/files/sync', verifyToken, async (req, res) => {
   }
 });
 
+// --- NEW FOLDER ROUTES ---
+app.post('/api/folders', verifyToken, async (req, res) => {
+  try {
+    const { name, parentId } = req.body;
+    if (!name || name.trim() === '') return res.status(400).json({ error: 'Folder name is required' });
+    
+    const newFolder = new FolderModel({
+      name: name.trim(),
+      userId: req.user._id,
+      parentId: parentId || null
+    });
+    await newFolder.save();
+    return res.status(201).json(newFolder);
+  } catch (err) {
+    console.error('Error creating folder:', err);
+    return res.status(500).json({ error: 'Failed to create folder' });
+  }
+});
+
+app.get('/api/folders', verifyToken, async (req, res) => {
+  try {
+    const parentId = req.query.parentId || null;
+    const folders = await FolderModel.find({ userId: req.user._id, parentId: parentId }).sort({ createdAt: -1 });
+    return res.json(folders);
+  } catch (err) {
+    console.error('Error fetching folders:', err);
+    return res.status(500).json({ error: 'Failed to fetch folders' });
+  }
+});
+
 app.get('/api/files', verifyToken, async (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
   try {
-    const queryPath = req.query.path || '';
+    const folderId = req.query.folderId || null;
     const userId = req.user._id;
 
-        // Query MongoDB to ensure all files (including non-images) are returned
-    // regardless of ephemeral disk state on Render.
-    const dbFiles = await FileModel.find({ userId: userId, securityStatus: { $in: ['Safe', 'unscanned_too_large'] } });
+    const dbFiles = await FileModel.find({ 
+      userId: userId, 
+      folderId: folderId,
+      securityStatus: { $in: ['Safe', 'unscanned_too_large'] } 
+    });
     
-    const mappedFiles = [];
-    const folders = new Set();
-
-    dbFiles.forEach(file => {
-
-      const relativeToUser = file.diskName || file.name;
-      const qp = queryPath ? (queryPath.endsWith('/') ? queryPath : queryPath + '/') : '';
-      
-      if (relativeToUser.startsWith(qp)) {
-         const remainder = relativeToUser.substring(qp.length);
-         if (remainder.includes('/')) {
-           const folderName = remainder.split('/')[0];
-           folders.add(folderName);
-         } else {
-           mappedFiles.push({
-             id: relativeToUser,
-             _id: file._id.toString(),
-             name: file.originalName || file.name,
-             diskName: relativeToUser,
-             isFolder: false,
-             date: new Date(file.uploadedAt || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-             mtimeMs: new Date(file.uploadedAt || Date.now()).getTime(),
-             size: file.size,
-             status: file.securityStatus || 'Safe',
-             type: (file.originalName || file.name).split('.').pop()
-           });
-         }
-      }
-    });
-
-    folders.forEach(folder => {
-      mappedFiles.push({
-        id: queryPath ? `${queryPath}/${folder}` : folder,
-        name: folder,
-        diskName: queryPath ? `${queryPath}/${folder}` : folder,
-        isFolder: true,
-        date: '--',
-        mtimeMs: 0,
-        size: '--',
-        status: 'Safe',
-        type: 'folder'
-      });
-    });
+    const mappedFiles = dbFiles.map(file => ({
+      id: file.diskName || file.name,
+      _id: file._id.toString(),
+      name: file.originalName || file.name,
+      diskName: file.diskName || file.name,
+      isFolder: false,
+      date: new Date(file.uploadedAt || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+      mtimeMs: new Date(file.uploadedAt || Date.now()).getTime(),
+      size: file.size,
+      status: file.securityStatus || 'Safe',
+      type: (file.originalName || file.name).split('.').pop()
+    }));
 
     mappedFiles.sort((a, b) => b.mtimeMs - a.mtimeMs);
     return res.json(mappedFiles);
-  
-    
-    return res.json([]);
   } catch (error) {
-    console.error('Error listing files:', error.message);
-    return res.status(500).json({ error: 'Internal server error' });
+    console.error('Error fetching files:', error);
+    res.status(500).json({ error: 'Failed to fetch files' });
   }
 });
 
