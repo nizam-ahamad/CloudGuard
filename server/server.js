@@ -1,3 +1,4 @@
+require('node:dns/promises').setServers(['1.1.1.1', '8.8.8.8']);
 require('dotenv').config();
 
 const requiredEnv = ['JWT_SECRET', 'GAS_SECRET', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_REGION', 'AWS_BUCKET_NAME', 'MONGO_URI'];
@@ -27,7 +28,7 @@ const JWT_SECRET = process.env.JWT_SECRET;
 // Configure CORS for Vite frontend
 app.use(cors({
   origin: ['http://localhost:5173', 'https://cloud-guard-self.vercel.app', 'https://cloudguard-app.duckdns.org'],
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
   credentials: true
 }));
 
@@ -71,9 +72,10 @@ const FileModel = mongoose.model('File', FileSchema);
 // Connect to MongoDB
 let isDbConnected = false;
 const mongoURI = process.env.MONGO_URI || 'mongodb://localhost:27017/cloudguard';
-mongoose.connect(process.env.MONGO_URI, {
-  serverSelectionTimeoutMS: process.env.NODE_ENV === 'production' ? 5000 : 100,
-  connectTimeoutMS: process.env.NODE_ENV === 'production' ? 5000 : 100
+console.log("[DB] MONGO_URI loaded:", !!process.env.MONGO_URI);
+mongoose.connect(mongoURI, {
+  serverSelectionTimeoutMS: 10000,
+  connectTimeoutMS: 10000
 })
   .then(async () => {
     console.log('Connected to MongoDB');
@@ -88,7 +90,7 @@ mongoose.connect(process.env.MONGO_URI, {
     }
   })
   .catch(err => {
-    console.error('MongoDB connection warning: Database is offline. Files will still be processed and saved locally.', err.message);
+    console.error("[DB Error]", err);
   });
 
 // User Schema
@@ -926,12 +928,131 @@ app.post('/api/folders', verifyToken, async (req, res) => {
 
 app.get('/api/folders', verifyToken, async (req, res) => {
   try {
-    const parentId = req.query.parentId || null;
-    const folders = await FolderModel.find({ userId: req.user._id, parentId: parentId }).sort({ createdAt: -1 });
+    let query = { userId: req.user._id };
+    if (req.query.all !== 'true') {
+      query.parentId = req.query.parentId || null;
+    }
+    const folders = await FolderModel.find(query).sort({ createdAt: -1 });
     return res.json(folders);
   } catch (err) {
     console.error('Error fetching folders:', err);
     return res.status(500).json({ error: 'Failed to fetch folders' });
+  }
+});
+
+app.get('/api/folders/:id', verifyToken, async (req, res) => {
+  try {
+    const folderId = req.params.id;
+    const folder = await FolderModel.findOne({ _id: folderId, userId: req.user._id });
+    if (!folder) return res.status(404).json({ error: 'Folder not found' });
+    return res.json(folder);
+  } catch (err) {
+    console.error('Error fetching single folder:', err);
+    return res.status(500).json({ error: 'Failed to fetch folder' });
+  }
+});
+
+app.patch('/api/folders/:id/rename', verifyToken, async (req, res) => {
+  try {
+    const { newName } = req.body;
+    if (!newName || newName.trim() === '') {
+      return res.status(400).json({ error: 'Folder name is required' });
+    }
+
+    const folderId = req.params.id;
+    const folder = await FolderModel.findOne({ _id: folderId, userId: req.user._id });
+    if (!folder) return res.status(404).json({ error: 'Folder not found' });
+
+    folder.name = newName.trim();
+    await folder.save();
+
+    return res.json(folder);
+  } catch (err) {
+    console.error('Error renaming folder:', err);
+    return res.status(500).json({ error: 'Failed to rename folder' });
+  }
+});
+
+app.get('/api/folders/:id/stats', verifyToken, async (req, res) => {
+  try {
+    const folderId = req.params.id;
+    const folder = await FolderModel.findOne({ _id: folderId, userId: req.user._id });
+    if (!folder) return res.status(404).json({ error: 'Folder not found' });
+
+    const targetFolderId = new mongoose.Types.ObjectId(folderId);
+    // Removed ObjectId cast for targetUserId since FileSchema defines userId as a String
+    const targetUserId = req.user._id;
+
+    const stats = await FileModel.aggregate([
+      { 
+        $match: { 
+          folderId: targetFolderId,
+          userId: targetUserId
+        } 
+      },
+      {
+        $group: {
+          _id: null,
+          fileCount: { $sum: 1 },
+          totalSizeBytes: { $sum: '$size' }
+        }
+      }
+    ]);
+
+    if (stats.length > 0) {
+      return res.json({ 
+        fileCount: stats[0].fileCount, 
+        totalSizeBytes: stats[0].totalSizeBytes 
+      });
+    } else {
+      return res.json({ fileCount: 0, totalSizeBytes: 0 });
+    }
+  } catch (err) {
+    console.error('Error fetching folder stats:', err);
+    return res.status(500).json({ error: 'Failed to fetch folder stats' });
+  }
+});
+
+app.delete('/api/folders/:id', verifyToken, async (req, res) => {
+  try {
+    const folderId = req.params.id;
+    const folder = await FolderModel.findOne({ _id: folderId, userId: req.user._id });
+    if (!folder) return res.status(404).json({ error: 'Folder not found' });
+
+    // Find all files in the folder
+    const files = await FileModel.find({ folderId: folderId, userId: req.user._id });
+    
+    // Batch delete from S3
+    const objectsToDelete = files
+      .map(file => {
+        const key = file.s3Key || (file.location ? new URL(file.location).pathname.slice(1) : null);
+        return key ? { Key: key } : null;
+      })
+      .filter(Boolean);
+
+    if (objectsToDelete.length > 0) {
+      // Chunking in batches of 1000 to adhere to S3 limits
+      for (let i = 0; i < objectsToDelete.length; i += 1000) {
+        const batch = objectsToDelete.slice(i, i + 1000);
+        await s3.send(new DeleteObjectsCommand({
+          Bucket: process.env.AWS_BUCKET_NAME,
+          Delete: { Objects: batch }
+        }));
+      }
+    }
+
+    // Delete all files in the DB
+    await FileModel.deleteMany({ folderId: folderId, userId: req.user._id });
+    
+    // Delete the folder itself
+    await FolderModel.deleteOne({ _id: folderId, userId: req.user._id });
+
+    const exactStorageUsed = await recalculateStorage(req.user._id);
+
+    return res.json({ message: 'Folder and all its contents deleted successfully', storageUsed: exactStorageUsed });
+  } catch (err) {
+    console.error('Error deleting folder:', err);
+    return res.status(500).json({ error: 'Failed to delete folder' });
   }
 });
 
@@ -940,14 +1061,31 @@ app.get('/api/files', verifyToken, async (req, res) => {
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
   try {
+    const isRecent = req.query.recent === 'true';
+    const searchQuery = req.query.search || '';
     const folderId = req.query.folderId || null;
     const userId = req.user._id;
 
-    const dbFiles = await FileModel.find({ 
-      userId: userId, 
-      folderId: folderId,
-      securityStatus: { $in: ['Safe', 'unscanned_too_large'] } 
-    });
+    let query = {
+      userId: userId,
+      securityStatus: { $in: ['Safe', 'unscanned_too_large'] }
+    };
+    
+    if (searchQuery) {
+      query.$or = [
+        { name: { $regex: searchQuery, $options: 'i' } },
+        { originalName: { $regex: searchQuery, $options: 'i' } }
+      ];
+    } else if (!isRecent) {
+      query.folderId = folderId;
+    }
+
+    let dbFilesQuery = FileModel.find(query);
+    if (isRecent) {
+      dbFilesQuery = dbFilesQuery.sort({ uploadedAt: -1 }).limit(50);
+    }
+    
+    const dbFiles = await dbFilesQuery;
     
     const mappedFiles = dbFiles.map(file => ({
       id: file.diskName || file.name,
@@ -967,6 +1105,80 @@ app.get('/api/files', verifyToken, async (req, res) => {
   } catch (error) {
     console.error('Error fetching files:', error);
     res.status(500).json({ error: 'Failed to fetch files' });
+  }
+});
+
+// Rename File Endpoint
+app.patch('/api/files/:id/rename', verifyToken, async (req, res) => {
+  try {
+    const { newName } = req.body;
+    if (!newName || newName.trim() === '') {
+      return res.status(400).json({ error: 'File name is required' });
+    }
+    const file = await FileModel.findOne({ _id: req.params.id, userId: req.user._id });
+    if (!file) return res.status(404).json({ error: 'File not found' });
+    
+    file.originalName = newName.trim();
+    file.name = newName.trim(); // updating both just in case
+    await file.save();
+    
+    res.json({ message: 'File renamed successfully', file });
+  } catch (err) {
+    console.error('Error renaming file:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Move File Endpoint
+app.patch('/api/files/:id/move', verifyToken, async (req, res) => {
+  try {
+    let { targetFolderId } = req.body;
+    
+    // Explicitly handle "null" string, empty string, or missing to prevent CastError
+    if (!targetFolderId || targetFolderId === "null" || targetFolderId === "") {
+      targetFolderId = null;
+    }
+
+    const file = await FileModel.findOne({ _id: req.params.id, userId: req.user._id });
+    
+    if (!file) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+    
+    file.folderId = targetFolderId;
+    await file.save();
+    
+    res.json({ message: 'File moved successfully', file });
+  } catch (err) {
+    console.error('Error moving file:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Bulk Move Endpoint
+app.patch('/api/files/bulk-move', verifyToken, async (req, res) => {
+  try {
+    let { fileIds, targetFolderId } = req.body;
+    
+    if (!fileIds || !Array.isArray(fileIds) || fileIds.length === 0) {
+      return res.status(400).json({ error: 'No file IDs provided' });
+    }
+
+    if (!targetFolderId || targetFolderId === "null" || targetFolderId === "") {
+      targetFolderId = null;
+    }
+
+    // Convert strings to ObjectIds safely if needed or let Mongoose handle it. 
+    // We will just pass fileIds to $in if they are valid.
+    await FileModel.updateMany(
+      { _id: { $in: fileIds }, userId: req.user._id },
+      { $set: { folderId: targetFolderId } }
+    );
+    
+    res.json({ message: 'Files moved successfully' });
+  } catch (err) {
+    console.error('Error in bulk move:', err);
+    res.status(500).json({ error: err.message });
   }
 });
 
