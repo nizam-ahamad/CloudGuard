@@ -1431,9 +1431,9 @@ function App() {
                               <span className="font-label-md text-[11px]">Safe</span>
                             </div>
                           ) : file.status === 'unscanned_too_large' ? (
-                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-surface-container-high text-on-surface-variant border border-outline-variant">
-                              <span className="material-symbols-outlined text-[14px] text-yellow-500">bolt</span>
-                              <span className="font-label-md text-[11px]">Skipped (Large)</span>
+                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-neutral-200 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300 border border-neutral-300 dark:border-neutral-700">
+                              <span className="material-symbols-outlined text-[14px]">info</span>
+                              <span className="font-label-md text-[11px]">Unscanned (Too Large)</span>
                             </div>
                           ) : file.status === 'Malicious' || file.status === 'malware' ? (
                             <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-error/10 text-error border border-error/20">
