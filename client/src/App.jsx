@@ -426,7 +426,17 @@ function App() {
     if (urlFolderId) {
       axios.get(`${API_BASE_URL}/api/folders/${urlFolderId}`, { headers: { Authorization: `Bearer ${token}` } })
         .then(res => {
-          setBreadcrumbs([{ id: null, name: 'Home' }, { id: res.data._id, name: res.data.name }]);
+          const folderData = res.data;
+          setBreadcrumbs(prev => {
+            const existingIndex = prev.findIndex(b => b.id === folderData._id);
+            if (existingIndex >= 0) {
+              return prev.slice(0, existingIndex + 1);
+            }
+            if (prev.length > 0 && prev[prev.length - 1].id === folderData.parentId) {
+              return [...prev, { id: folderData._id, name: folderData.name }];
+            }
+            return [{ id: null, name: 'Home' }, { id: folderData._id, name: folderData.name }];
+          });
         })
         .catch(err => console.error('Failed to fetch breadcrumb folder', err));
     } else {
@@ -437,18 +447,12 @@ function App() {
   const handleFolderClick = (folder) => {
     setCurrentFolderId(folder._id);
     setSearchParams({ folder: folder._id });
-    setBreadcrumbs(prev => [...prev, { id: folder._id, name: folder.name }]);
   };
 
-  const handleBreadcrumbClick = (index) => {
-    const crumb = breadcrumbs[index];
-    setCurrentFolderId(crumb.id);
-    if (crumb.id) {
-      setSearchParams({ folder: crumb.id });
-    } else {
-      setSearchParams({});
-    }
-    setBreadcrumbs(breadcrumbs.slice(0, index + 1));
+  const handleBreadcrumbClick = (folderId, index) => {
+    setCurrentFolderId(folderId);
+    setSearchParams(folderId ? { folder: folderId } : {});
+    setBreadcrumbs(prev => prev.slice(0, index + 1));
   };
   const handlePasswordUpdate = async (e) => {
     e.preventDefault();
@@ -1549,7 +1553,7 @@ function App() {
                     <React.Fragment key={crumb.id || 'home'}>
                       <span 
                         className={`cursor-pointer hover:underline ${index === breadcrumbs.length - 1 ? 'font-bold' : 'text-neutral-500'}`}
-                        onClick={() => handleBreadcrumbClick(index)}
+                        onClick={() => handleBreadcrumbClick(crumb.id, index)}
                       >
                         {crumb.name}
                       </span>
@@ -1560,29 +1564,33 @@ function App() {
               </h3>
             </div>
             <div className="flex items-center gap-4">
-              <div className="flex items-center bg-neutral-100 dark:bg-neutral-800 rounded-md p-1">
-                <button 
-                  onClick={() => handleSetFolderView('grid')}
-                  className={`p-1 rounded transition-colors ${folderView === 'grid' ? 'bg-white dark:bg-[#1e1f20] text-primary shadow-sm' : 'text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300'}`}
-                  title="Grid View"
-                >
-                  <LayoutGrid size={16} />
-                </button>
-                <button 
-                  onClick={() => handleSetFolderView('list')}
-                  className={`p-1 rounded transition-colors ${folderView === 'list' ? 'bg-white dark:bg-[#1e1f20] text-primary shadow-sm' : 'text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300'}`}
-                  title="List View"
-                >
-                  <List size={16} />
-                </button>
-              </div>
-              <button 
-                onClick={toggleSort}
-                className="px-3 py-1.5 rounded-md text-sm font-medium transition-colors bg-neutral-200 hover:bg-neutral-300 dark:bg-neutral-800 dark:hover:bg-neutral-700 flex items-center gap-1 text-neutral-800 dark:text-neutral-100"
-              >
-                <span className="material-symbols-outlined text-sm">sort</span>
-                Sort: {sortOrder === 'newest' ? 'Newest First' : 'Oldest First'}
-              </button>
+              {viewMode !== 'recent' && (
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center bg-neutral-100 dark:bg-neutral-800 rounded-md p-1">
+                    <button 
+                      onClick={() => handleSetFolderView('grid')}
+                      className={`p-1 rounded transition-colors ${folderView === 'grid' ? 'bg-white dark:bg-[#1e1f20] text-primary shadow-sm' : 'text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300'}`}
+                      title="Grid View"
+                    >
+                      <LayoutGrid size={16} />
+                    </button>
+                    <button 
+                      onClick={() => handleSetFolderView('list')}
+                      className={`p-1 rounded transition-colors ${folderView === 'list' ? 'bg-white dark:bg-[#1e1f20] text-primary shadow-sm' : 'text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300'}`}
+                      title="List View"
+                    >
+                      <List size={16} />
+                    </button>
+                  </div>
+                  <button 
+                    onClick={toggleSort}
+                    className="px-3 py-1.5 rounded-md text-sm font-medium transition-colors bg-neutral-200 hover:bg-neutral-300 dark:bg-neutral-800 dark:hover:bg-neutral-700 flex items-center gap-1 text-neutral-800 dark:text-neutral-100"
+                  >
+                    <span className="material-symbols-outlined text-sm">sort</span>
+                    Sort: {sortOrder === 'newest' ? 'Newest First' : 'Oldest First'}
+                  </button>
+                </div>
+              )}
               {selectedFiles.length > 0 && (
                 <div className="flex items-center gap-4">
                   <button 
@@ -1837,13 +1845,13 @@ function App() {
             <div className="flex items-center justify-end gap-3">
               <button 
                 onClick={() => setFolderToDelete(null)}
-                className="px-4 py-2 text-sm font-medium text-neutral-700 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800 rounded-xl transition-colors"
+                className="px-4 py-2 text-sm font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-800 rounded-xl transition-colors duration-200"
               >
                 Cancel
               </button>
               <button 
                 onClick={confirmFolderDelete}
-                className="px-4 py-2 text-sm font-medium bg-error hover:bg-[#b91c1c] text-white rounded-xl transition-colors"
+                className="px-4 py-2 text-sm font-medium bg-error hover:bg-red-700 text-white rounded-xl transition-colors duration-200"
               >
                 Delete
               </button>
@@ -1893,7 +1901,7 @@ function App() {
             <div className="flex items-center justify-end">
               <button 
                 onClick={() => { setShowFolderDetailsModal(false); setFolderToView(null); }}
-                className="px-4 py-2 text-sm font-medium bg-primary text-on-primary hover:bg-primary/90 rounded-xl transition-colors"
+                className="px-4 py-2 text-sm font-medium bg-primary text-on-primary hover:bg-primary/90 rounded-xl transition-colors duration-200"
               >
                 Close
               </button>
@@ -1922,14 +1930,14 @@ function App() {
                 <button 
                   type="button" 
                   onClick={() => { setShowRenameFolderModal(false); setFolderToRename(null); setNewRenameFolderName(''); }}
-                  className="px-4 py-2 text-sm font-medium text-neutral-700 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800 rounded-xl transition-colors"
+                  className="px-4 py-2 text-sm font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-800 rounded-xl transition-colors duration-200"
                 >
                   Cancel
                 </button>
                 <button 
                   type="submit" 
                   disabled={!newRenameFolderName.trim()}
-                  className={`px-6 py-2 text-sm font-medium bg-primary text-on-primary rounded-xl transition-colors ${!newRenameFolderName.trim() ? 'opacity-50 cursor-not-allowed' : 'hover:bg-primary/90'}`}
+                  className={`px-6 py-2 text-sm font-medium bg-primary text-on-primary rounded-xl transition-colors duration-200 ${!newRenameFolderName.trim() ? 'opacity-50 cursor-not-allowed' : 'hover:bg-primary/90'}`}
                 >
                   Rename
                 </button>
@@ -1959,14 +1967,14 @@ function App() {
                 <button 
                   type="button" 
                   onClick={() => { setShowRenameFileModal(false); setFileToRename(null); setNewRenameFileName(''); }}
-                  className="px-4 py-2 text-sm font-medium text-neutral-700 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800 rounded-xl transition-colors"
+                  className="px-4 py-2 text-sm font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-800 rounded-xl transition-colors duration-200"
                 >
                   Cancel
                 </button>
                 <button 
                   type="submit" 
                   disabled={!newRenameFileName.trim()}
-                  className={`px-6 py-2 text-sm font-medium bg-primary text-on-primary rounded-xl transition-colors ${!newRenameFileName.trim() ? 'opacity-50 cursor-not-allowed' : 'hover:bg-primary/90'}`}
+                  className={`px-6 py-2 text-sm font-medium bg-primary text-on-primary rounded-xl transition-colors duration-200 ${!newRenameFileName.trim() ? 'opacity-50 cursor-not-allowed' : 'hover:bg-primary/90'}`}
                 >
                   Rename
                 </button>
@@ -1982,14 +1990,14 @@ function App() {
           <div className="bg-white dark:bg-[#1e1f20] rounded-2xl w-full max-w-md shadow-2xl border border-outline-variant dark:border-zinc-800 flex flex-col max-h-[80vh]">
             <div className="flex items-center justify-between p-4 border-b border-outline-variant dark:border-zinc-800">
               <h3 className="font-title-lg text-title-lg text-gray-900 dark:text-white">Move to...</h3>
-              <button onClick={() => setShowMoveModal(false)} className="text-neutral-500 hover:text-gray-900 dark:hover:text-white">
+              <button onClick={() => setShowMoveModal(false)} className="p-1 rounded text-neutral-500 hover:text-gray-900 hover:bg-neutral-200 dark:hover:text-white dark:hover:bg-neutral-800 transition-colors duration-200">
                 <span className="material-symbols-outlined">close</span>
               </button>
             </div>
             <div className="p-2 overflow-y-auto">
               <button 
                 onClick={() => handleMoveConfirm(null)} 
-                className={`w-full flex items-center gap-3 p-3 text-left rounded-xl hover:bg-gray-100 dark:hover:bg-neutral-800 transition-colors ${currentFolderId === null ? 'opacity-50 cursor-not-allowed' : ''}`}
+                className={`w-full flex items-center gap-3 p-3 text-left rounded-xl hover:bg-gray-100 dark:hover:bg-neutral-800 transition-colors duration-200 ${currentFolderId === null ? 'opacity-50 cursor-not-allowed' : ''}`}
                 disabled={currentFolderId === null}
               >
                 <span className="material-symbols-outlined text-neutral-500">home</span>
@@ -2001,7 +2009,7 @@ function App() {
                 <button 
                   key={folder._id}
                   onClick={() => handleMoveConfirm(folder._id)}
-                  className="w-full flex items-center gap-3 p-3 text-left rounded-xl hover:bg-gray-100 dark:hover:bg-neutral-800 transition-colors mt-1"
+                  className="w-full flex items-center gap-3 p-3 text-left rounded-xl hover:bg-gray-100 dark:hover:bg-neutral-800 transition-colors duration-200 mt-1"
                 >
                   <span className="material-symbols-outlined text-neutral-500">folder</span>
                   <span className="text-neutral-900 dark:text-white font-medium">{folder.name}</span>
@@ -2189,10 +2197,10 @@ function App() {
                 className="w-full bg-surface dark:bg-[#0a0a0a] text-on-surface dark:text-zinc-200 border border-outline-variant dark:border-zinc-700 focus:ring-2 focus:ring-primary rounded-lg px-4 py-3 outline-none mb-6"
               />
               <div className="flex justify-end gap-3">
-                <button type="button" onClick={() => setShowNewFolderModal(false)} className="px-5 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded-lg transition-colors">
+                <button type="button" onClick={() => setShowNewFolderModal(false)} className="px-5 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-neutral-200 dark:hover:bg-zinc-800 rounded-lg transition-colors duration-200">
                   Cancel
                 </button>
-                <button type="submit" disabled={!newFolderName.trim()} className="px-5 py-2.5 text-sm font-medium text-white bg-primary hover:bg-primary/90 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                <button type="submit" disabled={!newFolderName.trim()} className="px-5 py-2.5 text-sm font-medium text-white bg-primary hover:bg-primary/90 rounded-lg transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed">
                   Create
                 </button>
               </div>
