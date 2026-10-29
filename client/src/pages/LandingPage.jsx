@@ -4,17 +4,11 @@ import {
   Terminal, 
   ShieldCheck, 
   FileCode2, 
-  FolderLock, 
-  CloudUpload, 
-  Cpu, 
-  Network, 
-  HardDrive, 
   ChevronDown,
   ArrowRight,
   Sparkles,
-  Server,
-  Layers,
-  FileCheck
+  Lock,
+  PlayCircle
 } from 'lucide-react';
 import CloudGuardLogo from '../CloudGuardLogo';
 
@@ -69,49 +63,22 @@ export default function LandingPage() {
     setOpenFaq(prev => prev === index ? null : index);
   };
 
-  const faqItems = [
+  const faqs = [
     {
-      question: "How does CloudGuard detect malicious files before storage?",
-      answer: "Every uploaded binary or document undergoes real-time pre-ingestion inspection via a high-performance Python FastAPI microservice. Using a Scikit-Learn Random Forest model, CloudGuard performs static PE header analysis, byte entropy checks, and suspicious section evaluations. If ambiguity persists, it triggers automated VirusTotal API fallback verification before the file can reach the vault."
+      q: "How does CloudGuard protect my files?",
+      a: "The moment you upload any file, our automated scanner checks it for viruses, ransomware, and malicious code. If anything looks suspicious, it is quarantined immediately."
     },
     {
-      question: "What happens if a file is flagged as suspicious?",
-      answer: "If our machine learning classifier or VirusTotal heuristics identify malicious signatures or suspicious characteristics, ingestion is immediately aborted. The payload is quarantined in an ephemeral sandbox and blocked from S3 persistence, shielding your storage environment and teammates from accidental distribution."
+      q: "Can I watch videos or view PDFs without downloading them?",
+      a: "Yes! CloudGuard streams video smoothly and opens PDFs, images, and documents directly inside your browser so you don't waste device storage."
     },
     {
-      question: "Can I stream large videos and view PDFs directly in the browser?",
-      answer: "Yes. CloudGuard supports native HTTP 206 Partial Content range requests, allowing smooth seeking and instant playback for large MP4 and WebM videos without full downloads. In addition, an inline PDF renderer lets you inspect documentation safely, and multi-file selections can be dynamically packaged into streamed ZIP archives on the fly."
+      q: "Who can see the files I upload?",
+      a: "Only you. Every file is protected behind your private login and encrypted cloud storage. No one else has access to your vault."
     },
     {
-      question: "Is my stored data protected against unauthorized access?",
-      answer: "All storage assets reside inside isolated, policy-locked AWS S3 buckets guarded by ephemeral, pre-signed URLs with strict expirations. With zero-trust access control, stateless JWT authentication, and scoped authorization tokens, no unauthenticated user or external proxy can read your private objects directly."
-    }
-  ];
-
-  const pipelineSteps = [
-    {
-      step: "01",
-      title: "Browser Ingestion",
-      desc: "Client initiates encrypted TLS payload transmission with direct pre-signed URL coordination.",
-      icon: CloudUpload
-    },
-    {
-      step: "02",
-      title: "Node.js Gateway",
-      desc: "Stateless Express API verifies JWT identity, validates mime schemas, and routes upload payloads.",
-      icon: Server
-    },
-    {
-      step: "03",
-      title: "Python ML Inspection",
-      desc: "FastAPI microservice conducts PE header inspection, entropy scanning, and VirusTotal fallbacks.",
-      icon: Cpu
-    },
-    {
-      step: "04",
-      title: "Secure S3 Vault",
-      desc: "Clean payloads persist in policy-restricted AWS S3 buckets with ephemeral pre-signed access tokens.",
-      icon: ShieldCheck
+      q: "What types of files can I store?",
+      a: "You can upload all common file formats, including documents, high-resolution photos, videos, and archives up to 5GB per batch."
     }
   ];
 
@@ -145,12 +112,18 @@ export default function LandingPage() {
             <Sparkles size={13} className="text-emerald-400" />
             <span>Zero-Trust Cloud Storage Architecture</span>
           </div>
-          <h1 className="text-4xl sm:text-5xl lg:text-7xl font-medium mb-8 tracking-tighter text-[#e3e3e3] leading-[1.1]">
-            CloudGuard Vault. <br />
-            <span className="text-[#888] whitespace-nowrap">{heroText}<span className="text-white animate-pulse">|</span></span>
+          
+          {/* Heading with fixed min-height to eliminate CLS during typewriter transitions */}
+          <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-white mb-8 leading-[1.15]">
+            <span>CloudGuard Vault.</span>
+            <span className="block text-neutral-400 min-h-[1.25em] sm:min-h-[1.3em]">
+              {heroText}
+              <span className="animate-pulse">|</span>
+            </span>
           </h1>
+
           <p className="text-xl text-[#888] max-w-xl mb-12 font-light leading-relaxed">
-            A highly secure file management system built on scalable cloud infrastructure. Every upload is analyzed in real-time by a custom Python microservice utilizing Random Forest machine learning and VirusTotal API fallbacks.
+            A secure cloud file vault with real-time malware defense. Store, preview, and share your personal and enterprise files with full privacy.
           </p>
           <div className="flex items-center justify-start gap-4">
             <Link to="/login" className="px-8 py-4 bg-[#e3e3e3] text-black hover:bg-[#c4c7c5] transition-colors rounded font-medium text-lg shadow-[0_0_30px_rgba(227,227,227,0.15)] inline-flex items-center gap-2">
@@ -160,10 +133,9 @@ export default function LandingPage() {
           </div>
         </div>
 
-        {/* Right Side: Floating Tech Stack */}
+        {/* Right Side: Terminal Window */}
         <div className="w-full lg:w-5/12 flex flex-col gap-6 min-w-0">
           
-          {/* Terminal Window */}
           <div className="w-full bg-[#050505] border border-[#222] rounded-xl shadow-2xl overflow-hidden">
             <div className="flex items-center gap-2 px-4 py-3 border-b border-[#333] bg-[#0a0a0a]">
               <Terminal className="text-[#888]" size={16} />
@@ -181,27 +153,17 @@ export default function LandingPage() {
             </div>
           </div>
 
-          {/* UI Component Window */}
           <div className="w-full bg-[#0a0a0a] border border-[#222] rounded-xl shadow-2xl p-6">
-            <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center justify-between mb-4">
               <h3 className="font-mono text-xs text-[#888]">/src/dashboard/MyFiles.jsx</h3>
               <ShieldCheck className="text-[#555]" size={18} />
             </div>
-            <div className="space-y-3">
-              <div className="flex items-center justify-between p-3 bg-[#111] border border-[#222] rounded">
-                <div className="flex items-center gap-3">
-                  <FolderLock className="text-[#888]" size={18} />
-                  <span className="font-medium text-[#e3e3e3] text-sm">CloudGuard_Architecture.pdf</span>
-                </div>
-                <span className="font-mono text-[10px] text-green-500 bg-green-500/10 px-2 py-1 rounded border border-green-500/20">CLEAN</span>
+            <div className="p-3 bg-[#111] border border-[#222] rounded flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <FileCode2 className="text-[#888]" size={18} />
+                <span className="font-medium text-[#e3e3e3] text-sm">cloud_storage_keys.pem</span>
               </div>
-              <div className="flex items-center justify-between p-3 bg-[#111] border border-[#222] rounded">
-                <div className="flex items-center gap-3">
-                  <FileCode2 className="text-[#888]" size={18} />
-                  <span className="font-medium text-[#e3e3e3] text-sm">cloud_storage_keys.pem</span>
-                </div>
-                <span className="font-mono text-[10px] text-green-500 bg-green-500/10 px-2 py-1 rounded border border-green-500/20">CLEAN</span>
-              </div>
+              <span className="font-mono text-[10px] text-green-500 bg-green-500/10 px-2 py-1 rounded border border-green-500/20">CLEAN</span>
             </div>
           </div>
 
@@ -209,160 +171,74 @@ export default function LandingPage() {
 
       </section>
 
-      {/* Feature Highlights: 3-Column Grid */}
+      {/* Feature Highlights: 3 Simplified Cards */}
       <section className="w-full max-w-[1400px] mx-auto pt-20 pb-24 px-8 border-t border-[#222] relative z-10">
         <div className="max-w-2xl mb-16">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-neutral-800 bg-neutral-900/60 text-xs font-mono text-neutral-400 mb-4">
-            <Layers size={13} className="text-blue-400" />
-            <span>Core Capabilities</span>
-          </div>
           <h2 className="text-3xl sm:text-4xl lg:text-5xl font-semibold tracking-tight text-[#e3e3e3] mb-4">
-            Engineered for high assurance and zero compromise.
+            Security and simplicity, combined.
           </h2>
           <p className="text-neutral-400 font-light leading-relaxed">
-            CloudGuard blends machine learning threat detection with distributed object storage to deliver deep enterprise-grade security.
+            Everything you need to store, inspect, and access your files without worrying about security threats.
           </p>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
           
-          {/* Card 1: Pre-Ingestion AI Malware Detection */}
-          <div className="group bg-[#0a0a0a] border border-neutral-800 p-8 rounded-2xl relative transition-all duration-300 hover:border-neutral-600 hover:shadow-[0_0_30px_rgba(255,255,255,0.03)] flex flex-col justify-between">
-            <div>
-              <div className="w-12 h-12 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400 mb-6 group-hover:scale-105 transition-transform">
-                <Cpu size={24} />
-              </div>
-              <h3 className="text-xl font-medium text-[#e3e3e3] mb-3 tracking-tight">
-                Pre-Ingestion AI Malware Detection
-              </h3>
-              <p className="text-neutral-400 text-sm leading-relaxed mb-6 font-light">
-                High-throughput Python FastAPI microservice powered by a Scikit-Learn Random Forest model. Evaluates static PE headers, byte entropy distributions, and suspicious import sections before files are allowed into storage, with automated VirusTotal API fallback verification.
-              </p>
+          {/* Card 1: Automatic Virus Scanning */}
+          <div className="group bg-[#0a0a0a] border border-neutral-800 p-8 rounded-2xl relative transition-all duration-300 hover:border-neutral-600 hover:shadow-[0_0_30px_rgba(255,255,255,0.03)] flex flex-col justify-start">
+            <div className="w-12 h-12 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400 mb-6 group-hover:scale-105 transition-transform">
+              <ShieldCheck size={24} />
             </div>
-            <div className="pt-4 border-t border-neutral-900 flex items-center gap-2 font-mono text-xs text-neutral-500">
-              <FileCheck size={14} className="text-purple-400" />
-              <span>FastAPI &bull; Random Forest &bull; VirusTotal</span>
-            </div>
+            <h3 className="text-xl font-medium text-[#e3e3e3] mb-3 tracking-tight">
+              Automatic Virus Scanning
+            </h3>
+            <p className="text-neutral-400 text-sm leading-relaxed font-light">
+              Every file you upload is checked for malware and hidden threats in real time. Dangerous files are stopped before they ever reach your storage.
+            </p>
           </div>
 
-          {/* Card 2: Encrypted S3 Storage & Zero Trust */}
-          <div className="group bg-[#0a0a0a] border border-neutral-800 p-8 rounded-2xl relative transition-all duration-300 hover:border-neutral-600 hover:shadow-[0_0_30px_rgba(255,255,255,0.03)] flex flex-col justify-between">
-            <div>
-              <div className="w-12 h-12 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400 mb-6 group-hover:scale-105 transition-transform">
-                <FolderLock size={24} />
-              </div>
-              <h3 className="text-xl font-medium text-[#e3e3e3] mb-3 tracking-tight">
-                Encrypted S3 Storage & Zero Trust
-              </h3>
-              <p className="text-neutral-400 text-sm leading-relaxed mb-6 font-light">
-                Uploads stream through short-lived pre-signed AWS S3 URLs governed by strict bucket isolation policies. No public bucket exposure, strict JWT authorization checkpoints, and scoped permissions prevent cross-tenant data leakage.
-              </p>
+          {/* Card 2: Private & Fully Encrypted */}
+          <div className="group bg-[#0a0a0a] border border-neutral-800 p-8 rounded-2xl relative transition-all duration-300 hover:border-neutral-600 hover:shadow-[0_0_30px_rgba(255,255,255,0.03)] flex flex-col justify-start">
+            <div className="w-12 h-12 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400 mb-6 group-hover:scale-105 transition-transform">
+              <Lock size={24} />
             </div>
-            <div className="pt-4 border-t border-neutral-900 flex items-center gap-2 font-mono text-xs text-neutral-500">
-              <ShieldCheck size={14} className="text-blue-400" />
-              <span>AWS S3 &bull; Pre-Signed URLs &bull; Zero-Trust</span>
-            </div>
+            <h3 className="text-xl font-medium text-[#e3e3e3] mb-3 tracking-tight">
+              Private & Fully Encrypted
+            </h3>
+            <p className="text-neutral-400 text-sm leading-relaxed font-light">
+              Your files are stored in an encrypted vault built on secure cloud infrastructure. Only you hold the access to open, download, or share them.
+            </p>
           </div>
 
-          {/* Card 3: High-Performance Media Streaming */}
-          <div className="group bg-[#0a0a0a] border border-neutral-800 p-8 rounded-2xl relative transition-all duration-300 hover:border-neutral-600 hover:shadow-[0_0_30px_rgba(255,255,255,0.03)] flex flex-col justify-between">
-            <div>
-              <div className="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 mb-6 group-hover:scale-105 transition-transform">
-                <HardDrive size={24} />
-              </div>
-              <h3 className="text-xl font-medium text-[#e3e3e3] mb-3 tracking-tight">
-                High-Performance Media Streaming
-              </h3>
-              <p className="text-neutral-400 text-sm leading-relaxed mb-6 font-light">
-                Experience instant seek times for MP4 and WebM videos via HTTP 206 Partial Content range streaming. Enjoy safe inline PDF previewing directly in your browser without client-side risk, along with dynamic multi-file ZIP folder bundling.
-              </p>
+          {/* Card 3: Instant Video & File Previews */}
+          <div className="group bg-[#0a0a0a] border border-neutral-800 p-8 rounded-2xl relative transition-all duration-300 hover:border-neutral-600 hover:shadow-[0_0_30px_rgba(255,255,255,0.03)] flex flex-col justify-start">
+            <div className="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 mb-6 group-hover:scale-105 transition-transform">
+              <PlayCircle size={24} />
             </div>
-            <div className="pt-4 border-t border-neutral-900 flex items-center gap-2 font-mono text-xs text-neutral-500">
-              <Network size={14} className="text-emerald-400" />
-              <span>HTTP 206 &bull; PDF Renderer &bull; Dynamic Archiving</span>
-            </div>
+            <h3 className="text-xl font-medium text-[#e3e3e3] mb-3 tracking-tight">
+              Instant Video & File Previews
+            </h3>
+            <p className="text-neutral-400 text-sm leading-relaxed font-light">
+              Watch videos and preview documents directly in your browser with zero lag and no forced downloads.
+            </p>
           </div>
 
-        </div>
-      </section>
-
-      {/* System Architecture Overview: 4-Step Pipeline */}
-      <section className="w-full max-w-[1400px] mx-auto py-20 px-8 border-t border-[#222] relative z-10">
-        <div className="text-center max-w-3xl mx-auto mb-16">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-neutral-800 bg-neutral-900/60 text-xs font-mono text-neutral-400 mb-4">
-            <Network size={13} className="text-emerald-400" />
-            <span>End-to-End Pipeline</span>
-          </div>
-          <h2 className="text-3xl sm:text-4xl lg:text-5xl font-semibold tracking-tight text-[#e3e3e3] mb-4">
-            System Architecture Overview
-          </h2>
-          <p className="text-neutral-400 font-light leading-relaxed">
-            Every payload navigates a deterministic 4-stage pipeline designed to isolate, verify, and persist data safely.
-          </p>
-        </div>
-
-        {/* 4-Step Architecture Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          {pipelineSteps.map((step, idx) => {
-            const Icon = step.icon;
-            return (
-              <div 
-                key={idx}
-                className="bg-[#0a0a0a] border border-neutral-800 rounded-xl p-6 relative hover:border-neutral-600 transition-colors flex flex-col justify-between"
-              >
-                <div>
-                  <div className="flex items-center justify-between mb-6">
-                    <span className="font-mono text-2xl font-bold text-neutral-600 tracking-wider">
-                      {step.step}
-                    </span>
-                    <div className="w-10 h-10 rounded-lg bg-neutral-900 border border-neutral-800 flex items-center justify-center text-neutral-300">
-                      <Icon size={20} />
-                    </div>
-                  </div>
-                  <h3 className="text-lg font-medium text-[#e3e3e3] mb-2 tracking-tight">
-                    {step.title}
-                  </h3>
-                  <p className="text-neutral-400 text-sm font-light leading-relaxed mb-4">
-                    {step.desc}
-                  </p>
-                </div>
-                <div className="flex items-center text-neutral-600 font-mono text-xs pt-3 border-t border-neutral-900">
-                  <span>Stage {idx + 1} of 4</span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Visual Pipeline Bar */}
-        <div className="mt-8 p-4 bg-[#050505] border border-neutral-800 rounded-xl hidden lg:flex items-center justify-between text-xs font-mono text-neutral-400">
-          <span className="text-neutral-300 font-medium">Browser Ingestion</span>
-          <span className="text-neutral-600">&rarr;</span>
-          <span className="text-neutral-300 font-medium">Node.js Gateway</span>
-          <span className="text-neutral-600">&rarr;</span>
-          <span className="text-neutral-300 font-medium">Python ML Inspection</span>
-          <span className="text-neutral-600">&rarr;</span>
-          <span className="text-neutral-300 font-medium">Secure S3 Vault</span>
         </div>
       </section>
 
       {/* FAQ Accordion Section */}
       <section className="w-full max-w-[1000px] mx-auto py-20 px-8 border-t border-[#222] relative z-10">
         <div className="text-center max-w-2xl mx-auto mb-16">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-neutral-800 bg-neutral-900/60 text-xs font-mono text-neutral-400 mb-4">
-            <ShieldCheck size={13} className="text-purple-400" />
-            <span>Frequently Asked Questions</span>
-          </div>
           <h2 className="text-3xl sm:text-4xl lg:text-5xl font-semibold tracking-tight text-[#e3e3e3] mb-4">
-            Questions & Answers
+            Frequently Asked Questions
           </h2>
           <p className="text-neutral-400 font-light leading-relaxed">
-            Everything you need to know about CloudGuard Vault&apos;s security, scanning engine, and cloud architecture.
+            Everything you need to know about using CloudGuard Vault to secure and access your files.
           </p>
         </div>
 
         <div className="space-y-4">
-          {faqItems.map((item, index) => {
+          {faqs.map((item, index) => {
             const isOpen = openFaq === index;
             return (
               <div 
@@ -376,7 +252,7 @@ export default function LandingPage() {
                   aria-expanded={isOpen}
                 >
                   <span className="text-base sm:text-lg font-medium text-[#e3e3e3] tracking-tight">
-                    {item.question}
+                    {item.q}
                   </span>
                   <ChevronDown 
                     size={20} 
@@ -385,7 +261,7 @@ export default function LandingPage() {
                 </button>
                 {isOpen && (
                   <div className="px-6 pb-6 pt-1 text-sm text-neutral-400 font-light leading-relaxed border-t border-neutral-900">
-                    {item.answer}
+                    {item.a}
                   </div>
                 )}
               </div>
