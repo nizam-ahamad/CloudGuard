@@ -8,6 +8,8 @@ import OTPVerification from './OTPVerification';
 import Toast from './Toast';
 import LandingPage from './pages/LandingPage';
 import AuthPage from './pages/AuthPage';
+import PrivacyPolicy from './pages/PrivacyPolicy';
+import TermsOfService from './pages/TermsOfService';
 import { FolderInput, X, MoreVertical, Pencil, Info, LayoutGrid, List } from 'lucide-react';
 
 import { API_BASE_URL } from "./config";
@@ -1143,6 +1145,8 @@ function App() {
       <Routes>
         <Route path="/" element={<LandingPage />} />
         <Route path="/login" element={<AuthPage />} />
+        <Route path="/privacy" element={<PrivacyPolicy />} />
+        <Route path="/terms" element={<TermsOfService />} />
         <Route path="/reset-password/:token" element={authContent} />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
@@ -2215,6 +2219,8 @@ function App() {
     <Routes>
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
       <Route path="/dashboard" element={dashboardContent} />
+      <Route path="/privacy" element={<PrivacyPolicy />} />
+      <Route path="/terms" element={<TermsOfService />} />
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>
   );

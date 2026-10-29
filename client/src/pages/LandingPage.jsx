@@ -288,9 +288,15 @@ export default function LandingPage() {
       </section>
 
       {/* Footer */}
-      <footer className="w-full py-8 border-t border-[#222] bg-black flex flex-col md:flex-row items-center justify-between px-8 text-neutral-500 text-sm font-mono">
+      <footer className="w-full py-8 border-t border-[#222] bg-black flex flex-col md:flex-row items-center justify-between px-8 text-neutral-500 text-sm font-mono gap-4">
         <div>&copy; 2026 CloudGuard. All rights reserved.</div>
-        <div className="flex gap-6 mt-4 md:mt-0">
+        <div className="flex flex-wrap items-center gap-6">
+          <Link to="/privacy" className="hover:text-[#e3e3e3] transition-colors">
+            Privacy Policy
+          </Link>
+          <Link to="/terms" className="hover:text-[#e3e3e3] transition-colors">
+            Terms of Service
+          </Link>
           <a href="https://github.com/nizam-ahamad/CloudGuard" target="_blank" rel="noreferrer" className="hover:text-[#e3e3e3] transition-colors">
             GitHub Repository
           </a>

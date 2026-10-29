@@ -411,6 +411,18 @@ export default function AuthPage() {
             )}
           </button>
 
+          <p className="mt-3 text-center text-[11px] font-mono text-[#777] leading-relaxed">
+            By continuing, you agree to CloudGuard's{' '}
+            <Link to="/terms" className="text-neutral-400 underline hover:text-white transition-colors">
+              Terms of Service
+            </Link>{' '}
+            and{' '}
+            <Link to="/privacy" className="text-neutral-400 underline hover:text-white transition-colors">
+              Privacy Policy
+            </Link>
+            .
+          </p>
+
         </form>
       </div>
     </div>
