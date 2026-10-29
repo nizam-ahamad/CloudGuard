@@ -1,1 +1,3 @@
-export const API_BASE_URL = import.meta.env.DEV ? 'http://localhost:5000' : (import.meta.env.VITE_API_URL || 'http://51.20.66.100');
+export const API_BASE_URL = import.meta.env.PROD 
+  ? '' 
+  : 'http://localhost:5000';
