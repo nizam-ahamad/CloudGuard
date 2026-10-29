@@ -115,8 +115,8 @@ export default function LandingPage() {
           
           {/* Heading with fixed min-height to eliminate CLS during typewriter transitions */}
           <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-white mb-8 leading-[1.15]">
-            <span>CloudGuard Vault.</span>
-            <span className="block text-neutral-400 min-h-[1.25em] sm:min-h-[1.3em]">
+            <span className="block">CloudGuard Vault.</span>
+            <span className="block text-neutral-400 whitespace-nowrap text-3xl sm:text-4xl lg:text-5xl font-semibold mt-1 min-h-[1.25em] sm:min-h-[1.3em]">
               {heroText}
               <span className="animate-pulse">|</span>
             </span>
