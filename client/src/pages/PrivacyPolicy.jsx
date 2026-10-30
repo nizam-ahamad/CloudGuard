@@ -12,7 +12,7 @@ export default function PrivacyPolicy() {
     <div className="min-h-screen bg-black text-neutral-300 font-sans selection:bg-neutral-800 selection:text-white">
       {/* Top Header / Breadcrumb */}
       <header className="w-full border-b border-neutral-900 bg-black/60 backdrop-blur-md sticky top-0 z-50">
-        <div className="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
+        <div className="w-full max-w-3xl md:max-w-5xl lg:max-w-6xl mx-auto px-4 sm:px-6 md:px-12 lg:px-16 py-4 flex items-center justify-between">
           <Link to="/" className="inline-flex items-center gap-3 text-neutral-400 hover:text-white transition-colors group">
             <ArrowLeft size={18} className="transition-transform group-hover:-translate-x-1" />
             <div className="flex items-center gap-2">
@@ -30,45 +30,45 @@ export default function PrivacyPolicy() {
       </header>
 
       {/* Main Content */}
-      <main className="max-w-4xl mx-auto p-6 md:p-16">
+      <main className="w-full max-w-3xl md:max-w-5xl lg:max-w-6xl mx-auto px-4 sm:px-6 md:px-12 lg:px-16 py-8 md:py-16">
         {/* Document Header */}
         <div className="mb-12 border-b border-neutral-900 pb-8">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-neutral-800 bg-neutral-900/60 text-xs font-mono text-neutral-400 mb-4">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-neutral-800 bg-neutral-900/60 text-xs md:text-base font-mono text-neutral-400 mb-4">
             <Shield size={13} className="text-emerald-400" />
             <span>Legal Documentation</span>
           </div>
-          <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight text-white mb-3">
+          <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-bold md:font-extrabold tracking-tight text-white mb-3">
             Privacy Policy
           </h1>
-          <p className="text-sm font-mono text-neutral-500">
+          <p className="text-sm md:text-base font-mono text-neutral-500">
             Last Updated: October 2026
           </p>
         </div>
 
         {/* Sections */}
-        <div className="space-y-10 text-neutral-300 text-sm sm:text-base leading-relaxed font-light">
+        <div className="space-y-8 md:space-y-12 text-neutral-300 text-sm sm:text-base md:text-base lg:text-lg leading-relaxed md:leading-relaxed font-light">
           
           {/* Section 1 */}
           <section className="space-y-3">
-            <div className="flex items-center gap-2 text-white font-medium text-lg">
-              <span className="font-mono text-neutral-500 text-sm">01.</span>
+            <div className="flex items-center gap-2 text-white font-medium text-lg md:text-2xl lg:text-3xl md:font-bold md:mb-4">
+              <span className="font-mono text-neutral-500 text-sm md:text-xl">01.</span>
               <h2>Overview</h2>
             </div>
-            <p>
+            <p className="text-neutral-300">
               CloudGuard Vault (&ldquo;CloudGuard&rdquo;, &ldquo;we&rdquo;, &ldquo;our&rdquo;, or &ldquo;us&rdquo;) is an encrypted cloud storage demonstration platform featuring real-time AI threat scanning and zero-trust file management. We are committed to protecting your personal data and ensuring transparent practices regarding the collection, use, and security of information processed through our service.
             </p>
           </section>
 
           {/* Section 2 */}
           <section className="space-y-3">
-            <div className="flex items-center gap-2 text-white font-medium text-lg">
-              <span className="font-mono text-neutral-500 text-sm">02.</span>
+            <div className="flex items-center gap-2 text-white font-medium text-lg md:text-2xl lg:text-3xl md:font-bold md:mb-4">
+              <span className="font-mono text-neutral-500 text-sm md:text-xl">02.</span>
               <h2>Data Collected</h2>
             </div>
-            <p>
+            <p className="text-neutral-300">
               We collect and process minimal data necessary to provide and secure our storage platform:
             </p>
-            <ul className="list-disc list-inside space-y-2 pl-2 text-neutral-400">
+            <ul className="list-disc list-inside space-y-2 pl-2 text-neutral-400 md:text-base lg:text-lg">
               <li>
                 <strong className="text-neutral-200">Account Credentials:</strong> Your email address and securely hashed authentication credentials (passwords are processed with bcrypt and never stored in plain text). Stateless JWT tokens are utilized for session verification.
               </li>
@@ -83,32 +83,32 @@ export default function PrivacyPolicy() {
 
           {/* Section 3 */}
           <section className="space-y-3">
-            <div className="flex items-center gap-2 text-white font-medium text-lg">
-              <span className="font-mono text-neutral-500 text-sm">03.</span>
+            <div className="flex items-center gap-2 text-white font-medium text-lg md:text-2xl lg:text-3xl md:font-bold md:mb-4">
+              <span className="font-mono text-neutral-500 text-sm md:text-xl">03.</span>
               <h2>Third-Party Processing &amp; Infrastructure</h2>
             </div>
-            <p>
+            <p className="text-neutral-300">
               To maintain high-assurance isolation and threat detection, CloudGuard integrates with dedicated cloud infrastructure:
             </p>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
-              <div className="p-4 bg-neutral-950 border border-neutral-900 rounded-lg">
-                <Database size={18} className="text-blue-400 mb-2" />
-                <h3 className="text-sm font-medium text-white mb-1">Amazon Web Services (AWS)</h3>
-                <p className="text-xs text-neutral-400 leading-normal">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 pt-2">
+              <div className="p-4 md:p-6 bg-neutral-950 border border-neutral-900 rounded-lg">
+                <Database size={18} className="text-blue-400 mb-2 md:w-6 md:h-6" />
+                <h3 className="text-sm md:text-lg font-medium md:font-semibold text-white mb-1">Amazon Web Services (AWS)</h3>
+                <p className="text-xs md:text-sm lg:text-base text-neutral-400 leading-normal">
                   Encrypted object persistence in isolated S3 buckets accessible only via ephemeral, short-lived pre-signed URLs.
                 </p>
               </div>
-              <div className="p-4 bg-neutral-950 border border-neutral-900 rounded-lg">
-                <Server size={18} className="text-purple-400 mb-2" />
-                <h3 className="text-sm font-medium text-white mb-1">Python ML Microservice</h3>
-                <p className="text-xs text-neutral-400 leading-normal">
+              <div className="p-4 md:p-6 bg-neutral-950 border border-neutral-900 rounded-lg">
+                <Server size={18} className="text-purple-400 mb-2 md:w-6 md:h-6" />
+                <h3 className="text-sm md:text-lg font-medium md:font-semibold text-white mb-1">Python ML Microservice</h3>
+                <p className="text-xs md:text-sm lg:text-base text-neutral-400 leading-normal">
                   Pre-ingestion static inspection with optional automated VirusTotal API fallback verification for suspicious binary hashes.
                 </p>
               </div>
-              <div className="p-4 bg-neutral-950 border border-neutral-900 rounded-lg">
-                <Lock size={18} className="text-emerald-400 mb-2" />
-                <h3 className="text-sm font-medium text-white mb-1">Google Apps Script</h3>
-                <p className="text-xs text-neutral-400 leading-normal">
+              <div className="p-4 md:p-6 bg-neutral-950 border border-neutral-900 rounded-lg">
+                <Lock size={18} className="text-emerald-400 mb-2 md:w-6 md:h-6" />
+                <h3 className="text-sm md:text-lg font-medium md:font-semibold text-white mb-1">Google Apps Script</h3>
+                <p className="text-xs md:text-sm lg:text-base text-neutral-400 leading-normal">
                   Outbound transactional email delivery for one-time verification passwords (OTP) and password reset authorization tokens.
                 </p>
               </div>
@@ -117,25 +117,25 @@ export default function PrivacyPolicy() {
 
           {/* Section 4 */}
           <section className="space-y-3">
-            <div className="flex items-center gap-2 text-white font-medium text-lg">
-              <span className="font-mono text-neutral-500 text-sm">04.</span>
+            <div className="flex items-center gap-2 text-white font-medium text-lg md:text-2xl lg:text-3xl md:font-bold md:mb-4">
+              <span className="font-mono text-neutral-500 text-sm md:text-xl">04.</span>
               <h2>Data Ownership &amp; Retention</h2>
             </div>
-            <p>
+            <p className="text-neutral-300">
               You maintain complete ownership and intellectual property rights over all files and documents you upload to CloudGuard Vault. When you delete a file or folder from your dashboard, the corresponding object is permanently purged from our AWS S3 bucket and database indices without lingering residual copies.
             </p>
           </section>
 
           {/* Section 5 */}
           <section className="space-y-3">
-            <div className="flex items-center gap-2 text-white font-medium text-lg">
-              <span className="font-mono text-neutral-500 text-sm">05.</span>
+            <div className="flex items-center gap-2 text-white font-medium text-lg md:text-2xl lg:text-3xl md:font-bold md:mb-4">
+              <span className="font-mono text-neutral-500 text-sm md:text-xl">05.</span>
               <h2>Security Architecture</h2>
             </div>
-            <p>
+            <p className="text-neutral-300">
               We enforce modern zero-trust security controls across the application lifecycle:
             </p>
-            <ul className="list-disc list-inside space-y-2 pl-2 text-neutral-400">
+            <ul className="list-disc list-inside space-y-2 pl-2 text-neutral-400 md:text-base lg:text-lg">
               <li>End-to-end HTTPS/TLS encryption for all client-to-server and server-to-S3 communications.</li>
               <li>No plain-text storage of user passwords or cloud provider master credentials.</li>
               <li>Strict tenant isolation ensuring accounts cannot query or access unauthorized object keys.</li>
@@ -145,11 +145,11 @@ export default function PrivacyPolicy() {
 
           {/* Contact / Inquiries */}
           <section className="space-y-3 pt-6 border-t border-neutral-900">
-            <div className="flex items-center gap-2 text-white font-medium text-lg">
-              <span className="font-mono text-neutral-500 text-sm">06.</span>
+            <div className="flex items-center gap-2 text-white font-medium text-lg md:text-2xl lg:text-3xl md:font-bold md:mb-4">
+              <span className="font-mono text-neutral-500 text-sm md:text-xl">06.</span>
               <h2>Contact &amp; Inquiries</h2>
             </div>
-            <p>
+            <p className="text-neutral-300">
               If you have questions regarding this Privacy Policy or wish to request complete deletion of your account and associated objects, please submit an issue or inquiry via our official GitHub repository.
             </p>
           </section>
