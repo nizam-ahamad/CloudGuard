@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, Shield, Lock, Database, Server, AlignLeft, CheckCircle2, ChevronRight } from 'lucide-react';
+import { ArrowLeft, Shield, Lock, Database, Server, AlignLeft, ChevronRight } from 'lucide-react';
 import CloudGuardLogo from '../CloudGuardLogo';
 
 export default function PrivacyPolicy() {
@@ -92,35 +92,14 @@ export default function PrivacyPolicy() {
               </nav>
             </div>
 
-            {/* Platform Context Card */}
-            <div className="bg-neutral-900/40 border border-neutral-800/80 rounded-2xl p-6 backdrop-blur-sm space-y-4">
-              <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-md bg-neutral-800/80 border border-neutral-700/60 text-xs font-mono text-neutral-300">
-                <CheckCircle2 size={13} className="text-emerald-400" />
-                <span>CloudGuard Architecture &amp; Policy</span>
-              </div>
-
-              <div className="space-y-3 pt-1 text-xs font-mono">
-                <div className="flex items-center justify-between pb-2 border-b border-neutral-800/60">
-                  <span className="text-neutral-500">Storage Engine</span>
-                  <span className="text-neutral-200 font-sans font-medium">AWS S3 (AES-256)</span>
-                </div>
-                <div className="flex items-center justify-between pb-2 border-b border-neutral-800/60">
-                  <span className="text-neutral-500">Threat Inspection</span>
-                  <span className="text-neutral-200 font-sans font-medium">Python ML Microservice</span>
-                </div>
-                <div className="flex items-center justify-between pb-2 border-b border-neutral-800/60">
-                  <span className="text-neutral-500">Target Audience</span>
-                  <span className="text-neutral-200 font-sans font-medium">Portfolio / Demonstration</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-neutral-500">Status</span>
-                  <span className="inline-flex items-center gap-1.5 text-emerald-400 font-sans font-medium">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    Active Security Enforcement
-                  </span>
-                </div>
-              </div>
-            </div>
+            {/* Companion Legal Page Link */}
+            <Link
+              to="/terms"
+              className="flex items-center justify-between px-5 py-3 rounded-xl bg-neutral-900/40 hover:bg-neutral-800/60 border border-neutral-800/80 hover:border-neutral-700 text-sm text-neutral-400 hover:text-white transition-all group backdrop-blur-sm"
+            >
+              <span>View Terms of Service</span>
+              <span className="text-neutral-500 group-hover:text-neutral-300 transition-transform group-hover:translate-x-1">&rarr;</span>
+            </Link>
 
             {/* Action Button */}
             <Link
