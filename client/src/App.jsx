@@ -6,6 +6,7 @@ import CloudGuardLogo from './CloudGuardLogo';
 import PasswordInput from './PasswordInput';
 import OTPVerification from './OTPVerification';
 import Toast from './Toast';
+import MoveModal from './components/MoveModal';
 import LandingPage from './pages/LandingPage';
 import AuthPage from './pages/AuthPage';
 import PrivacyPolicy from './pages/PrivacyPolicy';
@@ -275,6 +276,7 @@ function App() {
   const [showMoveModal, setShowMoveModal] = useState(false);
   const [fileToMove, setFileToMove] = useState(null);
   const [moveFolders, setMoveFolders] = useState([]);
+  const [isMoveLoading, setIsMoveLoading] = useState(false);
   const [folderToDelete, setFolderToDelete] = useState(null);
   const [showRenameFolderModal, setShowRenameFolderModal] = useState(false);
   const [folderToRename, setFolderToRename] = useState(null);
@@ -364,26 +366,33 @@ function App() {
     setShowMoveModal(true);
     try {
       const res = await axios.get(`${API_BASE_URL}/api/folders?all=true`, { headers: { Authorization: `Bearer ${token}` } });
-      setMoveFolders(res.data);
+      setMoveFolders(Array.isArray(res.data) ? res.data : []);
     } catch (err) {
       console.error('Failed to fetch folders for move', err);
+      setMoveFolders([]);
     }
   };
 
   const handleMoveConfirm = async (targetFolderId) => {
     try {
+      setIsMoveLoading(true);
       if (Array.isArray(fileToMove)) {
         await axios.patch(`${API_BASE_URL}/api/files/bulk-move`, { fileIds: fileToMove, targetFolderId }, { headers: { Authorization: `Bearer ${token}` } });
         setSelectedFiles([]);
+      } else if (fileToMove?.isFolder) {
+        await axios.patch(`${API_BASE_URL}/api/folders/${fileToMove._id || fileToMove.id}/move`, { targetFolderId }, { headers: { Authorization: `Bearer ${token}` } });
       } else {
         await axios.patch(`${API_BASE_URL}/api/files/${fileToMove._id || fileToMove.id}/move`, { targetFolderId }, { headers: { Authorization: `Bearer ${token}` } });
       }
       setShowMoveModal(false);
       setFileToMove(null);
-      addToast('success', 'File(s) moved successfully');
+      addToast('success', `${fileToMove?.isFolder ? 'Folder' : 'File(s)'} moved successfully`);
       fetchFiles();
+      fetchFolders(currentFolderId);
     } catch (err) {
-      addToast('error', 'Failed to move file(s)');
+      addToast('error', err.response?.data?.error || 'Failed to move item(s)');
+    } finally {
+      setIsMoveLoading(false);
     }
   };
 
@@ -1648,6 +1657,16 @@ function App() {
                     <button 
                       onClick={(e) => { 
                         e.stopPropagation(); 
+                        openMoveModal({ ...folder, isFolder: true });
+                        setActiveFolderMenuId(null); 
+                      }} 
+                      className="w-full text-left px-4 py-2 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors flex items-center gap-2"
+                    >
+                      <FolderInput size={16} strokeWidth={2} /> Move
+                    </button>
+                    <button 
+                      onClick={(e) => { 
+                        e.stopPropagation(); 
                         setFolderToRename(folder);
                         setNewRenameFolderName(folder.name);
                         setShowRenameFolderModal(true);
@@ -1989,41 +2008,19 @@ function App() {
         </div>
       )}
 
-      {/* Move File Modal */}
-      {showMoveModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-white dark:bg-[#1e1f20] rounded-2xl w-full max-w-md shadow-2xl border border-outline-variant dark:border-zinc-800 flex flex-col max-h-[80vh]">
-            <div className="flex items-center justify-between p-4 border-b border-outline-variant dark:border-zinc-800">
-              <h3 className="font-title-lg text-title-lg text-gray-900 dark:text-white">Move to...</h3>
-              <button onClick={() => setShowMoveModal(false)} className="p-1 rounded text-neutral-500 hover:text-gray-900 hover:bg-neutral-200 dark:hover:text-white dark:hover:bg-neutral-800 transition-colors duration-200">
-                <span className="material-symbols-outlined">close</span>
-              </button>
-            </div>
-            <div className="p-2 overflow-y-auto">
-              <button 
-                onClick={() => handleMoveConfirm(null)} 
-                className={`w-full flex items-center gap-3 p-3 text-left rounded-xl hover:bg-gray-100 dark:hover:bg-neutral-800 transition-colors duration-200 ${currentFolderId === null ? 'opacity-50 cursor-not-allowed' : ''}`}
-                disabled={currentFolderId === null}
-              >
-                <span className="material-symbols-outlined text-neutral-500">home</span>
-                <span className="text-neutral-900 dark:text-white font-medium">Home (Root)</span>
-                {currentFolderId === null && <span className="text-xs ml-auto text-neutral-500">(Current)</span>}
-              </button>
-              
-              {moveFolders.filter(f => f._id !== currentFolderId).map(folder => (
-                <button 
-                  key={folder._id}
-                  onClick={() => handleMoveConfirm(folder._id)}
-                  className="w-full flex items-center gap-3 p-3 text-left rounded-xl hover:bg-gray-100 dark:hover:bg-neutral-800 transition-colors duration-200 mt-1"
-                >
-                  <span className="material-symbols-outlined text-neutral-500">folder</span>
-                  <span className="text-neutral-900 dark:text-white font-medium">{folder.name}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Google Drive-Style Hierarchical Move Modal */}
+      <MoveModal
+        isOpen={showMoveModal}
+        onClose={() => {
+          setShowMoveModal(false);
+          setFileToMove(null);
+        }}
+        itemToMove={fileToMove}
+        folders={moveFolders}
+        onMove={handleMoveConfirm}
+        initialFolderId={currentFolderId}
+        isMoving={isMoveLoading}
+      />
 
       {/* Preview Modal */}
       {previewFile && (

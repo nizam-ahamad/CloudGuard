@@ -1183,6 +1183,29 @@ app.patch('/api/files/:id/rename', verifyToken, async (req, res) => {
   }
 });
 
+// Move Folder Endpoint
+app.patch('/api/folders/:id/move', verifyToken, async (req, res) => {
+  try {
+    let { targetFolderId } = req.body;
+    if (!targetFolderId || targetFolderId === "null" || targetFolderId === "") {
+      targetFolderId = null;
+    }
+    const folder = await FolderModel.findOne({ _id: req.params.id, userId: req.user._id });
+    if (!folder) {
+      return res.status(404).json({ error: 'Folder not found' });
+    }
+    if (targetFolderId && targetFolderId.toString() === req.params.id.toString()) {
+      return res.status(400).json({ error: 'Cannot move folder into itself' });
+    }
+    folder.parentId = targetFolderId;
+    await folder.save();
+    res.json({ message: 'Folder moved successfully', folder });
+  } catch (err) {
+    console.error('Error moving folder:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Move File Endpoint
 app.patch('/api/files/:id/move', verifyToken, async (req, res) => {
   try {
