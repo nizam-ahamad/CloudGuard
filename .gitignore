@@ -19,3 +19,4 @@ server/storage/
 # Environment
 .env
 .env.local
+.env.development
