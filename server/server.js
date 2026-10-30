@@ -28,6 +28,11 @@ const upload = multer({
   limits: { fileSize: 50 * 1024 * 1024 }
 });
 
+const WHITELISTED_HASHES = [
+  'df765a8ae84a673ae9e8c8e60eca8e7e839351029c58803a107b8f010ce7b736', // Antigravity IDE.exe
+  '231d90772d0e26d4376e85bc35fb349c2341926cba84d800828791b33e1103ef'
+].map(h => h.toLowerCase().trim());
+
 const app = express();
 
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -693,6 +698,36 @@ app.post('/api/upload', verifyToken, async (req, res) => {
               console.error("[S3 Size Check Error]:", err);
               exactFileSize = 0;
           }
+      }
+
+      // 1.5 Whitelist Hash Bypass
+      let calculatedHash = (req.body.fileHash || '').toLowerCase().trim();
+      if (!calculatedHash && targetFile.key) {
+        try {
+          const hashStream = await s3.send(new GetObjectCommand({
+            Bucket: process.env.AWS_BUCKET_NAME,
+            Key: targetFile.key || targetFile.s3Key
+          }));
+          const hasher = crypto.createHash('sha256');
+          for await (const chunk of hashStream.Body) {
+            hasher.update(chunk);
+          }
+          calculatedHash = hasher.digest('hex').toLowerCase().trim();
+        } catch (hashErr) {
+          console.error('[Hash Computation Error]:', hashErr.message);
+        }
+      }
+
+      if (calculatedHash && WHITELISTED_HASHES.includes(calculatedHash)) {
+        console.log(`[WHITELIST BYPASS] Hash ${calculatedHash} matched. Skipping AI model and VirusTotal.`);
+        fileRecord.diskName = nestedRelativePath;
+        fileRecord.relativePath = relativePath;
+        fileRecord.size = exactFileSize;
+        fileRecord.status = 'safe';
+        fileRecord.securityStatus = 'Safe';
+        await fileRecord.save();
+        uploadedFiles.push(fileRecord);
+        continue;
       }
 
       // 2. Magic Byte Verification
