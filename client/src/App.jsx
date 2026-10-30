@@ -648,6 +648,7 @@ function App() {
         await s3Axios.put(signedUrl, file, {
           headers: { 
             'Content-Type': file.type || 'application/octet-stream',
+            'x-amz-server-side-encryption': 'AES256',
             'Authorization': undefined
           },
           signal: abortControllerRef.current.signal,

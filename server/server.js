@@ -21,6 +21,13 @@ const crypto = require('crypto');
 const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand, ListObjectsV2Command, DeleteObjectsCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
+// Multer in-memory storage configuration (prevent EC2 disk space exhaustion)
+const multer = require('multer');
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 50 * 1024 * 1024 }
+});
+
 const app = express();
 
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -568,7 +575,8 @@ app.post('/api/presign', verifyToken, async (req, res) => {
     const command = new PutObjectCommand({
       Bucket: process.env.AWS_BUCKET_NAME,
       Key: fileKey,
-      ContentType: contentType || 'application/octet-stream'
+      ContentType: contentType || 'application/octet-stream',
+      ServerSideEncryption: 'AES256'
     });
 
     const signedUrl = await getSignedUrl(s3, command, { expiresIn: 60 });
@@ -751,12 +759,21 @@ app.post('/api/upload', verifyToken, async (req, res) => {
           
           scanResult = aiResponse.data.status;
 
-          if (scanResult === 'rate_limited') {
+          if (scanResult === 'rate_limited' || scanResult === 'unverified_rate_limited') {
              if (targetFile.key) {
-               try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key })); } catch (e) { console.error('[Upload Error] S3 Cleanup Failed for rate limited object:', targetFile.key, 'Error:', e.message); }
+               try { 
+                 await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key })); 
+               } catch (e) { 
+                 console.error('[Upload Error] S3 Cleanup Failed for rate limited object:', targetFile.key, 'Error:', e.message); 
+               }
              }
-             await FileModel.deleteOne({ _id: fileRecord._id });
-             return res.status(429).json({ error: "Scanner busy, please try again" });
+             fileRecord.securityStatus = 'UNVERIFIED_RATE_LIMITED';
+             fileRecord.status = 'error';
+             await fileRecord.save();
+             return res.status(503).json({ 
+               error: "Security verification temporarily unavailable due to scanner rate limits. Please try again shortly.",
+               status: 'UNVERIFIED_RATE_LIMITED'
+             });
           }
 
           if (scanResult === 'malicious') {
@@ -790,9 +807,11 @@ app.post('/api/upload', verifyToken, async (req, res) => {
             }
           }
           if (fileRecord && fileRecord._id) {
-            await FileModel.deleteOne({ _id: fileRecord._id });
+            fileRecord.securityStatus = 'SCAN_FAILED';
+            fileRecord.status = 'error';
+            await fileRecord.save();
           }
-          return res.status(500).json({ error: "Upload failed: Security scan error" });
+          return res.status(503).json({ error: "Security scan service temporarily unavailable. Please retry." });
         }
 
     } catch (error) {
