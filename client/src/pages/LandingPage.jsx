@@ -125,8 +125,11 @@ export default function LandingPage() {
           <p className="text-xl text-[#888] max-w-xl mb-12 font-light leading-relaxed">
             A secure cloud file vault with real-time malware defense. Store, preview, and share your personal and enterprise files with full privacy.
           </p>
-          <div className="flex items-center justify-start gap-4">
-            <Link to="/login" className="px-8 py-4 bg-[#e3e3e3] text-black hover:bg-[#c4c7c5] transition-colors rounded font-medium text-lg shadow-[0_0_30px_rgba(227,227,227,0.15)] inline-flex items-center gap-2">
+          <div className="flex items-center justify-start gap-4 w-full">
+            <Link 
+              to="/login" 
+              className="w-full sm:w-auto inline-flex items-center justify-center py-3.5 px-6 sm:px-6 sm:py-3 bg-[#e3e3e3] text-black hover:bg-[#c4c7c5] transition-colors rounded font-medium text-lg shadow-[0_0_30px_rgba(227,227,227,0.15)] gap-2"
+            >
               <span>Initialize Vault</span>
               <ArrowRight size={18} />
             </Link>
@@ -282,7 +285,7 @@ export default function LandingPage() {
           </p>
           <Link 
             to="/login" 
-            className="w-full sm:w-auto inline-flex items-center justify-center px-8 py-3.5 rounded-xl font-medium text-black bg-white hover:bg-neutral-200 transition-colors gap-2"
+            className="w-full sm:w-auto inline-flex items-center justify-center px-8 py-3.5 rounded font-medium text-black bg-white hover:bg-neutral-200 transition-colors gap-2"
           >
             <span>Open Your Vault Now</span>
             <ArrowRight size={18} />
