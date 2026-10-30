@@ -271,16 +271,19 @@ export default function LandingPage() {
       </section>
 
       {/* Big Bottom CTA */}
-      <section className="w-full py-32 px-8 text-center relative overflow-hidden border-t border-[#222]">
+      <section className="w-full py-12 sm:py-20 px-4 text-center relative overflow-hidden border-t border-[#222]">
         {/* Subtle Glow Effect behind CTA */}
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[300px] bg-emerald-500/5 blur-[100px] rounded-full pointer-events-none"></div>
 
         <div className="relative z-10 max-w-3xl mx-auto">
-          <h2 className="text-4xl sm:text-5xl md:text-6xl font-bold text-[#e3e3e3] mb-6 tracking-tight">Ready to secure your digital assets?</h2>
-          <p className="text-neutral-400 text-lg mb-10 font-light max-w-xl mx-auto">
+          <h2 className="text-3xl sm:text-5xl md:text-6xl font-bold text-[#e3e3e3] mb-4 sm:mb-6 tracking-tight">Ready to secure your digital assets?</h2>
+          <p className="text-neutral-400 text-base sm:text-lg mb-8 sm:mb-10 font-light max-w-xl mx-auto">
             Join the next generation of cloud storage. Experience zero-trust file management with real-time AI threat detection.
           </p>
-          <Link to="/login" className="px-10 py-4 bg-[#e3e3e3] text-black hover:bg-[#c4c7c5] transition-colors rounded font-medium text-lg shadow-[0_0_30px_rgba(227,227,227,0.1)] inline-flex items-center gap-2">
+          <Link 
+            to="/login" 
+            className="w-full sm:w-auto inline-flex items-center justify-center px-8 py-3.5 rounded-xl font-medium text-black bg-white hover:bg-neutral-200 transition-colors gap-2"
+          >
             <span>Open Your Vault Now</span>
             <ArrowRight size={18} />
           </Link>
@@ -288,18 +291,33 @@ export default function LandingPage() {
       </section>
 
       {/* Footer */}
-      <footer className="w-full py-8 border-t border-[#222] bg-black flex flex-col md:flex-row items-center justify-between px-8 text-neutral-500 text-sm font-mono gap-4">
-        <div>&copy; 2026 CloudGuard. All rights reserved.</div>
-        <div className="flex flex-wrap items-center gap-6">
-          <Link to="/privacy" className="hover:text-[#e3e3e3] transition-colors">
-            Privacy Policy
-          </Link>
-          <Link to="/terms" className="hover:text-[#e3e3e3] transition-colors">
-            Terms of Service
-          </Link>
-          <a href="https://github.com/nizam-ahamad/CloudGuard" target="_blank" rel="noreferrer" className="hover:text-[#e3e3e3] transition-colors">
-            GitHub Repository
-          </a>
+      <footer className="border-t border-neutral-900 bg-black/60 py-8 px-4">
+        <div className="max-w-7xl mx-auto flex flex-col items-center justify-center gap-4 text-center text-xs text-neutral-400">
+          
+          {/* Navigation Links: Balanced Row with subtle dots */}
+          <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 font-normal">
+            <Link className="hover:text-white transition-colors" to="/privacy">
+              Privacy Policy
+            </Link>
+            <span className="text-neutral-700 select-none">•</span>
+            <Link className="hover:text-white transition-colors" to="/terms">
+              Terms of Service
+            </Link>
+            <span className="text-neutral-700 select-none">•</span>
+            <a 
+              href="https://github.com/nizam-ahamad/CloudGuard" 
+              target="_blank" 
+              rel="noreferrer" 
+              className="hover:text-white transition-colors"
+            >
+              GitHub
+            </a>
+          </div>
+
+          {/* Copyright Note */}
+          <p className="text-neutral-500 font-light tracking-wide">
+            © {new Date().getFullYear()} CloudGuard Vault. All rights reserved.
+          </p>
         </div>
       </footer>
 
