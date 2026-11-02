@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 import { 
   Check, 
@@ -16,37 +16,57 @@ import MediaCarouselModal from '../components/MediaCarouselModal';
 import DeleteConfirmModal from '../components/DeleteConfirmModal';
 import { API_BASE_URL } from '../config';
 
+const INITIAL_BATCH = 40;
+const BATCH_SIZE = 40;
+
+// Module-level cache (persists in memory across component unmounts during the session)
+let photosMemoryCache = null;
+let lastFetchTime = 0;
+const CACHE_TTL = 2 * 60 * 1000; // 2 minutes auto-refresh
+
 export default function PhotosView({ token: propToken }) {
-  const [photos, setPhotos] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [photos, setPhotos] = useState(() => photosMemoryCache || []);
+  const [loading, setLoading] = useState(!photosMemoryCache);
   const [error, setError] = useState(null);
   const [selectedCarouselIndex, setSelectedCarouselIndex] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [isBatchDownloading, setIsBatchDownloading] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(INITIAL_BATCH);
+  const observerTarget = useRef(null);
 
   const token = propToken || localStorage.getItem('token') || sessionStorage.getItem('token');
   const isSelectionActive = Array.isArray(selectedIds) && selectedIds.length > 0;
 
-  const fetchPhotos = useCallback(async () => {
+  const fetchPhotos = useCallback(async (forceRefresh = false) => {
     if (!token) {
       setLoading(false);
       return;
     }
-    setLoading(true);
+
+    const isCacheValid = photosMemoryCache && (Date.now() - lastFetchTime < CACHE_TTL);
+
+    // Serve from cache instantly if fresh
+    if (!forceRefresh && isCacheValid) {
+      setPhotos(photosMemoryCache);
+      setLoading(false);
+      return;
+    }
+
+    if (!photosMemoryCache) setLoading(true);
     setError(null);
+
     try {
       const response = await axios.get(`${API_BASE_URL}/api/files/photos`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      if (response.data?.success && Array.isArray(response.data.files)) {
-        setPhotos(response.data.files);
-      } else if (Array.isArray(response.data)) {
-        setPhotos(response.data);
-      } else {
-        setPhotos([]);
-      }
+      const media = response.data?.files || (Array.isArray(response.data) ? response.data : []);
+
+      // Update state and memory cache
+      photosMemoryCache = media;
+      lastFetchTime = Date.now();
+      setPhotos(media);
     } catch (err) {
       console.error('Error fetching photos:', err);
       setError(err.response?.data?.message || 'Failed to load media assets');
@@ -58,6 +78,31 @@ export default function PhotosView({ token: propToken }) {
   useEffect(() => {
     fetchPhotos();
   }, [fetchPhotos]);
+
+  // Windowing: reset visible count when photos change
+  useEffect(() => {
+    setVisibleCount(INITIAL_BATCH);
+  }, [photos]);
+
+  // Infinite Scroll / Lazy Windowing Intersection Observer
+  useEffect(() => {
+    const target = observerTarget.current;
+    if (!target) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0] && entries[0].isIntersecting) {
+          setVisibleCount((prev) => Math.min(prev + BATCH_SIZE, photos.length));
+        }
+      },
+      { rootMargin: '300px' }
+    );
+
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [photos.length]);
+
+  const visiblePhotos = photos.slice(0, visibleCount);
 
   const toggleSelect = (id, e) => {
     if (e && e.stopPropagation) e.stopPropagation();
@@ -83,7 +128,9 @@ export default function PhotosView({ token: propToken }) {
         headers: { Authorization: `Bearer ${token}` }
       });
 
-      setPhotos(prev => prev.filter(p => !selectedIds.includes(p._id)));
+      const updated = photos.filter(p => !selectedIds.includes(p._id));
+      photosMemoryCache = updated; // Keep memory cache in sync
+      setPhotos(updated);
       clearSelection();
       setIsDeleteModalOpen(false);
     } catch (err) {
@@ -212,64 +259,77 @@ export default function PhotosView({ token: propToken }) {
 
       {/* Responsive Media Grid */}
       {!loading && photos.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4">
-          {photos.map((item, index) => (
-            <div
-              key={item._id}
-              onClick={() => isSelectionActive ? toggleSelect(item._id) : handleOpenCarousel(index)}
-              className={`group relative aspect-square rounded-xl overflow-hidden border cursor-pointer select-none transition-all duration-200 ${
-                selectedIds.includes(item._id)
-                  ? 'ring-2 ring-blue-500 border-blue-500 shadow-md'
-                  : 'border-neutral-200 dark:border-neutral-800/80 hover:border-neutral-300 dark:hover:border-neutral-700'
-              }`}
-            >
-              {/* Checkmark Button (Top-Left) */}
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4">
+            {visiblePhotos.map((item, index) => (
               <div
-                onClick={(e) => toggleSelect(item._id, e)}
-                className={`absolute top-2.5 left-2.5 z-20 w-6 h-6 rounded-full flex items-center justify-center transition-all ${
+                key={item._id}
+                onClick={() => isSelectionActive ? toggleSelect(item._id) : handleOpenCarousel(index)}
+                className={`group relative aspect-square rounded-xl overflow-hidden border cursor-pointer select-none transition-all duration-200 ${
                   selectedIds.includes(item._id)
-                    ? 'bg-blue-600 text-white shadow-sm'
-                    : isSelectionActive
-                      ? 'bg-black/40 border border-white/60 text-transparent hover:border-white'
-                      : 'opacity-0 group-hover:opacity-100 bg-black/40 border border-white/60 text-transparent hover:border-white'
+                    ? 'ring-2 ring-blue-500 border-blue-500 shadow-md'
+                    : 'border-neutral-200 dark:border-neutral-800/80 hover:border-neutral-300 dark:hover:border-neutral-700'
                 }`}
               >
-                <Check className={`w-3.5 h-3.5 stroke-[3] ${selectedIds.includes(item._id) ? 'text-white' : 'text-transparent'}`} />
-              </div>
-
-              {/* Video or Image Preview */}
-              {item.mimeType?.startsWith('video') ? (
-                <div className="relative w-full h-full bg-neutral-950 flex items-center justify-center">
-                  <video
-                    src={item.s3Url || item.url}
-                    className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
-                    preload="metadata"
-                  />
-                  {/* Video Play Badge */}
-                  <div className="absolute bottom-2 left-2 px-2 py-0.5 rounded-md bg-black/60 backdrop-blur-md flex items-center gap-1.5 text-[11px] font-medium text-white">
-                    <Play className="w-3 h-3 fill-white" />
-                    <span>Video</span>
-                  </div>
+                {/* Checkmark Button (Top-Left) */}
+                <div
+                  onClick={(e) => toggleSelect(item._id, e)}
+                  className={`absolute top-2.5 left-2.5 z-20 w-6 h-6 rounded-full flex items-center justify-center transition-all ${
+                    selectedIds.includes(item._id)
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : isSelectionActive
+                        ? 'bg-black/40 border border-white/60 text-transparent hover:border-white'
+                        : 'opacity-0 group-hover:opacity-100 bg-black/40 border border-white/60 text-transparent hover:border-white'
+                  }`}
+                >
+                  <Check className={`w-3.5 h-3.5 stroke-[3] ${selectedIds.includes(item._id) ? 'text-white' : 'text-transparent'}`} />
                 </div>
-              ) : (
-                <img
-                  src={item.s3Url || item.url}
-                  alt={item.name}
-                  loading="lazy"
-                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                />
-              )}
 
-              {/* Hover Information Overlay */}
-              <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity p-2.5 flex flex-col justify-end pointer-events-none">
-                <p className="text-xs font-medium text-white truncate">{item.name}</p>
-                <p className="text-[10px] text-neutral-300">
-                  {new Date(item.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
-                </p>
+                {/* Video or Image Preview */}
+                {item.mimeType?.startsWith('video') ? (
+                  <div className="relative w-full h-full bg-neutral-950 flex items-center justify-center">
+                    <video
+                      src={item.s3Url || item.url}
+                      className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity pointer-events-none"
+                      preload="metadata"
+                      muted
+                      playsInline
+                    />
+                    {/* Video Play Badge */}
+                    <div className="absolute bottom-2 left-2 px-2 py-0.5 rounded-md bg-black/60 backdrop-blur-md flex items-center gap-1.5 text-[11px] font-medium text-white">
+                      <Play className="w-3 h-3 fill-white" />
+                      <span>Video</span>
+                    </div>
+                  </div>
+                ) : (
+                  <img
+                    src={item.s3Url || item.url}
+                    alt={item.name}
+                    loading="lazy"
+                    decoding="async"
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                  />
+                )}
+
+                {/* Hover Information Overlay */}
+                <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity p-2.5 flex flex-col justify-end pointer-events-none">
+                  <p className="text-xs font-medium text-white truncate">{item.name}</p>
+                  <p className="text-[10px] text-neutral-300">
+                    {new Date(item.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                  </p>
+                </div>
               </div>
+            ))}
+          </div>
+
+          {/* Infinite Scroll / Batch Windowing Sentinel */}
+          {visibleCount < photos.length && (
+            <div ref={observerTarget} className="w-full py-8 flex items-center justify-center text-xs text-neutral-400">
+              <Loader2 className="w-4 h-4 animate-spin mr-2 text-blue-500" />
+              <span>Loading more media ({visiblePhotos.length} of {photos.length})...</span>
             </div>
-          ))}
-        </div>
+          )}
+        </>
       )}
 
       {/* Floating Minimalist Action Bar */}
@@ -330,3 +390,4 @@ export default function PhotosView({ token: propToken }) {
     </div>
   );
 }
+  
