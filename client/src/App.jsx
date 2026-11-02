@@ -1646,21 +1646,6 @@ function App() {
                     </React.Fragment>
                   ))
                 )}
-                {viewMode !== 'recent' && currentFolderId && breadcrumbs.length > 1 && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const activeCrumb = breadcrumbs[breadcrumbs.length - 1];
-                      const matchedFolder = folders.find(f => (f._id || f.id) === activeCrumb.id);
-                      setFolderToView(matchedFolder || { _id: activeCrumb.id, name: activeCrumb.name });
-                      setShowFolderDetailsModal(true);
-                    }}
-                    className="p-1 rounded text-neutral-400 hover:text-white transition-colors cursor-pointer"
-                    title="Folder Details"
-                  >
-                    <Info size={16} />
-                  </button>
-                )}
               </h3>
             </div>
             <div className="flex items-center gap-4">
@@ -1699,127 +1684,224 @@ function App() {
               <div className="text-neutral-500 dark:text-neutral-400 text-xs font-semibold uppercase tracking-wider mb-3">
                 Folders
               </div>
-              <div className={`${folderView === 'grid' ? 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4' : 'flex flex-col'}`}>
-                {folders.map(folder => {
-                  const isSelected = selectedFolderIds.includes(String(folder._id));
-                  return (
-                    <div 
-                      key={folder._id}
-                      onClick={() => handleFolderClick(folder)}
-                      className={`group relative flex items-center justify-between px-4 py-3 rounded-xl border transition-all duration-150 cursor-pointer select-none ${folderView === 'grid' ? '' : 'mb-2'} ${
-                        isSelected 
-                          ? 'bg-blue-50/80 border-blue-300 dark:bg-blue-950/30 dark:border-blue-700 ring-1 ring-blue-500/30' 
-                          : 'bg-white border-neutral-200 hover:bg-neutral-50/90 hover:border-neutral-300 shadow-sm dark:bg-neutral-900/60 dark:border-neutral-800/80 dark:hover:bg-neutral-800/50 dark:hover:border-neutral-700 dark:shadow-none'
-                      }`}
-                    >
-                      {/* Left: Checkbox / Folder Icon Slot + Name */}
-                      <div className="flex items-center gap-3.5 min-w-0 flex-1">
-                        {/* Dynamic Icon / Checkbox Container */}
+              {folderView === 'grid' ? (
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                  {folders.map(folder => {
+                    const isSelected = selectedFolderIds.includes(String(folder._id));
+                    return (
+                      <div 
+                        key={folder._id}
+                        onClick={() => handleFolderClick(folder)}
+                        className={`group relative flex flex-col justify-between p-4 rounded-xl border transition-all duration-150 cursor-pointer select-none min-h-[120px] ${
+                          isSelected 
+                            ? 'bg-blue-50/80 border-blue-300 dark:bg-blue-950/30 dark:border-blue-700 ring-1 ring-blue-500/30' 
+                            : 'bg-white border-neutral-200 hover:bg-neutral-50/90 hover:border-neutral-300 shadow-sm dark:bg-neutral-900/60 dark:border-neutral-800/80 dark:hover:bg-neutral-800/50 dark:hover:border-neutral-700 dark:shadow-none'
+                        }`}
+                      >
+                        {/* Selection Checkbox in top-left corner */}
                         <div 
                           onClick={(e) => {
                             e.stopPropagation();
                             toggleFolderSelect(folder._id, e);
                           }}
-                          className="w-6 h-6 flex items-center justify-center shrink-0 cursor-pointer"
+                          className={`absolute top-3 left-3 z-10 w-5 h-5 rounded-md border flex items-center justify-center shrink-0 cursor-pointer transition-all ${
+                            isSelected
+                              ? 'opacity-100 bg-white text-black border-white shadow-sm'
+                              : isSelectionActive
+                                ? 'opacity-50 hover:opacity-100 border-neutral-400 dark:border-neutral-500 bg-neutral-100 dark:bg-neutral-900/80'
+                                : 'opacity-0 group-hover:opacity-100 border-neutral-400 dark:border-neutral-500 bg-neutral-100 dark:bg-neutral-900/80 hover:border-neutral-900 dark:hover:border-white shadow-sm'
+                          }`}
                           title={isSelected ? "Deselect folder" : "Select folder"}
                         >
-                          {isSelected ? (
-                            /* Selected State */
-                            <div className="w-5 h-5 rounded-md border border-blue-600 bg-blue-600 dark:border-white dark:bg-white text-white dark:text-black flex items-center justify-center shadow-sm">
-                              <Check className="w-3.5 h-3.5 stroke-[3]" />
-                            </div>
-                          ) : isSelectionActive ? (
-                            /* Multi-selection Active Elsewhere */
-                            <div className="w-5 h-5 rounded-md border border-neutral-400 dark:border-neutral-500 bg-white dark:bg-neutral-900 hover:border-neutral-900 dark:hover:border-white flex items-center justify-center opacity-60 hover:opacity-100 transition-all">
-                              <div className="w-2 h-2 rounded-sm bg-neutral-900 dark:bg-white opacity-0 hover:opacity-30" />
-                            </div>
-                          ) : (
-                            /* Default: Rich Filled Folder Icon -> Swaps to Checkbox on Row Hover */
-                            <>
-                              <div className="group-hover:hidden flex items-center justify-center">
-                                {/* Rich blue folder badge with subtle fill */}
-                                <Folder className="w-5 h-5 text-blue-600 fill-blue-500/20 dark:text-blue-400 dark:fill-blue-400/25 transition-transform" />
-                              </div>
-                              <div className="hidden group-hover:flex w-5 h-5 rounded-md border border-neutral-400 dark:border-neutral-500 bg-white dark:bg-neutral-900 hover:border-neutral-900 dark:hover:border-white items-center justify-center transition-all shadow-sm">
-                                <Check className="w-3.5 h-3.5 text-neutral-400 dark:text-neutral-500 stroke-[2.5]" />
-                              </div>
-                            </>
-                          )}
+                          {isSelected && <Check className="w-3.5 h-3.5 stroke-[3]" />}
                         </div>
 
-                        {/* Folder Name: High contrast in both themes */}
-                        <span className="text-sm font-medium text-neutral-800 dark:text-neutral-200 group-hover:text-black dark:group-hover:text-white truncate transition-colors">
-                          {folder.name}
-                        </span>
-                      </div>
-
-                      {/* Right: Three Dots Action Menu */}
-                      <div 
-                        onClick={(e) => e.stopPropagation()} 
-                        className="shrink-0 ml-3 flex items-center relative"
-                      >
-                        <button 
-                          onClick={(e) => { 
-                            e.stopPropagation(); 
-                            setActiveFolderMenuId(activeFolderMenuId === folder._id ? null : folder._id); 
-                          }}
-                          className="p-1.5 rounded-lg text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 dark:text-neutral-500 dark:hover:text-neutral-200 dark:hover:bg-neutral-800/80 transition-colors flex-shrink-0 cursor-pointer"
-                          title="More options"
+                        {/* Top-Right: Three Dots Action Menu */}
+                        <div 
+                          onClick={(e) => e.stopPropagation()} 
+                          className="absolute top-2.5 right-2.5 shrink-0 z-20"
                         >
-                          <MoreVertical size={16} />
-                        </button>
+                          <button 
+                            onClick={(e) => { 
+                              e.stopPropagation(); 
+                              setActiveFolderMenuId(activeFolderMenuId === folder._id ? null : folder._id); 
+                            }}
+                            className="p-1.5 rounded-lg text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 dark:text-neutral-500 dark:hover:text-neutral-200 dark:hover:bg-neutral-800/80 transition-colors flex-shrink-0 cursor-pointer"
+                            title="More options"
+                          >
+                            <MoreVertical size={16} />
+                          </button>
 
-                        <div className={`absolute right-0 top-8 w-48 bg-white dark:bg-[#1e1f20] rounded-xl shadow-xl border border-neutral-200 dark:border-zinc-800 z-[60] flex flex-col py-1 transition-all duration-200 ease-out origin-top-right transform ${activeFolderMenuId === folder._id ? 'opacity-100 scale-100 translate-y-0 pointer-events-auto' : 'opacity-0 scale-95 translate-y-[-10px] pointer-events-none'}`}>
-                          <button 
-                            onClick={(e) => { 
-                              e.stopPropagation(); 
-                              openMoveModal({ ...folder, isFolder: true });
-                              setActiveFolderMenuId(null); 
-                            }} 
-                            className="w-full text-left px-4 py-2 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors flex items-center gap-2 cursor-pointer"
-                          >
-                            <FolderInput size={16} strokeWidth={2} /> Move
-                          </button>
-                          <button 
-                            onClick={(e) => { 
-                              e.stopPropagation(); 
-                              setFolderToRename(folder);
-                              setNewRenameFolderName(folder.name);
-                              setShowRenameFolderModal(true);
-                              setActiveFolderMenuId(null); 
-                            }} 
-                            className="w-full text-left px-4 py-2 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors flex items-center gap-2 cursor-pointer"
-                          >
-                            <Pencil size={16} strokeWidth={2} /> Rename
-                          </button>
-                          <button 
-                            onClick={(e) => { 
-                              e.stopPropagation(); 
-                              setFolderToView(folder);
-                              setShowFolderDetailsModal(true);
-                              setActiveFolderMenuId(null); 
-                            }} 
-                            className="w-full text-left px-4 py-2 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors flex items-center gap-2 cursor-pointer"
-                          >
-                            <Info size={16} strokeWidth={2} /> Folder Details
-                          </button>
-                          <div className="border-t border-neutral-200 dark:border-neutral-700 my-1"></div>
-                          <button 
-                            onClick={(e) => { 
-                              e.stopPropagation(); 
-                              setFolderToDelete(folder); 
-                              setActiveFolderMenuId(null); 
-                            }} 
-                            className="w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors flex items-center gap-2 cursor-pointer"
-                          >
-                            <span className="material-symbols-outlined text-[18px]">delete</span> Delete
-                          </button>
+                          <div className={`absolute right-0 top-8 w-48 bg-white dark:bg-[#1e1f20] rounded-xl shadow-xl border border-neutral-200 dark:border-zinc-800 z-[60] flex flex-col py-1 transition-all duration-200 ease-out origin-top-right transform ${activeFolderMenuId === folder._id ? 'opacity-100 scale-100 translate-y-0 pointer-events-auto' : 'opacity-0 scale-95 translate-y-[-10px] pointer-events-none'}`}>
+                            <button 
+                              onClick={(e) => { 
+                                e.stopPropagation(); 
+                                openMoveModal({ ...folder, isFolder: true });
+                                setActiveFolderMenuId(null); 
+                              }} 
+                              className="w-full text-left px-4 py-2 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors flex items-center gap-2 cursor-pointer"
+                            >
+                              <FolderInput size={16} strokeWidth={2} /> Move
+                            </button>
+                            <button 
+                              onClick={(e) => { 
+                                e.stopPropagation(); 
+                                setFolderToRename(folder);
+                                setNewRenameFolderName(folder.name);
+                                setShowRenameFolderModal(true);
+                                setActiveFolderMenuId(null); 
+                              }} 
+                              className="w-full text-left px-4 py-2 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors flex items-center gap-2 cursor-pointer"
+                            >
+                              <Pencil size={16} strokeWidth={2} /> Rename
+                            </button>
+                            <button 
+                              onClick={(e) => { 
+                                e.stopPropagation(); 
+                                setFolderToView(folder);
+                                setShowFolderDetailsModal(true);
+                                setActiveFolderMenuId(null); 
+                              }} 
+                              className="w-full text-left px-4 py-2 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors flex items-center gap-2 cursor-pointer"
+                            >
+                              <Info size={16} strokeWidth={2} /> Folder Details
+                            </button>
+                            <div className="border-t border-neutral-200 dark:border-neutral-700 my-1"></div>
+                            <button 
+                              onClick={(e) => { 
+                                e.stopPropagation(); 
+                                setFolderToDelete(folder); 
+                                setActiveFolderMenuId(null); 
+                              }} 
+                              className="w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors flex items-center gap-2 cursor-pointer"
+                            >
+                              <span className="material-symbols-outlined text-[18px]">delete</span> Delete
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Card Content: Permanently Visible Folder Icon + Name */}
+                        <div className="flex flex-col items-center justify-center flex-1 pt-3 pb-1">
+                          <Folder className="w-8 h-8 text-blue-600 fill-blue-500/20 dark:text-blue-400 dark:fill-blue-400/25 shrink-0 transition-transform mb-2" />
+                          <span className="text-sm font-medium text-neutral-800 dark:text-neutral-200 group-hover:text-black dark:group-hover:text-white truncate max-w-full text-center transition-colors">
+                            {folder.name}
+                          </span>
                         </div>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="flex flex-col">
+                  {folders.map(folder => {
+                    const isSelected = selectedFolderIds.includes(String(folder._id));
+                    return (
+                      <div 
+                        key={folder._id}
+                        onClick={() => handleFolderClick(folder)}
+                        className={`group relative flex items-center justify-between px-4 py-3 rounded-xl border transition-all duration-150 cursor-pointer select-none mb-2 ${
+                          isSelected 
+                            ? 'bg-blue-50/80 border-blue-300 dark:bg-blue-950/30 dark:border-blue-700 ring-1 ring-blue-500/30' 
+                            : 'bg-white border-neutral-200 hover:bg-neutral-50/90 hover:border-neutral-300 shadow-sm dark:bg-neutral-900/60 dark:border-neutral-800/80 dark:hover:bg-neutral-800/50 dark:hover:border-neutral-700 dark:shadow-none'
+                        }`}
+                      >
+                        {/* Left: Checkbox Slot + Permanent Folder Icon + Folder Name */}
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          {/* Dedicated Checkbox Slot (Smooth Fade-in on Hover / Visible when Selected) */}
+                          <div 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleFolderSelect(folder._id, e);
+                            }}
+                            className={`w-5 h-5 rounded-md border flex items-center justify-center shrink-0 cursor-pointer transition-all ${
+                              isSelected
+                                ? 'opacity-100 bg-white text-black border-white'
+                                : isSelectionActive
+                                  ? 'opacity-50 hover:opacity-100 border-neutral-400 dark:border-neutral-500 bg-neutral-100 dark:bg-neutral-900/80'
+                                  : 'opacity-0 group-hover:opacity-100 border-neutral-400 dark:border-neutral-500 bg-neutral-100 dark:bg-neutral-900/80 hover:border-neutral-900 dark:hover:border-white'
+                            }`}
+                            title={isSelected ? "Deselect folder" : "Select folder"}
+                          >
+                            {isSelected && <Check className="w-3.5 h-3.5 stroke-[3]"/>}
+                          </div>
+
+                          {/* Folder Icon: ALWAYS VISIBLE */}
+                          <Folder className="w-5 h-5 text-blue-600 fill-blue-500/20 dark:text-blue-400 dark:fill-blue-400/25 shrink-0"/>
+
+                          {/* Folder Name */}
+                          <span className="text-sm font-medium text-neutral-800 dark:text-neutral-200 group-hover:text-black dark:group-hover:text-white truncate transition-colors">
+                            {folder.name}
+                          </span>
+                        </div>
+
+                        {/* Right: Three Dots Action Menu */}
+                        <div 
+                          onClick={(e) => e.stopPropagation()} 
+                          className="shrink-0 ml-3 flex items-center relative"
+                        >
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setActiveFolderMenuId(activeFolderMenuId === folder._id ? null : folder._id);
+                            }}
+                            className="p-1.5 rounded-lg text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 dark:text-neutral-500 dark:hover:text-neutral-200 dark:hover:bg-neutral-800/80 transition-colors cursor-pointer"
+                            title="More options"
+                          >
+                            <MoreVertical size={16}/>
+                          </button>
+
+                          <div className={`absolute right-0 top-8 w-48 bg-white dark:bg-[#1e1f20] rounded-xl shadow-xl border border-neutral-200 dark:border-zinc-800 z-[60] flex flex-col py-1 transition-all duration-200 ease-out origin-top-right transform ${activeFolderMenuId === folder._id ? 'opacity-100 scale-100 translate-y-0 pointer-events-auto' : 'opacity-0 scale-95 translate-y-[-10px] pointer-events-none'}`}>
+                            <button 
+                              onClick={(e) => { 
+                                e.stopPropagation(); 
+                                openMoveModal({ ...folder, isFolder: true });
+                                setActiveFolderMenuId(null); 
+                              }} 
+                              className="w-full text-left px-4 py-2 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors flex items-center gap-2 cursor-pointer"
+                            >
+                              <FolderInput size={16} strokeWidth={2} /> Move
+                            </button>
+                            <button 
+                              onClick={(e) => { 
+                                e.stopPropagation(); 
+                                setFolderToRename(folder);
+                                setNewRenameFolderName(folder.name);
+                                setShowRenameFolderModal(true);
+                                setActiveFolderMenuId(null); 
+                              }} 
+                              className="w-full text-left px-4 py-2 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors flex items-center gap-2 cursor-pointer"
+                            >
+                              <Pencil size={16} strokeWidth={2} /> Rename
+                            </button>
+                            <button 
+                              onClick={(e) => { 
+                                e.stopPropagation(); 
+                                setFolderToView(folder);
+                                setShowFolderDetailsModal(true);
+                                setActiveFolderMenuId(null); 
+                              }} 
+                              className="w-full text-left px-4 py-2 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors flex items-center gap-2 cursor-pointer"
+                            >
+                              <Info size={16} strokeWidth={2} /> Folder Details
+                            </button>
+                            <div className="border-t border-neutral-200 dark:border-neutral-700 my-1"></div>
+                            <button 
+                              onClick={(e) => { 
+                                e.stopPropagation(); 
+                                setFolderToDelete(folder); 
+                                setActiveFolderMenuId(null); 
+                              }} 
+                              className="w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors flex items-center gap-2 cursor-pointer"
+                            >
+                              <span className="material-symbols-outlined text-[18px]">delete</span> Delete
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 
