@@ -1732,7 +1732,7 @@ function App() {
                         ) : (
                           /* Resting State: Folder icon swaps to checkbox on card hover */
                           <>
-                            <Folder className="w-5 h-5 text-neutral-400 group-hover:hidden transition-colors" />
+                            <Folder className="w-5 h-5 text-blue-400 fill-blue-400/20 group-hover:hidden transition-colors" />
                             <div className="hidden group-hover:flex w-5 h-5 rounded border border-neutral-400 hover:border-white bg-neutral-900/90 items-center justify-center transition-all">
                               <Check className="w-3.5 h-3.5 text-transparent hover:text-neutral-400 stroke-[2.5]" />
                             </div>
