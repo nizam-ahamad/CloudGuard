@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Routes, Route, Navigate, useSearchParams } from 'react-router-dom';
+import { Routes, Route, Navigate, useSearchParams, useLocation, useNavigate, NavLink } from 'react-router-dom';
 import axios from 'axios';
 import ResetPassword from './ResetPassword';
 import CloudGuardLogo from './CloudGuardLogo';
@@ -8,11 +8,13 @@ import OTPVerification from './OTPVerification';
 import Toast from './Toast';
 import MoveModal from './components/MoveModal';
 import FolderDetailsModal from './components/FolderDetailsModal';
+import DeleteConfirmModal from './components/DeleteConfirmModal';
 import LandingPage from './pages/LandingPage';
 import AuthPage from './pages/AuthPage';
 import PrivacyPolicy from './pages/PrivacyPolicy';
 import TermsOfService from './pages/TermsOfService';
-import { Folder, FolderInput, X, MoreVertical, Pencil, Info, LayoutGrid, List, Check, Trash2 } from 'lucide-react';
+import PhotosView from './pages/PhotosView';
+import { Folder, FolderInput, X, MoreVertical, Pencil, Info, LayoutGrid, List, Check, Trash2, Image, Play, ChevronLeft, ChevronRight, Download, Clock } from 'lucide-react';
 
 import { API_BASE_URL } from "./config";
 import Plyr from 'plyr';
@@ -32,6 +34,8 @@ class ErrorBoundary extends React.Component {
 }
 
 function App() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -284,6 +288,7 @@ function App() {
   const [moveFolders, setMoveFolders] = useState([]);
   const [isMoveLoading, setIsMoveLoading] = useState(false);
   const [folderToDelete, setFolderToDelete] = useState(null);
+  const [isDeletingFolder, setIsDeletingFolder] = useState(false);
   const [showRenameFolderModal, setShowRenameFolderModal] = useState(false);
   const [folderToRename, setFolderToRename] = useState(null);
   const [newRenameFolderName, setNewRenameFolderName] = useState('');
@@ -333,6 +338,7 @@ function App() {
 
   const confirmFolderDelete = async () => {
     if (!folderToDelete) return;
+    setIsDeletingFolder(true);
     try {
       await axios.delete(`${API_BASE_URL}/api/folders/${folderToDelete._id}`, { headers: { Authorization: `Bearer ${token}` } });
       setFolderToDelete(null);
@@ -342,6 +348,8 @@ function App() {
       fetchStorageStats();
     } catch (err) {
       addToast('error', 'Failed to delete folder');
+    } finally {
+      setIsDeletingFolder(false);
     }
   };
 
@@ -1272,28 +1280,50 @@ function App() {
         {/* Main Navigation */}
         <div className="flex-1 px-4 space-y-1">
           <button 
-            onClick={() => { setViewMode('all'); setCurrentDirectory(''); setIsSidebarOpen(false); }}
-            className={`group relative w-full flex items-center h-12 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${viewMode === 'all' ? 'text-secondary bg-surface-container-low dark:bg-[#282a2c] dark:text-[#e3e3e3]' : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'}`}
+            onClick={() => { setViewMode('all'); setCurrentDirectory(''); setIsSidebarOpen(false); if (location.pathname !== '/dashboard') navigate('/dashboard'); }}
+            className={`group relative w-full flex items-center h-12 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${viewMode === 'all' && location.pathname !== '/dashboard/photos' ? 'text-secondary bg-surface-container-low dark:bg-[#282a2c] dark:text-[#e3e3e3]' : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'}`}
           >
             <div className="min-w-[3rem] flex justify-center items-center">
-              <span className="material-symbols-outlined shrink-0" data-weight={viewMode === 'all' ? "fill" : ""}>folder_open</span>
+              <span className="material-symbols-outlined shrink-0" data-weight={viewMode === 'all' && location.pathname !== '/dashboard/photos' ? "fill" : ""}>folder_open</span>
             </div>
-            <span className={`font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-32 opacity-100'}`}>My Files</span>
+            <span className={`font-semibold font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-32 opacity-100'}`}>My Files</span>
             {isCollapsed && (
               <div className="absolute left-full ml-4 px-3 py-1 bg-[#1e1f20] border border-zinc-800 text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
                 My Files
               </div>
             )}
           </button>
-          
-          <button 
-            onClick={() => { setViewMode('recent'); setCurrentDirectory(''); setIsSidebarOpen(false); }}
-            className={`group relative w-full flex items-center h-12 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${viewMode === 'recent' ? 'text-secondary bg-surface-container-low dark:bg-[#282a2c] dark:text-[#e3e3e3]' : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'}`}
+
+          <NavLink 
+            to="/dashboard/photos"
+            onClick={() => { setIsSidebarOpen(false); }}
+            className={({ isActive }) =>
+              `group relative w-full flex items-center h-12 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 text-center ${
+                isActive || location.pathname === '/dashboard/photos'
+                  ? 'text-secondary bg-surface-container-low dark:bg-[#282a2c] dark:text-[#e3e3e3]'
+                  : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'
+              }`
+            }
           >
             <div className="min-w-[3rem] flex justify-center items-center">
-              <span className="material-symbols-outlined shrink-0" data-weight={viewMode === 'recent' ? "fill" : ""}>history</span>
+              <span className="material-symbols-outlined shrink-0" data-weight={location.pathname === '/dashboard/photos' ? "fill" : ""}>photo_library</span>
             </div>
-            <span className={`font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-32 opacity-100'}`}>Recent</span>
+            <span className={`text-center font-semibold font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-32 opacity-100'}`}>Photos</span>
+            {isCollapsed && (
+              <div className="absolute left-full ml-4 px-3 py-1 bg-[#1e1f20] border border-zinc-800 text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+                Photos
+              </div>
+            )}
+          </NavLink>
+          
+          <button 
+            onClick={() => { setViewMode('recent'); setCurrentDirectory(''); setIsSidebarOpen(false); if (location.pathname !== '/dashboard') navigate('/dashboard'); }}
+            className={`group relative w-full flex items-center h-12 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${viewMode === 'recent' && location.pathname !== '/dashboard/photos' ? 'text-secondary bg-surface-container-low dark:bg-[#282a2c] dark:text-[#e3e3e3]' : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'}`}
+          >
+            <div className="min-w-[3rem] flex justify-center items-center">
+              <span className="material-symbols-outlined shrink-0" data-weight={viewMode === 'recent' && location.pathname !== '/dashboard/photos' ? "fill" : ""}>history</span>
+            </div>
+            <span className={`font-semibold font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-32 opacity-100'}`}>Recent</span>
             {isCollapsed && (
               <div className="absolute left-full ml-4 px-3 py-1 bg-[#1e1f20] border border-zinc-800 text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
                 Recent
@@ -1311,7 +1341,7 @@ function App() {
             <div className="min-w-[3rem] flex justify-center items-center">
               <span className="material-symbols-outlined shrink-0" data-weight={viewMode === 'settings' ? "fill" : ""}>settings</span>
             </div>
-            <span className={`font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-32 opacity-100'}`}>Settings</span>
+            <span className={`font-semibold font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-32 opacity-100'}`}>Settings</span>
             {isCollapsed && (
               <div className="absolute left-full ml-4 px-3 py-1 bg-[#1e1f20] border border-zinc-800 text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
                 Settings
@@ -1471,6 +1501,8 @@ function App() {
               </form>
             </div>
           </div>
+        ) : location.pathname === '/dashboard/photos' ? (
+          <PhotosView token={token} />
         ) : (
           <>
         {/* Page Title */}
@@ -2075,30 +2107,15 @@ function App() {
       </main>
 
       {/* Folder Delete Modal */}
-      {folderToDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-white dark:bg-[#1e1f20] rounded-2xl w-full max-w-sm shadow-2xl p-6 border border-outline-variant dark:border-zinc-800">
-            <h3 className="font-title-lg text-title-lg text-gray-900 dark:text-white mb-2">Delete Folder</h3>
-            <p className="text-neutral-600 dark:text-neutral-300 text-sm mb-6">
-              Are you sure? Deleting this folder will permanently delete all files inside it.
-            </p>
-            <div className="flex items-center justify-end gap-3">
-              <button 
-                onClick={() => setFolderToDelete(null)}
-                className="px-4 py-2 text-sm font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-800 rounded-xl transition-colors duration-200"
-              >
-                Cancel
-              </button>
-              <button 
-                onClick={confirmFolderDelete}
-                className="px-4 py-2 text-sm font-medium bg-error hover:bg-red-700 text-white rounded-xl transition-colors duration-200"
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <DeleteConfirmModal
+        isOpen={Boolean(folderToDelete)}
+        onClose={() => setFolderToDelete(null)}
+        onConfirm={confirmFolderDelete}
+        title={`Delete "${folderToDelete?.name}"?`}
+        description="Are you sure? Deleting this folder will permanently delete all files inside it."
+        isDeleting={isDeletingFolder}
+        count={1}
+      />
 
       {/* Folder Details Modal */}
       <FolderDetailsModal
@@ -2274,45 +2291,26 @@ function App() {
       )}
 
       {/* Delete Confirmation Modal */}
-      {(fileToDelete || showBulkDeleteModal) && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-          <div className="bg-white dark:bg-[#1e1f20] rounded-xl shadow-xl border border-outline-variant dark:border-zinc-800 w-full max-w-md p-6 flex flex-col gap-4">
-            <h3 className="font-title-lg text-on-surface dark:text-[#e3e3e3]">Confirm Delete</h3>
-            <p className="font-body-md text-on-surface-variant dark:text-[#c4c7c5]">
-              {showBulkDeleteModal ? (
-                <>Are you sure you want to permanently delete the <strong className="break-all text-on-surface dark:text-[#e3e3e3]">{selectedFolderIds.length + selectedFileIds.length}</strong> selected item{selectedFolderIds.length + selectedFileIds.length === 1 ? '' : 's'}?</>
-              ) : (
-                <>Are you sure you want to permanently delete <strong className="break-all text-on-surface dark:text-[#e3e3e3]">{fileToDelete?.name}</strong>?</>
-              )}
-            </p>
-            <div className="flex justify-end gap-3 mt-4">
-              <button 
-                onClick={() => { setFileToDelete(null); setShowBulkDeleteModal(false); }}
-                className="px-4 py-2 font-label-md text-on-surface-variant dark:text-[#c4c7c5] hover:bg-surface-container-high dark:hover:bg-zinc-800/70 rounded-lg transition-colors"
-              >
-                Cancel
-              </button>
-              <button 
-                onClick={showBulkDeleteModal ? handleBulkDelete : confirmDelete}
-                disabled={isDeleting || isBulkDeleting}
-                className={`px-4 py-2 font-label-md bg-error dark:bg-red-900 text-on-error dark:text-red-100 rounded-lg transition-colors ${(isDeleting || isBulkDeleting) ? 'opacity-70 cursor-not-allowed' : 'hover:bg-[#b91c1c] dark:hover:bg-red-800'}`}
-              >
-                {(isDeleting || isBulkDeleting) ? (
-                  <span className="flex items-center justify-center gap-2">
-                    <span className="animate-spin inline-block w-4 h-4 border-[2px] border-current border-t-transparent rounded-full" role="status" aria-label="loading"></span>
-                    Deleting...
-                  </span>
-                ) : (
-                  'Yes, Delete'
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <DeleteConfirmModal
+        isOpen={Boolean(fileToDelete || showBulkDeleteModal)}
+        onClose={() => { setFileToDelete(null); setShowBulkDeleteModal(false); }}
+        onConfirm={showBulkDeleteModal ? handleBulkDelete : confirmDelete}
+        title={
+          showBulkDeleteModal
+            ? undefined
+            : `Delete "${fileToDelete?.name}"?`
+        }
+        description={
+          showBulkDeleteModal
+            ? `Are you sure you want to permanently delete the ${selectedFolderIds.length + selectedFileIds.length} selected item${selectedFolderIds.length + selectedFileIds.length === 1 ? '' : 's'}?`
+            : `Are you sure you want to permanently delete "${fileToDelete?.name}"? It will be moved to Trash.`
+        }
+        count={showBulkDeleteModal ? (selectedFolderIds.length + selectedFileIds.length) : 1}
+        isDeleting={isDeleting || isBulkDeleting}
+      />
 
       {/* Floating Bottom Action Dock */}
-      {isSelectionActive && (
+      {isSelectionActive && location.pathname !== '/dashboard/photos' && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2.5 bg-[#18181b]/95 border border-neutral-700/80 rounded-2xl shadow-2xl backdrop-blur-md animate-fade-in text-white text-sm">
           <span className="text-sm font-medium text-neutral-300">{totalSelectedCount} selected</span>
           <div className="w-px h-4 bg-neutral-700" />
@@ -2430,6 +2428,7 @@ function App() {
     <Routes>
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
       <Route path="/dashboard" element={dashboardContent} />
+      <Route path="/dashboard/photos" element={dashboardContent} />
       <Route path="/privacy" element={<PrivacyPolicy />} />
       <Route path="/terms" element={<TermsOfService />} />
       <Route path="*" element={<Navigate to="/dashboard" replace />} />

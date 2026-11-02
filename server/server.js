@@ -1278,6 +1278,85 @@ app.get('/api/files', verifyToken, async (req, res) => {
   }
 });
 
+// Dedicated Photos & Media Endpoint
+app.get('/api/files/photos', verifyToken, async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  try {
+    const userId = req.user._id;
+    const mediaFiles = await FileModel.find({
+      $and: [
+        {
+          $or: [
+            { userId: userId },
+            { userId: String(userId) }
+          ]
+        },
+        { isTrash: { $ne: true } },
+        { isDeleted: { $ne: true } },
+        { securityStatus: { $in: ['Safe', 'unscanned_too_large'] } },
+        {
+          $or: [
+            { mimetype: { $regex: /^(image|video)\//i } },
+            { mimeType: { $regex: /^(image|video)\//i } },
+            { extension: { $in: ['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg', 'mp4', 'webm', 'mov', 'mkv'] } },
+            { originalName: { $regex: /\.(jpg|jpeg|png|webp|gif|svg|mp4|webm|mov|mkv)$/i } },
+            { name: { $regex: /\.(jpg|jpeg|png|webp|gif|svg|mp4|webm|mov|mkv)$/i } }
+          ]
+        }
+      ]
+    })
+    .sort({ uploadedAt: -1, createdAt: -1 })
+    .lean();
+
+    const filesWithUrls = await Promise.all(mediaFiles.map(async (file) => {
+      let targetKey = file.s3Key;
+      if (!targetKey && file.location) {
+        try {
+          const urlObj = new URL(file.location);
+          targetKey = decodeURIComponent(urlObj.pathname.substring(1).replace(/\+/g, '%20'));
+        } catch (e) {}
+      }
+
+      let presignedUrl = '';
+      if (targetKey && process.env.AWS_BUCKET_NAME) {
+        try {
+          const command = new GetObjectCommand({
+            Bucket: process.env.AWS_BUCKET_NAME,
+            Key: targetKey
+          });
+          presignedUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
+        } catch (err) {
+          console.error('Error signing URL for media asset:', err.message);
+        }
+      }
+
+      const finalUrl = presignedUrl || file.location || '';
+      const ext = (file.originalName || file.name || '').split('.').pop().toLowerCase();
+      const isVideo = (file.mimetype || file.mimeType || '').startsWith('video') || ['mp4', 'webm', 'mov', 'mkv'].includes(ext);
+      const mimeType = file.mimetype || file.mimeType || (isVideo ? `video/${ext === 'mov' ? 'quicktime' : ext}` : `image/${ext === 'jpg' ? 'jpeg' : ext}`);
+
+      return {
+        ...file,
+        _id: file._id.toString(),
+        name: file.originalName || file.name,
+        mimeType: mimeType,
+        mimetype: mimeType,
+        extension: ext,
+        createdAt: file.uploadedAt || file.createdAt || new Date(),
+        s3Url: finalUrl,
+        url: finalUrl
+      };
+    }));
+
+    return res.json({ success: true, count: filesWithUrls.length, files: filesWithUrls });
+  } catch (error) {
+    console.error('Error fetching photos:', error);
+    return res.status(500).json({ success: false, message: 'Failed to fetch media assets' });
+  }
+});
+
 // Rename File Endpoint
 app.patch('/api/files/:id/rename', verifyToken, async (req, res) => {
   try {
@@ -1512,6 +1591,58 @@ app.get('/api/files/:id/access', verifyToken, async (req, res) => {
   } catch (error) {
     console.error('Access URL generation error:', error);
     res.status(500).json({ error: 'Failed to generate access URL' });
+  }
+});
+
+// Dedicated Attachment Download Route
+app.get('/api/files/:id/download', verifyToken, async (req, res) => {
+  try {
+    let query = {
+      _id: req.params.id,
+      $or: [
+        { userId: req.user._id },
+        { userId: String(req.user._id) },
+        { user: req.user._id }
+      ]
+    };
+    if (req.user.isAdmin) {
+      query = { _id: req.params.id };
+    }
+    const file = await FileModel.findOne(query);
+    if (!file) {
+      return res.status(404).json({ success: false, message: 'File not found' });
+    }
+
+    let targetKey = file.s3Key || file.key;
+    if (!targetKey && file.location) {
+      try {
+        const urlObj = new URL(file.location);
+        targetKey = decodeURIComponent(urlObj.pathname.substring(1).replace(/\+/g, '%20'));
+      } catch (e) {
+        console.error("URL parsing failed for location:", file.location);
+      }
+    }
+
+    if (!targetKey) {
+      return res.status(400).json({ success: false, message: 'S3 Key missing' });
+    }
+
+    const fileName = file.originalName || file.name || 'download';
+    const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME;
+
+    const command = new GetObjectCommand({
+      Bucket: bucket,
+      Key: targetKey,
+      ResponseContentDisposition: `attachment; filename="${encodeURIComponent(fileName)}"; filename*=UTF-8''${encodeURIComponent(fileName)}`
+    });
+
+    // Valid for 5 minutes (300 seconds)
+    const downloadUrl = await getSignedUrl(s3, command, { expiresIn: 300 });
+
+    res.json({ success: true, downloadUrl });
+  } catch (err) {
+    console.error('Error generating download url:', err);
+    res.status(500).json({ success: false, message: 'Download failed' });
   }
 });
 
