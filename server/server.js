@@ -1027,45 +1027,160 @@ app.patch('/api/folders/:id/rename', verifyToken, async (req, res) => {
   }
 });
 
-app.get('/api/folders/:id/stats', verifyToken, async (req, res) => {
+// Recursive helper to collect all descendant folder IDs
+const getFolderDescendantIds = (parentFolderId, folderList) => {
+  const ids = [];
+  const visited = new Set();
+  const rootIdStr = parentFolderId ? parentFolderId.toString() : '';
+  if (!rootIdStr) return ids;
+
+  visited.add(rootIdStr);
+  const queue = [rootIdStr];
+
+  while (queue.length > 0) {
+    const currentParentId = queue.shift();
+    const children = folderList.filter(
+      f => f.parentId && f.parentId.toString() === currentParentId
+    );
+    for (const child of children) {
+      const childIdStr = child._id.toString();
+      if (!visited.has(childIdStr)) {
+        visited.add(childIdStr);
+        ids.push(child._id);
+        queue.push(childIdStr);
+      }
+    }
+  }
+  return ids;
+};
+
+// Recursive Folder Details & Stats Handler
+const handleFolderDetailsOrStats = async (req, res) => {
   try {
-    const folderId = req.params.id;
-    const folder = await FolderModel.findOne({ _id: folderId, userId: req.user._id });
-    if (!folder) return res.status(404).json({ error: 'Folder not found' });
+    const targetFolderId = req.params.id || req.params.folderId;
+    if (!targetFolderId || !mongoose.Types.ObjectId.isValid(targetFolderId)) {
+      return res.status(400).json({ success: false, message: 'Invalid folder ID' });
+    }
+    const targetObjectId = new mongoose.Types.ObjectId(targetFolderId);
 
-    const targetFolderId = new mongoose.Types.ObjectId(folderId);
-    // Removed ObjectId cast for targetUserId since FileSchema defines userId as a String
-    const targetUserId = req.user._id;
+    const folder = await FolderModel.findOne({
+      _id: targetObjectId,
+      $or: [
+        { userId: req.user._id },
+        { userId: req.user._id.toString() },
+        { user: req.user._id }
+      ]
+    });
+    if (!folder) return res.status(404).json({ success: false, message: 'Folder not found' });
 
-    const stats = await FileModel.aggregate([
-      { 
-        $match: { 
-          folderId: targetFolderId,
-          userId: targetUserId
-        } 
-      },
+    // 1. Fetch all user folders to build descendant tree, excluding trash/deleted
+    const allUserFolders = await FolderModel.find({
+      $or: [
+        { userId: req.user._id },
+        { userId: req.user._id.toString() },
+        { user: req.user._id }
+      ],
+      isTrash: { $ne: true },
+      isDeleted: { $ne: true }
+    }).lean();
+
+    const getDescendants = (parentId, list) => {
+      let children = list.filter(f => {
+        const pId = f.parentId || f.parentFolderId;
+        return pId && pId.toString() === parentId.toString();
+      });
+      let ids = [];
+      for (const child of children) {
+        ids.push(child._id);
+        ids = ids.concat(getDescendants(child._id, list));
+      }
+      return ids;
+    };
+
+    // 2. Collect all descendant folder IDs recursively
+    const descendantIds = getDescendants(targetFolderId, allUserFolders);
+    const allFolderObjectIds = [
+      targetObjectId,
+      ...descendantIds
+        .filter(id => id && mongoose.Types.ObjectId.isValid(id.toString()))
+        .map(id => new mongoose.Types.ObjectId(id.toString()))
+    ];
+
+    // 3. Strictly Scope the File Count AND Exclude Trash / Soft-deleted / Non-safe files
+    const fileFilter = {
+      $or: [
+        { userId: req.user._id.toString() },
+        { userId: req.user._id },
+        { user: req.user._id }
+      ],
+      $and: [
+        {
+          $or: [
+            { folderId: { $in: allFolderObjectIds } },
+            { folder: { $in: allFolderObjectIds } }
+          ]
+        },
+        { isTrash: { $ne: true } },
+        { isDeleted: { $ne: true } },
+        { status: { $ne: 'trash' } },
+        { securityStatus: { $in: ['Safe', 'unscanned_too_large'] } }
+      ]
+    };
+
+    // 4. Derive BOTH count and size from the exact same filtered query
+    const totalFiles = await FileModel.countDocuments(fileFilter);
+
+    const [sizeAgg] = await FileModel.aggregate([
+      { $match: fileFilter },
       {
         $group: {
           _id: null,
-          fileCount: { $sum: 1 },
-          totalSizeBytes: { $sum: '$size' }
+          totalBytes: { $sum: '$size' }
         }
       }
     ]);
 
-    if (stats.length > 0) {
-      return res.json({ 
-        fileCount: stats[0].fileCount, 
-        totalSizeBytes: stats[0].totalSizeBytes 
-      });
-    } else {
-      return res.json({ fileCount: 0, totalSizeBytes: 0 });
-    }
+    const totalBytes = sizeAgg?.totalBytes || 0;
+
+    const folderIdStr = folder._id.toString();
+    const directSubfolders = allUserFolders.filter(f => {
+      const pId = f.parentId || f.parentFolderId;
+      return pId && pId.toString() === folderIdStr;
+    }).length;
+
+    const statsData = {
+      name: folder.name,
+      createdAt: folder.createdAt,
+      totalFiles,
+      totalBytes,
+      fileCount: totalFiles,
+      totalSizeBytes: totalBytes,
+      subfolderCount: descendantIds.length,
+      totalSubfolders: descendantIds.length,
+      directSubfolders
+    };
+
+    return res.json({
+      success: true,
+      data: {
+        totalFiles,
+        totalBytes,
+        subfolderCount: descendantIds.length,
+        totalSubfolders: descendantIds.length,
+        directSubfolders,
+        name: folder.name,
+        createdAt: folder.createdAt
+      },
+      ...statsData
+    });
   } catch (err) {
-    console.error('Error fetching folder stats:', err);
-    return res.status(500).json({ error: 'Failed to fetch folder stats' });
+    console.error('Error fetching folder stats/details:', err);
+    return res.status(500).json({ success: false, error: 'Failed to fetch folder stats' });
   }
-});
+};
+
+app.get('/api/folders/:id/stats', verifyToken, handleFolderDetailsOrStats);
+app.get('/api/folders/:id/details', verifyToken, handleFolderDetailsOrStats);
 
 app.delete('/api/folders/:id', verifyToken, async (req, res) => {
   try {
@@ -1146,6 +1261,7 @@ app.get('/api/files', verifyToken, async (req, res) => {
       _id: file._id.toString(),
       name: file.originalName || file.name,
       diskName: file.diskName || file.name,
+      folderId: file.folderId ? file.folderId.toString() : null,
       isFolder: false,
       date: new Date(file.uploadedAt || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
       mtimeMs: new Date(file.uploadedAt || Date.now()).getTime(),
@@ -1245,8 +1361,6 @@ app.patch('/api/files/bulk-move', verifyToken, async (req, res) => {
       targetFolderId = null;
     }
 
-    // Convert strings to ObjectIds safely if needed or let Mongoose handle it. 
-    // We will just pass fileIds to $in if they are valid.
     await FileModel.updateMany(
       { _id: { $in: fileIds }, userId: req.user._id },
       { $set: { folderId: targetFolderId } }
@@ -1258,6 +1372,110 @@ app.patch('/api/files/bulk-move', verifyToken, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// Multi-Item Batch Move Route (supports both folders and files)
+const handleMoveBatch = async (req, res) => {
+  try {
+    let { folderIds = [], fileIds = [], targetFolderId = null } = req.body;
+    const userId = req.user._id;
+
+    if (!targetFolderId || targetFolderId === "null" || targetFolderId === "" || targetFolderId === "root") {
+      targetFolderId = null;
+    }
+
+    let parsedTargetFolderId = null;
+    if (targetFolderId) {
+      if (!mongoose.Types.ObjectId.isValid(targetFolderId.toString())) {
+        return res.status(400).json({ success: false, message: 'Invalid target folder ID' });
+      }
+      parsedTargetFolderId = new mongoose.Types.ObjectId(targetFolderId.toString());
+      // Verify target folder exists and belongs to the user
+      const targetFolder = await FolderModel.findOne({
+        _id: parsedTargetFolderId,
+        $or: [{ userId }, { userId: userId.toString() }, { user: userId }]
+      });
+      if (!targetFolder) {
+        return res.status(404).json({ success: false, message: 'Target folder not found' });
+      }
+    }
+
+    // Circular check: ensure targetFolderId is not among folderIds or any of their descendants
+    if (parsedTargetFolderId && folderIds.length > 0) {
+      const allUserFolders = await FolderModel.find({
+        $or: [{ userId }, { userId: userId.toString() }, { user: userId }]
+      }).lean();
+
+      const getDescendants = (parentId, list) => {
+        let children = list.filter(f => {
+          const pId = f.parentId || f.parentFolderId;
+          return pId && pId.toString() === parentId.toString();
+        });
+        let ids = [];
+        for (const child of children) {
+          ids.push(child._id.toString());
+          ids = ids.concat(getDescendants(child._id, list));
+        }
+        return ids;
+      };
+
+      const invalidTargetIds = new Set();
+      folderIds.forEach(fId => {
+        if (!fId) return;
+        const idStr = fId.toString();
+        invalidTargetIds.add(idStr);
+        getDescendants(idStr, allUserFolders).forEach(dId => invalidTargetIds.add(dId));
+      });
+
+      if (invalidTargetIds.has(parsedTargetFolderId.toString())) {
+        return res.status(400).json({
+          success: false,
+          message: 'Cannot move a folder into itself or its own subfolder'
+        });
+      }
+    }
+
+    if (fileIds.length > 0) {
+      const validFileIds = fileIds
+        .filter(id => id && mongoose.Types.ObjectId.isValid(id.toString()))
+        .map(id => new mongoose.Types.ObjectId(id.toString()));
+
+      if (validFileIds.length > 0) {
+        await FileModel.updateMany(
+          {
+            _id: { $in: validFileIds },
+            $or: [{ userId }, { userId: userId.toString() }, { user: userId }]
+          },
+          { $set: { folderId: parsedTargetFolderId } }
+        );
+      }
+    }
+
+    if (folderIds.length > 0) {
+      const validFolderIds = folderIds
+        .filter(id => id && mongoose.Types.ObjectId.isValid(id.toString()))
+        .map(id => new mongoose.Types.ObjectId(id.toString()));
+
+      if (validFolderIds.length > 0) {
+        await FolderModel.updateMany(
+          {
+            _id: { $in: validFolderIds },
+            $or: [{ userId }, { userId: userId.toString() }, { user: userId }]
+          },
+          { $set: { parentId: parsedTargetFolderId } }
+        );
+      }
+    }
+
+    return res.json({ success: true, message: 'Items moved successfully' });
+  } catch (err) {
+    console.error('Error in batch move:', err);
+    return res.status(500).json({ success: false, message: err.message, error: err.message });
+  }
+};
+
+app.put('/api/folders/move-batch', verifyToken, handleMoveBatch);
+app.post('/api/folders/move-batch', verifyToken, handleMoveBatch);
+app.patch('/api/folders/move-batch', verifyToken, handleMoveBatch);
 
 // Access File Endpoint (Presigned URL)
 app.get('/api/files/:id/access', verifyToken, async (req, res) => {

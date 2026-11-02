@@ -11,12 +11,22 @@ function MoveModalContent({
   itemsToMove: itemsProp,
   folders: foldersProp = [],
   onMove,
+  onSuccess,
   initialFolderId = null,
+  currentPath: initialPath,
+  initialPath: initialPathAlt,
   isMoving = false
 }) {
-  // 1. Safe State Defaults
+  const incomingInitialPath = initialPath || initialPathAlt || null;
+
+  // 1. Safe State Defaults - Initialize currentPath from props rather than hardcoded Home
   const [folders, setFolders] = useState([]);
-  const [currentPath, setCurrentPath] = useState([{ id: null, name: 'Home' }]);
+  const [currentPath, setCurrentPath] = useState(() => {
+    if (incomingInitialPath && Array.isArray(incomingInitialPath) && incomingInitialPath.length > 0) {
+      return incomingInitialPath;
+    }
+    return [{ id: null, name: 'Home' }];
+  });
 
   // Synchronize incoming foldersProp safely
   useEffect(() => {
@@ -27,90 +37,104 @@ function MoveModalContent({
     }
   }, [foldersProp]);
 
-  // Reset path when modal opens or item changes
+  // Sync path if modal re-opens with different folder context
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && incomingInitialPath && Array.isArray(incomingInitialPath) && incomingInitialPath.length > 0) {
+      setCurrentPath(incomingInitialPath);
+    } else if (isOpen && (!incomingInitialPath || incomingInitialPath.length === 0)) {
       setCurrentPath([{ id: null, name: 'Home' }]);
     }
-  }, [isOpen, itemToMove, itemsProp]);
+  }, [isOpen, incomingInitialPath]);
 
   if (!isOpen) return null;
 
-  // 3. Path State Guard
+  // Path State Guard
   const safePath = Array.isArray(currentPath) && currentPath.length > 0
     ? currentPath
     : [{ id: null, name: 'Home' }];
   const currentFolder = safePath[safePath.length - 1] || { id: null, name: 'Home' };
   const activeFolderId = currentFolder.id !== undefined ? currentFolder.id : null;
 
-  // 2. Safe Item Handling (Single File & Batch)
-  const itemsToMove = Array.isArray(itemsProp) 
-    ? itemsProp 
-    : (Array.isArray(itemToMove) ? itemToMove : null);
+  // 2. Safe Item Handling (Single File & Multi-Item Batch Moves)
+  const itemsToMove = Array.isArray(itemsProp) && itemsProp.length > 0
+    ? itemsProp
+    : (Array.isArray(itemToMove) && itemToMove.length > 0
+        ? itemToMove
+        : (itemToMove ? [itemToMove] : []));
 
-  const isBatch = Array.isArray(itemsToMove) && itemsToMove.length > 1;
-
-  const singleItem = !isBatch
-    ? (Array.isArray(itemsToMove) && itemsToMove.length === 1 ? itemsToMove[0] : itemToMove)
-    : null;
+  const isBatch = itemsToMove.length > 1;
+  const singleItem = itemsToMove.length === 1 ? itemsToMove[0] : null;
 
   const targetName = isBatch
     ? `${itemsToMove.length} items`
     : (singleItem?.name || singleItem?.fileName || (typeof singleItem === 'string' ? '1 item' : 'Item'));
 
   // Safe current location check
-  const rawLocId = singleItem?.folderId || singleItem?.parentFolderId || singleItem?.parentId || singleItem?.folder;
-  const currentLocId = rawLocId !== undefined
-    ? rawLocId
-    : (typeof singleItem === 'string' && initialFolderId !== undefined ? initialFolderId : null);
+  const getItemLocation = (item) => {
+    if (!item) return null;
+    if (typeof item === 'string') return initialFolderId ?? null;
+    const loc = item.folderId?._id || item.folderId || item.parentId || item.parentFolderId || item.folder?._id || item.folder;
+    return loc !== undefined ? loc : (initialFolderId ?? null);
+  };
 
-  const isAlreadyHere = !isBatch && (
-    (currentLocId === null && activeFolderId === null) ||
-    (currentLocId && activeFolderId && currentLocId.toString() === activeFolderId.toString())
-  );
+  const isAlreadyHere = itemsToMove.length > 0 && itemsToMove.every(item => {
+    const loc = getItemLocation(item);
+    const normLoc = loc ? String(loc) : null;
+    const normActive = activeFolderId ? String(activeFolderId) : null;
+    return normLoc === normActive;
+  });
 
-  // Subfolder Filtering (Subfolders Only, safely computed)
+  // 3. Circular Move Protection (For Folders)
+  // When moving folders, collect all selected folder IDs and all their recursive descendant subfolder IDs
+  const circularFolderIds = useMemo(() => {
+    const movingFolderIds = new Set();
+
+    itemsToMove.forEach(item => {
+      if (!item) return;
+      const isFolderItem = item.isFolder || item.parentId !== undefined || item.parentFolderId !== undefined || (typeof item === 'object' && !item.s3Key && !item.mimetype && !item.size);
+      if (isFolderItem) {
+        const id = item._id || item.id || (typeof item === 'string' ? item : null);
+        if (id) movingFolderIds.add(String(id));
+      }
+    });
+
+    const excluded = new Set(movingFolderIds);
+    movingFolderIds.forEach(rootId => {
+      const queue = [rootId];
+      while (queue.length > 0) {
+        const curId = queue.shift();
+        folders.forEach(f => {
+          if (!f) return;
+          const pId = String(f.parentId || f.parentFolderId || '');
+          const fId = String(f._id || f.id || '');
+          if (pId === curId && fId && !excluded.has(fId)) {
+            excluded.add(fId);
+            queue.push(fId);
+          }
+        });
+      }
+    });
+
+    return excluded;
+  }, [itemsToMove, folders]);
+
+  // Subfolder Filtering (Subfolders Only, safely excluding circular descendants)
   const currentSubfolders = useMemo(() => {
     if (!Array.isArray(folders)) return [];
 
-    // Find descendant IDs if moving a folder to prevent circular loops
-    const movingFolderId = (singleItem && (singleItem.isFolder || singleItem.parentId !== undefined))
-      ? (singleItem._id || singleItem.id)
-      : null;
-
-    const excludedIds = new Set();
-    if (movingFolderId) {
-      try {
-        const rootId = movingFolderId.toString();
-        excludedIds.add(rootId);
-        const queue = [rootId];
-        while (queue.length > 0) {
-          const curId = queue.shift();
-          folders.forEach(f => {
-            if (!f) return;
-            const pId = (f.parentId || f.parentFolderId) ? (f.parentId || f.parentFolderId).toString() : null;
-            const fId = (f._id || f.id) ? (f._id || f.id).toString() : null;
-            if (pId === curId && fId && !excludedIds.has(fId)) {
-              excludedIds.add(fId);
-              queue.push(fId);
-            }
-          });
-        }
-      } catch (err) {
-        console.error('[MoveModal] Error calculating descendants:', err);
-      }
-    }
-
     return folders.filter(f => {
       if (!f) return false;
-      const fId = (f._id || f.id) ? (f._id || f.id).toString() : null;
-      if (fId && excludedIds.has(fId)) return false;
+      const fId = String(f._id || f.id || '');
+      if (fId && circularFolderIds.has(fId)) return false;
 
-      const pId = (f.parentId || f.parentFolderId) ? (f.parentId || f.parentFolderId).toString() : null;
-      const aId = activeFolderId ? activeFolderId.toString() : null;
+      const pId = String(f.parentId || f.parentFolderId || '');
+      const aId = String(activeFolderId || '');
       return pId === aId;
     });
-  }, [folders, activeFolderId, singleItem]);
+  }, [folders, activeFolderId, circularFolderIds]);
+
+  const isCircularTarget = activeFolderId ? circularFolderIds.has(String(activeFolderId)) : false;
+  const isMoveDisabled = isAlreadyHere || isCircularTarget || isMoving || itemsToMove.length === 0;
 
   // Drill down into a subfolder
   const handleOpenFolder = (folder) => {
@@ -136,6 +160,21 @@ function MoveModalContent({
       setCurrentPath(prev => (Array.isArray(prev) ? prev.slice(0, index + 1) : [{ id: null, name: 'Home' }]));
     }
   };
+
+  const handleExecuteMove = () => {
+    if (isMoveDisabled) return;
+    if (onMove) {
+      onMove(activeFolderId, itemsToMove);
+    } else if (onSuccess) {
+      onSuccess(activeFolderId, itemsToMove);
+    }
+  };
+
+  const moveButtonText = isMoving 
+    ? 'Moving...' 
+    : currentFolder.name 
+      ? `Move to ${currentFolder.name}` 
+      : 'Move Here';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
@@ -254,27 +293,28 @@ function MoveModalContent({
                 Already in this location
               </p>
             )}
+            {isCircularTarget && (
+              <p className="text-[11px] text-red-400 font-light mt-0.5">
+                Cannot move into self or subfolder
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
             <button
               type="button"
               onClick={onClose}
               disabled={isMoving}
-              className="text-neutral-400 hover:text-white text-sm px-3 py-1.5 rounded transition-colors"
+              className="text-neutral-400 hover:text-white text-sm px-3 py-1.5 rounded transition-colors cursor-pointer"
             >
               Cancel
             </button>
             <button
               type="button"
-              disabled={isAlreadyHere || isMoving}
-              onClick={() => {
-                if (onMove && !isAlreadyHere && !isMoving) {
-                  onMove(activeFolderId);
-                }
-              }}
-              className="bg-white text-black font-semibold text-sm px-4 py-2 rounded hover:bg-neutral-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+              disabled={isMoveDisabled}
+              onClick={handleExecuteMove}
+              className="bg-white text-black font-semibold text-sm px-4 py-2 rounded hover:bg-neutral-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5 cursor-pointer"
             >
-              {isMoving ? 'Moving...' : 'Move Here'}
+              {moveButtonText}
             </button>
           </div>
         </div>

@@ -7,11 +7,12 @@ import PasswordInput from './PasswordInput';
 import OTPVerification from './OTPVerification';
 import Toast from './Toast';
 import MoveModal from './components/MoveModal';
+import FolderDetailsModal from './components/FolderDetailsModal';
 import LandingPage from './pages/LandingPage';
 import AuthPage from './pages/AuthPage';
 import PrivacyPolicy from './pages/PrivacyPolicy';
 import TermsOfService from './pages/TermsOfService';
-import { FolderInput, X, MoreVertical, Pencil, Info, LayoutGrid, List } from 'lucide-react';
+import { Folder, FolderInput, X, MoreVertical, Pencil, Info, LayoutGrid, List, Check, Trash2 } from 'lucide-react';
 
 import { API_BASE_URL } from "./config";
 import Plyr from 'plyr';
@@ -231,7 +232,12 @@ function App() {
   const [sortOrder, setSortOrder] = useState('newest');
   const [fileToDelete, setFileToDelete] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [selectedFiles, setSelectedFiles] = useState([]);
+  const [selectedFolderIds, setSelectedFolderIds] = useState([]);
+  const [selectedFileIds, setSelectedFileIds] = useState([]);
+  const totalSelectedCount = selectedFolderIds.length + selectedFileIds.length;
+  const isSelectionActive = totalSelectedCount > 0;
+  const selectedFiles = selectedFileIds;
+  const [itemsToMove, setItemsToMove] = useState([]);
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
   
@@ -294,28 +300,6 @@ function App() {
   const [newRenameFileName, setNewRenameFileName] = useState('');
   const [showFolderDetailsModal, setShowFolderDetailsModal] = useState(false);
   const [folderToView, setFolderToView] = useState(null);
-  const [folderStats, setFolderStats] = useState({ fileCount: 0, totalSizeBytes: 0 });
-  const [isFetchingFolderStats, setIsFetchingFolderStats] = useState(false);
-
-  useEffect(() => {
-    if (showFolderDetailsModal && folderToView) {
-      const fetchStats = async () => {
-        setIsFetchingFolderStats(true);
-        try {
-          const res = await axios.get(`${API_BASE_URL}/api/folders/${folderToView._id}/stats`, {
-            headers: { Authorization: `Bearer ${token}` }
-          });
-          setFolderStats(res.data);
-        } catch (err) {
-          console.error("Failed to fetch folder stats", err);
-          setFolderStats({ fileCount: 0, totalSizeBytes: 0 });
-        } finally {
-          setIsFetchingFolderStats(false);
-        }
-      };
-      fetchStats();
-    }
-  }, [showFolderDetailsModal, folderToView, token]);
 
   const handleRenameFileSubmit = async (e) => {
     e.preventDefault();
@@ -361,8 +345,44 @@ function App() {
     }
   };
 
-  const openMoveModal = async (file) => {
-    setFileToMove(file);
+  const toggleFolderSelect = (folderId, e) => {
+    e?.stopPropagation();
+    const idStr = String(folderId);
+    setSelectedFolderIds(prev => 
+      prev.includes(idStr) ? prev.filter(id => id !== idStr) : [...prev, idStr]
+    );
+  };
+
+  const toggleFileSelect = (fileId, e) => {
+    e?.stopPropagation();
+    const idStr = String(fileId);
+    setSelectedFileIds(prev => 
+      prev.includes(idStr) ? prev.filter(id => id !== idStr) : [...prev, idStr]
+    );
+  };
+
+  const handleClearSelection = () => {
+    setSelectedFolderIds([]);
+    setSelectedFileIds([]);
+  };
+  const clearSelection = handleClearSelection;
+
+  const handleSelectAllFiles = (e) => {
+    e?.stopPropagation();
+    const visibleFiles = filteredFiles.filter(f => !f.isFolder);
+    if (visibleFiles.length > 0 && selectedFileIds.length === visibleFiles.length) {
+      // If all files are currently selected, deselect all files
+      setSelectedFileIds([]);
+    } else {
+      // Select all files ONLY (do NOT touch selectedFolderIds)
+      setSelectedFileIds(visibleFiles.map(f => String(f._id || f.id)));
+    }
+  };
+
+  const openMoveModal = async (items) => {
+    const itemsArray = Array.isArray(items) ? items : [items];
+    setItemsToMove(itemsArray);
+    setFileToMove(itemsArray.length === 1 ? itemsArray[0] : itemsArray);
     setShowMoveModal(true);
     try {
       const res = await axios.get(`${API_BASE_URL}/api/folders?all=true`, { headers: { Authorization: `Bearer ${token}` } });
@@ -373,24 +393,60 @@ function App() {
     }
   };
 
+  const handleBatchMove = () => {
+    const selectedFoldersList = folders
+      .filter(f => selectedFolderIds.includes(String(f._id)))
+      .map(f => ({ ...f, isFolder: true }));
+    const selectedFilesList = files
+      .filter(f => selectedFileIds.includes(String(f._id)));
+    const allSelected = [...selectedFoldersList, ...selectedFilesList];
+    if (allSelected.length === 0) return;
+    openMoveModal(allSelected);
+  };
+
+  const handleOpenMoveModal = handleBatchMove;
+  const handleBatchDelete = () => setShowBulkDeleteModal(true);
+
   const handleMoveConfirm = async (targetFolderId) => {
     try {
       setIsMoveLoading(true);
-      if (Array.isArray(fileToMove)) {
-        await axios.patch(`${API_BASE_URL}/api/files/bulk-move`, { fileIds: fileToMove, targetFolderId }, { headers: { Authorization: `Bearer ${token}` } });
-        setSelectedFiles([]);
-      } else if (fileToMove?.isFolder) {
-        await axios.patch(`${API_BASE_URL}/api/folders/${fileToMove._id || fileToMove.id}/move`, { targetFolderId }, { headers: { Authorization: `Bearer ${token}` } });
-      } else {
-        await axios.patch(`${API_BASE_URL}/api/files/${fileToMove._id || fileToMove.id}/move`, { targetFolderId }, { headers: { Authorization: `Bearer ${token}` } });
+      const items = itemsToMove.length > 0 ? itemsToMove : (Array.isArray(fileToMove) ? fileToMove : [fileToMove]);
+      
+      const folderIdsToMove = [];
+      const fileIdsToMove = [];
+
+      items.forEach(item => {
+        if (!item) return;
+        if (typeof item === 'string') {
+          const isF = folders.some(f => String(f._id) === item);
+          if (isF) folderIdsToMove.push(item);
+          else fileIdsToMove.push(item);
+        } else if (item.isFolder || item.parentId !== undefined) {
+          folderIdsToMove.push(String(item._id || item.id));
+        } else {
+          fileIdsToMove.push(String(item._id || item.id));
+        }
+      });
+
+      if (folderIdsToMove.length > 0 || fileIdsToMove.length > 1) {
+        await axios.put(`${API_BASE_URL}/api/folders/move-batch`, {
+          folderIds: folderIdsToMove,
+          fileIds: fileIdsToMove,
+          targetFolderId
+        }, { headers: { Authorization: `Bearer ${token}` } });
+      } else if (fileIdsToMove.length === 1) {
+        await axios.patch(`${API_BASE_URL}/api/files/${fileIdsToMove[0]}/move`, { targetFolderId }, { headers: { Authorization: `Bearer ${token}` } });
       }
+
       setShowMoveModal(false);
+      setItemsToMove([]);
       setFileToMove(null);
-      addToast('success', `${fileToMove?.isFolder ? 'Folder' : 'File(s)'} moved successfully`);
-      fetchFiles();
-      fetchFolders(currentFolderId);
+      clearSelection();
+      addToast('success', 'Item(s) moved successfully');
+      await fetchFiles();
+      await fetchFolders(currentFolderId);
     } catch (err) {
-      addToast('error', err.response?.data?.error || 'Failed to move item(s)');
+      addToast('error', err.response?.data?.message || err.response?.data?.error || 'Failed to move item(s)');
     } finally {
       setIsMoveLoading(false);
     }
@@ -456,11 +512,13 @@ function App() {
   }, [searchParams, token]);
 
   const handleFolderClick = (folder) => {
+    clearSelection();
     setCurrentFolderId(folder._id);
     setSearchParams({ folder: folder._id });
   };
 
   const handleBreadcrumbClick = (folderId, index) => {
+    clearSelection();
     setCurrentFolderId(folderId);
     setSearchParams(folderId ? { folder: folderId } : {});
     setBreadcrumbs(prev => prev.slice(0, index + 1));
@@ -570,19 +628,29 @@ function App() {
   };
 
   const handleBulkDelete = async () => {
-    if (selectedFiles.length === 0) return;
+    if (selectedFileIds.length === 0 && selectedFolderIds.length === 0) return;
     setIsBulkDeleting(true);
     try {
-      const response = await axios.post(`${API_BASE_URL}/api/files/bulk-delete`, { fileIds: selectedFiles }, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (response.status === 200) {
-        addToast('success', 'Selected files deleted successfully.');
-        setSelectedFiles([]);
-        setShowBulkDeleteModal(false);
-        await fetchFiles();
-        await fetchStorageStats();
+      if (selectedFileIds.length > 0) {
+        await axios.post(`${API_BASE_URL}/api/files/bulk-delete`, { fileIds: selectedFileIds }, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
       }
+      if (selectedFolderIds.length > 0) {
+        await Promise.all(
+          selectedFolderIds.map(fId =>
+            axios.delete(`${API_BASE_URL}/api/folders/${fId}`, {
+              headers: { Authorization: `Bearer ${token}` }
+            })
+          )
+        );
+      }
+      addToast('success', 'Selected item(s) deleted successfully.');
+      clearSelection();
+      setShowBulkDeleteModal(false);
+      await fetchFiles();
+      await fetchFolders(currentFolderId);
+      await fetchStorageStats();
     } catch (error) {
       if (error.response && error.response.status === 401) {
         localStorage.clear();
@@ -590,8 +658,8 @@ function App() {
         window.location.href = '/';
         return;
       }
-      console.error('Error bulk deleting files:', error);
-      addToast('error', 'Error deleting selected files.');
+      console.error('Error bulk deleting:', error);
+      addToast('error', error.response?.data?.error || 'Error deleting selected item(s).');
     } finally {
       setIsBulkDeleting(false);
     }
@@ -923,6 +991,9 @@ function App() {
 
   const searchFiltered = sortedFiles.filter(file => file.name.toLowerCase().includes(searchQuery.toLowerCase()));
   const filteredFiles = viewMode === 'recent' ? searchFiltered.slice(0, 5) : searchFiltered;
+  const selectableFiles = filteredFiles.filter(f => !f.isFolder);
+  const isAllFilesSelected = selectableFiles.length > 0 && selectedFileIds.length === selectableFiles.length;
+  const isSomeFilesSelected = selectedFileIds.length > 0 && selectedFileIds.length < selectableFiles.length;
 
   const SplashOverlay = () => isLoading ? (
     <div className="fixed inset-0 z-[9999] bg-white dark:bg-[#131314] flex items-center justify-center">
@@ -1575,6 +1646,21 @@ function App() {
                     </React.Fragment>
                   ))
                 )}
+                {viewMode !== 'recent' && currentFolderId && breadcrumbs.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const activeCrumb = breadcrumbs[breadcrumbs.length - 1];
+                      const matchedFolder = folders.find(f => (f._id || f.id) === activeCrumb.id);
+                      setFolderToView(matchedFolder || { _id: activeCrumb.id, name: activeCrumb.name });
+                      setShowFolderDetailsModal(true);
+                    }}
+                    className="p-1 rounded text-neutral-400 hover:text-white transition-colors cursor-pointer"
+                    title="Folder Details"
+                  >
+                    <Info size={16} />
+                  </button>
+                )}
               </h3>
             </div>
             <div className="flex items-center gap-4">
@@ -1605,102 +1691,126 @@ function App() {
                   </button>
                 </div>
               )}
-              {selectedFiles.length > 0 && (
-                <div className="flex items-center gap-4">
-                  <button 
-                    onClick={() => openMoveModal(selectedFiles)}
-                    className="px-3 py-1.5 rounded-md text-sm font-medium transition-colors bg-neutral-200 hover:bg-neutral-300 dark:bg-neutral-800 dark:hover:bg-neutral-700 flex items-center gap-1 text-neutral-800 dark:text-neutral-100 cursor-pointer"
-                  >
-                    <FolderInput size={16} strokeWidth={2} />
-                    Move Selected ({selectedFiles.length})
-                  </button>
-                  <button 
-                    onClick={() => setShowBulkDeleteModal(true)}
-                    disabled={isBulkDeleting}
-                    className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors bg-red-500/10 text-red-500 hover:bg-red-500/20 dark:bg-red-900/30 dark:hover:bg-red-900/50 flex items-center gap-1 cursor-pointer ${isBulkDeleting ? 'opacity-70 cursor-not-allowed' : ''}`}
-                  >
-                    {isBulkDeleting ? (
-                      <span className="animate-spin inline-block w-4 h-4 border-[2px] border-current border-t-transparent rounded-full" role="status" aria-label="loading"></span>
-                    ) : (
-                      <span className="material-symbols-outlined text-sm">delete</span>
-                    )}
-                    Delete Selected ({selectedFiles.length})
-                  </button>
-                </div>
-              )}
             </div>
           </div>
 
           {viewMode !== 'recent' && folders.length > 0 && (
             <div className={`mb-6 ${folderView === 'grid' ? 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4' : 'flex flex-col gap-2'}`}>
-              {folders.map(folder => (
-                <div 
-                  key={folder._id}
-                  onClick={() => handleFolderClick(folder)}
-                  className={`flex items-center justify-between bg-white dark:bg-[#1e1f20] border border-outline-variant dark:border-zinc-800 rounded-xl cursor-pointer hover:bg-surface-container-low dark:hover:bg-zinc-800/80 transition-colors relative ${folderView === 'grid' ? 'p-4' : 'px-4 py-3'}`}
-                >
-                  <div className="flex items-center gap-3 w-full overflow-hidden">
-                    <span className="material-symbols-outlined text-secondary text-2xl shrink-0">folder</span>
-                    <span className="font-body-md text-on-surface dark:text-[#e3e3e3] truncate">{folder.name}</span>
-                  </div>
-                  <button 
-                    onClick={(e) => { 
-                      e.stopPropagation(); 
-                      setActiveFolderMenuId(activeFolderMenuId === folder._id ? null : folder._id); 
-                    }}
-                    className="p-1 text-neutral-400 hover:text-neutral-200 rounded transition-all ml-2 flex-shrink-0"
+              {folders.map(folder => {
+                const isSelected = selectedFolderIds.includes(String(folder._id));
+                return (
+                  <div 
+                    key={folder._id}
+                    onClick={() => handleFolderClick(folder)}
+                    className={`group relative flex items-center justify-between p-3 sm:p-3.5 rounded-xl border transition-all cursor-pointer select-none ${
+                      isSelected 
+                        ? 'bg-neutral-800/90 border-neutral-600 ring-1 ring-neutral-500/50' 
+                        : 'bg-neutral-900/40 border-neutral-800/80 hover:bg-neutral-800/50 hover:border-neutral-700'
+                    }`}
                   >
-                    <MoreVertical size={18} />
-                  </button>
+                    {/* Left Section: Icon / Checkbox Slot + Folder Name */}
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                      {/* Dynamic Icon / Checkbox Container */}
+                      <div 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleFolderSelect(folder._id, e);
+                        }}
+                        className="w-6 h-6 flex items-center justify-center shrink-0 cursor-pointer"
+                        title={isSelected ? "Deselect folder" : "Select folder"}
+                      >
+                        {isSelected ? (
+                          /* Selected: Solid Checkbox */
+                          <div className="w-5 h-5 rounded border border-white bg-white text-black flex items-center justify-center transition-all">
+                            <Check className="w-3.5 h-3.5 stroke-[3]" />
+                          </div>
+                        ) : isSelectionActive ? (
+                          /* Multi-selection active elsewhere: Subtle Checkbox */
+                          <div className="w-5 h-5 rounded border border-neutral-500 bg-neutral-900/80 hover:border-white flex items-center justify-center transition-all">
+                            <div className="w-2 h-2 rounded-sm opacity-0 hover:opacity-40 bg-white" />
+                          </div>
+                        ) : (
+                          /* Resting State: Folder icon swaps to checkbox on card hover */
+                          <>
+                            <Folder className="w-5 h-5 text-neutral-400 group-hover:hidden transition-colors" />
+                            <div className="hidden group-hover:flex w-5 h-5 rounded border border-neutral-400 hover:border-white bg-neutral-900/90 items-center justify-center transition-all">
+                              <Check className="w-3.5 h-3.5 text-transparent hover:text-neutral-400 stroke-[2.5]" />
+                            </div>
+                          </>
+                        )}
+                      </div>
 
-                  <div className={`absolute right-4 top-12 w-48 bg-white dark:bg-[#1e1f20] rounded-xl shadow-xl border border-outline-variant dark:border-zinc-800 z-[60] flex flex-col py-1 transition-all duration-200 ease-out origin-top-right transform ${activeFolderMenuId === folder._id ? 'opacity-100 scale-100 translate-y-0 pointer-events-auto' : 'opacity-0 scale-95 translate-y-[-10px] pointer-events-none'}`}>
-                    <button 
-                      onClick={(e) => { 
-                        e.stopPropagation(); 
-                        openMoveModal({ ...folder, isFolder: true });
-                        setActiveFolderMenuId(null); 
-                      }} 
-                      className="w-full text-left px-4 py-2 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors flex items-center gap-2"
+                      {/* Folder Name (No layout shift) */}
+                      <span className="text-sm font-medium text-neutral-200 truncate">
+                        {folder.name}
+                      </span>
+                    </div>
+
+                    {/* Right Section: Three-dot action menu */}
+                    <div 
+                      onClick={(e) => e.stopPropagation()} 
+                      className="shrink-0 ml-2 relative"
                     >
-                      <FolderInput size={16} strokeWidth={2} /> Move
-                    </button>
-                    <button 
-                      onClick={(e) => { 
-                        e.stopPropagation(); 
-                        setFolderToRename(folder);
-                        setNewRenameFolderName(folder.name);
-                        setShowRenameFolderModal(true);
-                        setActiveFolderMenuId(null); 
-                      }} 
-                      className="w-full text-left px-4 py-2 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors flex items-center gap-2"
-                    >
-                      <Pencil size={16} strokeWidth={2} /> Rename
-                    </button>
-                    <button 
-                      onClick={(e) => { 
-                        e.stopPropagation(); 
-                        setFolderToView(folder);
-                        setShowFolderDetailsModal(true);
-                        setActiveFolderMenuId(null); 
-                      }} 
-                      className="w-full text-left px-4 py-2 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors flex items-center gap-2"
-                    >
-                      <Info size={16} strokeWidth={2} /> Folder Details
-                    </button>
-                    <div className="border-t border-neutral-200 dark:border-neutral-700 my-1"></div>
-                    <button 
-                      onClick={(e) => { 
-                        e.stopPropagation(); 
-                        setFolderToDelete(folder); 
-                        setActiveFolderMenuId(null); 
-                      }} 
-                      className="w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-red-500/10 transition-colors flex items-center gap-2"
-                    >
-                      <span className="material-symbols-outlined text-[18px]">delete</span> Delete
-                    </button>
+                      <button 
+                        onClick={(e) => { 
+                          e.stopPropagation(); 
+                          setActiveFolderMenuId(activeFolderMenuId === folder._id ? null : folder._id); 
+                        }}
+                        className="p-1 text-neutral-400 hover:text-neutral-200 rounded transition-all flex-shrink-0 cursor-pointer"
+                      >
+                        <MoreVertical size={18} />
+                      </button>
+
+                      <div className={`absolute right-0 top-8 w-48 bg-white dark:bg-[#1e1f20] rounded-xl shadow-xl border border-outline-variant dark:border-zinc-800 z-[60] flex flex-col py-1 transition-all duration-200 ease-out origin-top-right transform ${activeFolderMenuId === folder._id ? 'opacity-100 scale-100 translate-y-0 pointer-events-auto' : 'opacity-0 scale-95 translate-y-[-10px] pointer-events-none'}`}>
+                        <button 
+                          onClick={(e) => { 
+                            e.stopPropagation(); 
+                            openMoveModal({ ...folder, isFolder: true });
+                            setActiveFolderMenuId(null); 
+                          }} 
+                          className="w-full text-left px-4 py-2 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors flex items-center gap-2 cursor-pointer"
+                        >
+                          <FolderInput size={16} strokeWidth={2} /> Move
+                        </button>
+                        <button 
+                          onClick={(e) => { 
+                            e.stopPropagation(); 
+                            setFolderToRename(folder);
+                            setNewRenameFolderName(folder.name);
+                            setShowRenameFolderModal(true);
+                            setActiveFolderMenuId(null); 
+                          }} 
+                          className="w-full text-left px-4 py-2 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors flex items-center gap-2 cursor-pointer"
+                        >
+                          <Pencil size={16} strokeWidth={2} /> Rename
+                        </button>
+                        <button 
+                          onClick={(e) => { 
+                            e.stopPropagation(); 
+                            setFolderToView(folder);
+                            setShowFolderDetailsModal(true);
+                            setActiveFolderMenuId(null); 
+                          }} 
+                          className="w-full text-left px-4 py-2 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors flex items-center gap-2 cursor-pointer"
+                        >
+                          <Info size={16} strokeWidth={2} /> Folder Details
+                        </button>
+                        <div className="border-t border-neutral-200 dark:border-neutral-700 my-1"></div>
+                        <button 
+                          onClick={(e) => { 
+                            e.stopPropagation(); 
+                            setFolderToDelete(folder); 
+                            setActiveFolderMenuId(null); 
+                          }} 
+                          className="w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-red-500/10 transition-colors flex items-center gap-2 cursor-pointer"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">delete</span> Delete
+                        </button>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
@@ -1711,18 +1821,22 @@ function App() {
                   <tr className="border-b border-outline-variant dark:border-zinc-800/50 bg-surface-container-low dark:bg-[#1e1f20] text-on-surface-variant dark:text-zinc-300 font-label-md text-label-md uppercase tracking-wider">
                     <th className="w-12 text-center p-0 align-middle">
                       <div className="flex items-center justify-center w-full h-full">
-                        <input 
-                          type="checkbox" 
-                          className="cursor-pointer w-4 h-4 rounded border-outline-variant text-primary focus:ring-primary focus:ring-offset-surface"
-                          checked={filteredFiles.length > 0 && selectedFiles.length === filteredFiles.filter(f => !f.isFolder).length}
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              setSelectedFiles(filteredFiles.filter(f => !f.isFolder).map(f => f._id));
-                            } else {
-                              setSelectedFiles([]);
-                            }
-                          }}
-                        />
+                        <div 
+                          onClick={(e) => handleSelectAllFiles(e)}
+                          className={`w-5 h-5 rounded border transition-all flex items-center justify-center cursor-pointer ${
+                            isAllFilesSelected
+                              ? 'opacity-100 bg-white text-black border-white'
+                              : isSomeFilesSelected
+                                ? 'opacity-100 border-neutral-300 bg-neutral-900/90 text-white'
+                                : isSelectionActive
+                                  ? 'opacity-40 hover:opacity-100 border-neutral-500 bg-neutral-900/80 hover:border-white'
+                                  : 'opacity-0 hover:opacity-100 border-neutral-500 bg-neutral-900/80 hover:border-white'
+                          }`}
+                          title={isAllFilesSelected ? "Deselect all files" : "Select all files"}
+                        >
+                          {isAllFilesSelected && <Check className="w-3.5 h-3.5 stroke-[3] text-black" />}
+                          {isSomeFilesSelected && <div className="w-2.5 h-0.5 bg-white rounded-full" />}
+                        </div>
                       </div>
                     </th>
                     <th className="py-4 px-6 font-medium">File Name</th>
@@ -1744,23 +1858,28 @@ function App() {
                     <ErrorBoundary key={file?._id || file?.id || Math.random()}>
                     <tr 
                       onClick={() => file.isFolder ? setCurrentDirectory(file.diskName) : handlePreview(file)}
-                      className={`flex flex-wrap md:table-row items-center py-3 px-4 md:p-0 hover:bg-surface-bright dark:hover:bg-zinc-800/70 dark:text-zinc-300 transition-colors group md:h-14 ${file.isFolder || (file.diskName && (file.status === 'Safe' || file.status === 'unscanned_too_large')) ? 'cursor-pointer' : ''}`}
+                      className={`flex flex-wrap md:table-row items-center py-3 px-4 md:p-0 hover:bg-surface-bright dark:hover:bg-zinc-800/70 dark:text-zinc-300 transition-colors group md:h-14 ${
+                        selectedFileIds.includes(String(file._id)) ? 'bg-neutral-100 dark:bg-zinc-800/60' : ''
+                      } ${file.isFolder || (file.diskName && (file.status === 'Safe' || file.status === 'unscanned_too_large')) ? 'cursor-pointer' : ''}`}
                     >
                       <td className="w-12 text-center p-0 align-middle" onClick={(e) => e.stopPropagation()}>
                         {!file.isFolder && (
                           <div className="flex items-center justify-center w-full h-full">
-                            <input 
-                              type="checkbox" 
-                              className="cursor-pointer w-4 h-4 rounded border-outline-variant text-primary focus:ring-primary focus:ring-offset-surface"
-                              checked={selectedFiles.includes(file._id)}
-                              onChange={(e) => {
-                                if (e.target.checked) {
-                                  setSelectedFiles(prev => [...prev, file._id]);
-                                } else {
-                                  setSelectedFiles(prev => prev.filter(id => id !== file._id));
-                                }
-                              }}
-                            />
+                            <div 
+                              onClick={(e) => toggleFileSelect(file._id, e)}
+                              className={`w-5 h-5 rounded border transition-all flex items-center justify-center cursor-pointer ${
+                                selectedFileIds.includes(String(file._id))
+                                  ? 'opacity-100 bg-white text-black border-white'
+                                  : isSelectionActive
+                                    ? 'opacity-40 hover:opacity-100 border-neutral-500 bg-neutral-900/80 hover:border-white'
+                                    : 'opacity-0 group-hover:opacity-100 border-neutral-500 bg-neutral-900/80 hover:border-white'
+                              }`}
+                              title={selectedFileIds.includes(String(file._id)) ? "Deselect file" : "Select file"}
+                            >
+                              {selectedFileIds.includes(String(file._id)) && (
+                                <Check className="w-3.5 h-3.5 stroke-[3] text-black" />
+                              )}
+                            </div>
                           </div>
                         )}
                       </td>
@@ -1885,54 +2004,17 @@ function App() {
       )}
 
       {/* Folder Details Modal */}
-      {showFolderDetailsModal && folderToView && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-white dark:bg-[#1e1f20] rounded-2xl w-full max-w-sm shadow-2xl p-6 border border-outline-variant dark:border-zinc-800">
-            <h3 className="font-title-lg text-title-lg text-gray-900 dark:text-white mb-4">Folder Details</h3>
-            <div className="space-y-3 mb-6">
-              <div>
-                <label className="text-xs font-label-md text-on-surface-variant dark:text-zinc-400 uppercase tracking-wider block mb-1">Name</label>
-                <p className="font-body-md text-on-surface dark:text-[#e3e3e3] break-all">{folderToView.name}</p>
-              </div>
-              <div>
-                <label className="text-xs font-label-md text-on-surface-variant dark:text-zinc-400 uppercase tracking-wider block mb-1">Created At</label>
-                <p className="font-body-md text-on-surface dark:text-[#e3e3e3]">
-                  {new Date(folderToView.createdAt || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                </p>
-              </div>
-              {isFetchingFolderStats ? (
-                <div className="pt-2 flex items-center gap-2 text-sm text-neutral-500">
-                  <span className="animate-spin inline-block w-4 h-4 border-[2px] border-current border-t-transparent rounded-full" role="status" aria-label="loading"></span>
-                  Calculating stats...
-                </div>
-              ) : (
-                <>
-                  <div>
-                    <label className="text-xs font-label-md text-on-surface-variant dark:text-zinc-400 uppercase tracking-wider block mb-1">Contains</label>
-                    <p className="font-body-md text-on-surface dark:text-[#e3e3e3]">
-                      {folderStats.fileCount} item{folderStats.fileCount !== 1 ? 's' : ''}
-                    </p>
-                  </div>
-                  <div>
-                    <label className="text-xs font-label-md text-on-surface-variant dark:text-zinc-400 uppercase tracking-wider block mb-1">Size</label>
-                    <p className="font-body-md text-on-surface dark:text-[#e3e3e3]">
-                      {formatSize(folderStats.totalSizeBytes)}
-                    </p>
-                  </div>
-                </>
-              )}
-            </div>
-            <div className="flex items-center justify-end">
-              <button 
-                onClick={() => { setShowFolderDetailsModal(false); setFolderToView(null); }}
-                className="px-4 py-2 text-sm font-medium bg-primary text-on-primary hover:bg-primary/90 rounded-xl transition-colors duration-200"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <FolderDetailsModal
+        isOpen={showFolderDetailsModal}
+        onClose={() => {
+          setShowFolderDetailsModal(false);
+          setFolderToView(null);
+        }}
+        folder={folderToView}
+        folders={folders}
+        files={files}
+        token={token}
+      />
 
       {/* Rename Folder Modal */}
       {showRenameFolderModal && (
@@ -2014,9 +2096,12 @@ function App() {
         onClose={() => {
           setShowMoveModal(false);
           setFileToMove(null);
+          setItemsToMove([]);
         }}
+        itemsToMove={itemsToMove}
         itemToMove={fileToMove}
         folders={moveFolders}
+        currentPath={breadcrumbs}
         onMove={handleMoveConfirm}
         initialFolderId={currentFolderId}
         isMoving={isMoveLoading}
@@ -2098,7 +2183,7 @@ function App() {
             <h3 className="font-title-lg text-on-surface dark:text-[#e3e3e3]">Confirm Delete</h3>
             <p className="font-body-md text-on-surface-variant dark:text-[#c4c7c5]">
               {showBulkDeleteModal ? (
-                <>Are you sure you want to permanently delete the <strong className="break-all text-on-surface dark:text-[#e3e3e3]">{selectedFiles.length}</strong> selected files?</>
+                <>Are you sure you want to permanently delete the <strong className="break-all text-on-surface dark:text-[#e3e3e3]">{selectedFolderIds.length + selectedFileIds.length}</strong> selected item{selectedFolderIds.length + selectedFileIds.length === 1 ? '' : 's'}?</>
               ) : (
                 <>Are you sure you want to permanently delete <strong className="break-all text-on-surface dark:text-[#e3e3e3]">{fileToDelete?.name}</strong>?</>
               )}
@@ -2126,6 +2211,37 @@ function App() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Floating Bottom Action Dock */}
+      {isSelectionActive && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2.5 bg-[#18181b]/95 border border-neutral-700/80 rounded-2xl shadow-2xl backdrop-blur-md animate-fade-in text-white text-sm">
+          <span className="text-sm font-medium text-neutral-300">{totalSelectedCount} selected</span>
+          <div className="w-px h-4 bg-neutral-700" />
+          <button
+            type="button"
+            onClick={handleOpenMoveModal}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-neutral-800 hover:bg-neutral-700 text-white transition-colors cursor-pointer"
+          >
+            <FolderInput className="w-4 h-4" /> Move
+          </button>
+          <button
+            type="button"
+            onClick={handleBatchDelete}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-500/30 transition-colors cursor-pointer"
+          >
+            <Trash2 className="w-4 h-4" /> Delete
+          </button>
+          <button
+            type="button"
+            onClick={handleClearSelection}
+            className="p-1.5 rounded-lg hover:bg-neutral-800 text-neutral-400 hover:text-white transition-colors cursor-pointer"
+            title="Clear selection"
+            aria-label="Clear selection"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
       )}
 
