@@ -17,8 +17,6 @@ import PhotosView, { invalidatePhotosCache } from './pages/PhotosView';
 import { Folder, FolderInput, X, MoreVertical, Pencil, Info, LayoutGrid, List, Check, Trash2, Image, Play, ChevronLeft, ChevronRight, Download, Clock } from 'lucide-react';
 
 import { API_BASE_URL } from "./config";
-import Plyr from 'plyr';
-import 'plyr/dist/plyr.css';
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -254,19 +252,6 @@ function App() {
   const [viewMode, setViewMode] = useState('all');
   const [currentDirectory, setCurrentDirectory] = useState('');
   const fileInputRef = useRef(null);
-  const videoRef = useRef(null);
-
-  useEffect(() => {
-    if (!videoRef.current) return;
-
-    const player = new Plyr(videoRef.current, {
-      controls: ['play-large', 'play', 'progress', 'current-time', 'mute', 'volume', 'captions', 'settings', 'pip', 'airplay', 'fullscreen'],
-    });
-
-    return () => {
-      if (player) player.destroy();
-    };
-  }, [previewFile]);
   const prevUploadRef = useRef({ time: 0, loaded: 0 });
   const abortControllerRef = useRef(null);
   const [currentPassword, setCurrentPassword] = useState('');
@@ -2245,15 +2230,15 @@ function App() {
               </div>
             </div>
             <div className="flex-1 overflow-hidden flex items-center justify-center p-4 w-full max-w-5xl mx-auto">
-              <div className="flex items-center justify-center w-full max-h-[80vh] overflow-hidden rounded-xl shadow-2xl bg-black [&_.plyr]:max-h-[80vh] [&_.plyr]:w-auto [&_.plyr]:max-w-full [&_.plyr]:mx-auto [&_video]:max-h-[80vh] [&_video]:object-contain">
-                <video 
-                  ref={videoRef} 
-                  controls 
-                  className="max-h-[80vh] max-w-full w-auto h-auto object-contain rounded-md"
-                >
-                  <source src={previewUrl} />
-                </video>
-              </div>
+              <video
+                src={previewUrl || previewFile.s3Url || previewFile.url || previewFile.downloadUrl}
+                controls
+                autoPlay
+                playsInline
+                className="max-w-full max-h-[80vh] rounded-lg object-contain shadow-2xl bg-black"
+              >
+                Your browser does not support the video tag.
+              </video>
             </div>
           </div>
         ) : (
