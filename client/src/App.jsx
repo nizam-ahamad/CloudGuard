@@ -1760,20 +1760,6 @@ function App() {
         <section>
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
             <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
-              <div className="flex md:hidden items-center shrink-0">
-                <input 
-                  type="checkbox" 
-                  className="cursor-pointer w-4 h-4 rounded border-outline-variant text-primary focus:ring-primary focus:ring-offset-surface"
-                  checked={filteredFiles.length > 0 && selectedFiles.length === filteredFiles.filter(f => !f.isFolder).length}
-                  onChange={(e) => {
-                    if (e.target.checked) {
-                      setSelectedFiles(filteredFiles.filter(f => !f.isFolder).map(f => f._id));
-                    } else {
-                      setSelectedFiles([]);
-                    }
-                  }}
-                />
-              </div>
               <h3 className="font-title-lg text-title-lg text-on-surface dark:text-[#e3e3e3] flex items-center gap-2 flex-wrap min-w-0">
                 {viewMode === 'recent' ? 'Recent Files' : (
                   breadcrumbs.map((crumb, index) => (
