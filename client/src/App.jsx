@@ -5,7 +5,7 @@ import ResetPassword from './ResetPassword';
 import CloudGuardLogo from './CloudGuardLogo';
 import PasswordInput from './PasswordInput';
 import OTPVerification from './OTPVerification';
-import Toast from './Toast';
+import { useToast } from './context/ToastContext';
 import MoveModal from './components/MoveModal';
 import FolderDetailsModal from './components/FolderDetailsModal';
 import DeleteConfirmModal from './components/DeleteConfirmModal';
@@ -14,6 +14,10 @@ import AuthPage from './pages/AuthPage';
 import PrivacyPolicy from './pages/PrivacyPolicy';
 import TermsOfService from './pages/TermsOfService';
 import PhotosView, { invalidatePhotosCache } from './pages/PhotosView';
+import { 
+  downloadSingleFileWithProgress, 
+  downloadBatchZipWithProgress 
+} from './utils/downloadHelper';
 import { Folder, FolderInput, X, MoreVertical, Pencil, Info, LayoutGrid, List, Check, Trash2, Image, Play, ChevronLeft, ChevronRight, Download, Clock } from 'lucide-react';
 
 import { API_BASE_URL } from "./config";
@@ -32,6 +36,7 @@ class ErrorBoundary extends React.Component {
 }
 
 function App() {
+  const toast = useToast();
   const location = useLocation();
   const navigate = useNavigate();
   const [isLoading, setIsLoading] = useState(true);
@@ -109,7 +114,7 @@ function App() {
   const [previewFile, setPreviewFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState("");
   const [previewText, setPreviewText] = useState("");
-  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [isAccountDeleteModalOpen, setIsAccountDeleteModalOpen] = useState(false);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -240,6 +245,11 @@ function App() {
   const totalSelectedCount = selectedFolderIds.length + selectedFileIds.length;
   const isSelectionActive = totalSelectedCount > 0;
   const selectedFiles = selectedFileIds;
+  const setSelectedFiles = setSelectedFileIds;
+  const selectedFolders = selectedFolderIds;
+  const setSelectedFolders = setSelectedFolderIds;
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState({ percent: 0, text: '' });
   const [itemsToMove, setItemsToMove] = useState([]);
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
@@ -248,7 +258,6 @@ function App() {
   const [isUploadDrawerOpen, setIsUploadDrawerOpen] = useState(true);
   const isQueueProcessing = useRef(false);
   const isUploading = uploadQueue.some(item => ['uploading', 'queued', 'analyzing'].includes(item.status));
-  const [toasts, setToasts] = useState([]);
   const [viewMode, setViewMode] = useState('all');
   const [currentDirectory, setCurrentDirectory] = useState('');
   const fileInputRef = useRef(null);
@@ -401,6 +410,37 @@ function App() {
   const handleOpenMoveModal = handleBatchMove;
   const handleBatchDelete = () => setShowBulkDeleteModal(true);
 
+  const handleBatchDownload = async () => {
+    const itemsToDownload = files.filter(f => selectedFileIds.includes(String(f._id || f.id)));
+    if (!itemsToDownload || itemsToDownload.length === 0) return;
+
+    try {
+      setIsDownloading(true);
+      setDownloadProgress({ percent: 0, text: 'Starting download...' });
+
+      if (itemsToDownload.length === 1) {
+        await downloadSingleFileWithProgress(itemsToDownload[0], (progress) => {
+          setDownloadProgress(progress);
+        });
+        toast.success(`Downloaded: ${itemsToDownload[0].name}`);
+      } else {
+        await downloadBatchZipWithProgress(itemsToDownload, (progress) => {
+          setDownloadProgress(progress);
+        });
+        toast.success(`Downloaded ${itemsToDownload.length} files as ZIP`);
+      }
+
+      setSelectedFiles([]);
+      setSelectedFolderIds([]);
+    } catch (err) {
+      console.error('Download failed:', err);
+      toast.error('Download failed. Check your network connection.');
+    } finally {
+      setIsDownloading(false);
+      setDownloadProgress({ percent: 0, text: '' });
+    }
+  };
+
   const handleMoveConfirm = async (targetFolderId) => {
     try {
       setIsMoveLoading(true);
@@ -471,6 +511,7 @@ function App() {
         setNewFolderName('');
         setShowNewFolderModal(false);
         fetchFolders(currentFolderId);
+        toast.success('Folder created successfully');
       }
     } catch (err) {
       console.error('Error creating folder', err);
@@ -544,7 +585,7 @@ function App() {
       addToast('error', 'Please type DELETE to confirm.');
       return;
     }
-    setIsDeleteModalOpen(true);
+    setIsAccountDeleteModalOpen(true);
   };
 
   const fetchFiles = useCallback(async () => {
@@ -666,12 +707,7 @@ function App() {
   }, [currentDirectory, token, fetchFiles]);
 
   const addToast = (type, message) => {
-    const id = Date.now() + Math.random();
-    setToasts(prev => [...prev, { id, type, message }]);
-  };
-
-  const removeToast = (id) => {
-    setToasts(prev => prev.filter(t => t.id !== id));
+    toast.show(message, type);
   };
 
   useEffect(() => {
@@ -769,6 +805,13 @@ function App() {
             return [...newFiles, ...safePrevFiles];
           });
           invalidatePhotosCache();
+          uploadedFiles.forEach(newFile => {
+            window.dispatchEvent(
+              new CustomEvent('cloudguard:media-uploaded', {
+                detail: newFile
+              })
+            );
+          });
         }
       } catch (err) {
         if (axios.isCancel(err) || err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED') {
@@ -992,6 +1035,44 @@ function App() {
   const selectableFiles = filteredFiles.filter(f => !f.isFolder);
   const isAllFilesSelected = selectableFiles.length > 0 && selectedFileIds.length === selectableFiles.length;
   const isSomeFilesSelected = selectedFileIds.length > 0 && selectedFileIds.length < selectableFiles.length;
+
+  // Calculate total counts across folders + files
+  const currentFolders = viewMode === 'recent' ? [] : folders;
+  const currentFiles = selectableFiles;
+  const totalViewItems = (currentFolders?.length || 0) + (currentFiles?.length || 0);
+  const totalSelected = (selectedFolders?.length || 0) + (selectedFiles?.length || 0);
+  const isAllSelected = totalViewItems > 0 && totalSelected === totalViewItems;
+
+  // 1. Clear Selection Handler (Fixes broken ✕ button)
+  const handleClearAllSelection = () => {
+    if (typeof setSelectedFiles === 'function') setSelectedFiles([]);
+    if (typeof setSelectedFolders === 'function') setSelectedFolders([]);
+    setSelectedFileIds([]);
+    setSelectedFolderIds([]);
+  };
+
+  // 2. Unified Select All / Deselect All
+  const handleToggleSelectAll = () => {
+    if (isAllSelected) {
+      handleClearAllSelection();
+    } else {
+      // Select all folders and all files in the current directory
+      if (typeof setSelectedFolders === 'function') {
+        setSelectedFolders(currentFolders.map((f) => (f._id ? String(f._id) : String(f))));
+      }
+      if (typeof setSelectedFiles === 'function') {
+        setSelectedFiles(currentFiles.map((f) => (f._id ? String(f._id) : String(f))));
+      }
+    }
+  };
+  const setIsMoveModalOpen = (val) => {
+    if (val) handleOpenMoveModal();
+    else setShowMoveModal(false);
+  };
+  const setIsDeleteModalOpen = (val) => {
+    if (val) handleBatchDelete();
+    else setShowBulkDeleteModal(false);
+  };
 
   const SplashOverlay = () => isLoading ? (
     <div className="fixed inset-0 z-[9999] bg-white dark:bg-[#131314] flex items-center justify-center">
@@ -1673,20 +1754,36 @@ function App() {
             <div className="flex items-center gap-4">
               {viewMode !== 'recent' && (
                 <div className="flex items-center gap-4">
-                  <div className="flex items-center bg-neutral-100 dark:bg-neutral-800 rounded-md p-1">
-                    <button 
+                  {/* Grid / List Mode Segmented Toggle (Matches PhotosView) */}
+                  <div className="flex items-center bg-neutral-100 dark:bg-neutral-800/80 p-0.5 rounded-lg border border-neutral-200 dark:border-neutral-700/60 select-none">
+                    {/* Grid View Button */}
+                    <button
+                      type="button"
                       onClick={() => handleSetFolderView('grid')}
-                      className={`p-1 rounded transition-colors ${folderView === 'grid' ? 'bg-white dark:bg-[#1e1f20] text-primary shadow-sm' : 'text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300'}`}
-                      title="Grid View"
+                      className={`p-1.5 rounded-md transition-all cursor-pointer ${
+                        folderView === 'grid'
+                          ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-white shadow-sm'
+                          : 'text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white'
+                      }`}
+                      title="Grid view"
+                      aria-label="Grid view"
                     >
-                      <LayoutGrid size={16} />
+                      <LayoutGrid className="w-4 h-4" />
                     </button>
-                    <button 
+
+                    {/* List View Button */}
+                    <button
+                      type="button"
                       onClick={() => handleSetFolderView('list')}
-                      className={`p-1 rounded transition-colors ${folderView === 'list' ? 'bg-white dark:bg-[#1e1f20] text-primary shadow-sm' : 'text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300'}`}
-                      title="List View"
+                      className={`p-1.5 rounded-md transition-all cursor-pointer ${
+                        folderView === 'list'
+                          ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-white shadow-sm'
+                          : 'text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white'
+                      }`}
+                      title="List view"
+                      aria-label="List view"
                     >
-                      <List size={16} />
+                      <List className="w-4 h-4" />
                     </button>
                   </div>
                   <button 
@@ -2299,55 +2396,80 @@ function App() {
         isDeleting={isDeleting || isBulkDeleting}
       />
 
-      {/* Floating Bottom Action Dock */}
-      {isSelectionActive && location.pathname !== '/dashboard/photos' && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2.5 bg-[#18181b]/95 border border-neutral-700/80 rounded-2xl shadow-2xl backdrop-blur-md animate-fade-in text-white text-sm">
-          <span className="text-sm font-medium text-neutral-300">{totalSelectedCount} selected</span>
-          <div className="w-px h-4 bg-neutral-700" />
+      {/* Unified Floating Action Pill (Matches PhotosView) */}
+      {totalSelected > 0 && location.pathname !== '/dashboard/photos' && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 px-4 py-2.5 rounded-full bg-neutral-900/90 dark:bg-neutral-800/90 backdrop-blur-md border border-neutral-700/60 shadow-2xl text-white select-none">
+          
+          {/* 1. Counter */}
+          <span className="text-xs text-neutral-300 font-medium pl-1 whitespace-nowrap">
+            {totalSelected} selected
+          </span>
+
+          {/* Vertical Divider */}
+          <div className="h-4 w-[1px] bg-neutral-700" />
+
+          {/* 2. Unified Select All */}
           <button
-            type="button"
-            onClick={handleOpenMoveModal}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-neutral-800 hover:bg-neutral-700 text-white transition-colors cursor-pointer"
+            onClick={handleToggleSelectAll}
+            className="text-xs font-medium px-2.5 py-1.5 rounded-md hover:bg-white/10 transition-colors cursor-pointer text-white whitespace-nowrap"
           >
-            <FolderInput className="w-4 h-4" /> Move
+            {isAllSelected ? 'Deselect All' : `Select All (${totalViewItems})`}
           </button>
+
+          {/* 3. Move Action (Supports both folders and files) */}
           <button
-            type="button"
-            onClick={handleBatchDelete}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-500/30 transition-colors cursor-pointer"
+            onClick={() => setIsMoveModalOpen(true)}
+            className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-md hover:bg-white/10 transition-colors cursor-pointer text-white"
           >
-            <Trash2 className="w-4 h-4" /> Delete
+            <FolderInput className="w-3.5 h-3.5"/>
+            <span>Move</span>
           </button>
+
+          {/* 4. Download Action: STRICTLY HIDDEN IF ANY FOLDER IS SELECTED */}
+          {selectedFolders.length === 0 && selectedFiles.length > 0 && (
+            <button
+              onClick={handleBatchDownload}
+              disabled={isDownloading}
+              className="relative overflow-hidden flex items-center gap-2 text-xs font-medium px-3.5 py-1.5 rounded-md hover:bg-white/10 transition-colors cursor-pointer text-white disabled:cursor-wait"
+            >
+              {/* Progress Bar Fill Background */}
+              {isDownloading && (
+                <div
+                  className="absolute inset-0 bg-blue-600/40 transition-all duration-150 ease-out"
+                  style={{ width: `${downloadProgress.percent}%` }}
+                />
+              )}
+
+              <Download className={`w-3.5 h-3.5 relative z-10 ${isDownloading ? 'animate-bounce' : ''}`} />
+              
+              <span className="relative z-10 whitespace-nowrap font-mono">
+                {isDownloading ? downloadProgress.text || 'Downloading...' : 'Download'}
+              </span>
+            </button>
+          )}
+
+          {/* 5. Delete Action (Supports both folders and files) */}
           <button
-            type="button"
-            onClick={handleClearSelection}
-            className="p-1.5 rounded-lg hover:bg-neutral-800 text-neutral-400 hover:text-white transition-colors cursor-pointer"
+            onClick={() => setIsDeleteModalOpen(true)}
+            className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-md bg-red-600/90 hover:bg-red-600 transition-colors cursor-pointer text-white"
+          >
+            <Trash2 className="w-3.5 h-3.5"/>
+            <span>Delete</span>
+          </button>
+
+          {/* 6. Clear Selection: Now calls handleClearAllSelection */}
+          <button
+            onClick={handleClearAllSelection}
+            className="p-1 rounded-full hover:bg-white/10 text-neutral-400 hover:text-white transition-colors cursor-pointer ml-0.5"
             title="Clear selection"
-            aria-label="Clear selection"
           >
-            <X className="w-4 h-4" />
+            <X className="w-4 h-4"/>
           </button>
         </div>
       )}
 
 
-
-      {/* Toast Notification */}
-      <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-2 pointer-events-none">
-        {toasts.map(toast => (
-          <div key={toast.id} className="pointer-events-auto">
-            <Toast 
-              id={toast.id} 
-              type={toast.type} 
-              message={toast.message} 
-              onRemove={removeToast} 
-            />
-          </div>
-        ))}
-      </div>
-
-
-      {isDeleteModalOpen && (
+      {isAccountDeleteModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
           <div className="w-full max-w-md p-6 bg-white rounded-lg shadow-xl dark:bg-[#1a1a1a] border border-transparent dark:border-[#333]">
             <h3 className="mb-2 text-lg font-semibold text-gray-900 dark:text-white">Confirm Delete</h3>
@@ -2356,14 +2478,14 @@ function App() {
             </p>
             <div className="flex justify-end gap-3">
               <button
-                onClick={() => setIsDeleteModalOpen(false)}
+                onClick={() => setIsAccountDeleteModalOpen(false)}
                 className="px-4 py-2 text-sm font-medium text-gray-700 transition-colors rounded-md dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10"
               >
                 Cancel
               </button>
               <button
                 onClick={async () => {
-                  setIsDeleteModalOpen(false);
+                  setIsAccountDeleteModalOpen(false);
                   setIsDeletingAccount(true);
                   try {
                     await axios.delete(`${API_BASE_URL}/api/auth/account`);

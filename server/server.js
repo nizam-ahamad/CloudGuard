@@ -921,11 +921,44 @@ app.post('/api/upload', verifyToken, async (req, res) => {
   
   const exactStorageUsed = await recalculateStorage(userId);
   invalidatePhotosCache(userId);
-  return res.status(uploadedFiles.length > 0 ? 200 : 403).json({
-    status: uploadedFiles.length > 0 ? 'success' : 'blocked',
-    uploadedFiles,
+
+  // Attach signed S3 URLs to media files so frontend preview renders immediately
+  const formattedUploadedFiles = await Promise.all(uploadedFiles.map(async (doc) => {
+    const fileObj = doc.toObject ? doc.toObject() : { ...doc };
+    const ext = (fileObj.originalName || fileObj.name || '').split('.').pop().toLowerCase();
+    const isMedia = (fileObj.mimetype || fileObj.mimeType || '').startsWith('image/') ||
+                    (fileObj.mimetype || fileObj.mimeType || '').startsWith('video/') ||
+                    ['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg', 'mp4', 'webm', 'mov', 'mkv'].includes(ext);
+    if (isMedia) {
+      let targetKey = fileObj.s3Key;
+      if (!targetKey && fileObj.location) {
+        try {
+          const urlObj = new URL(fileObj.location);
+          targetKey = decodeURIComponent(urlObj.pathname.substring(1).replace(/\+/g, '%20'));
+        } catch (e) {}
+      }
+      if (targetKey && process.env.AWS_BUCKET_NAME) {
+        try {
+          const command = new GetObjectCommand({
+            Bucket: process.env.AWS_BUCKET_NAME,
+            Key: targetKey
+          });
+          const signedUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
+          fileObj.s3Url = signedUrl;
+          fileObj.url = signedUrl;
+        } catch (err) {
+          console.error('Error signing URL for uploaded media asset:', err.message);
+        }
+      }
+    }
+    return fileObj;
+  }));
+
+  return res.status(formattedUploadedFiles.length > 0 ? 200 : 403).json({
+    status: formattedUploadedFiles.length > 0 ? 'success' : 'blocked',
+    uploadedFiles: formattedUploadedFiles,
     blockedFiles,
-    message: uploadedFiles.length > 0 ? 'Upload processed' : 'All files blocked',
+    message: formattedUploadedFiles.length > 0 ? 'Upload processed' : 'All files blocked',
     storageUsed: exactStorageUsed
   });
 });

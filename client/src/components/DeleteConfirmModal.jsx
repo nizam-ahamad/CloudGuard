@@ -28,8 +28,10 @@ export default function DeleteConfirmModal({
   const resolvedDescription =
     description ||
     `Are you sure you want to delete ${
-      count === 1 ? 'this item' : `these ${count} items`
-    }? ${count === 1 ? 'It' : 'They'} will be moved to Trash.`;
+      count > 1 ? `these ${count} items` : 'this item'
+    }? This action cannot be undone and will delete ${
+      count > 1 ? 'them' : 'it'
+    } permanently from your vault.`;
 
   return (
     <div 
@@ -37,7 +39,7 @@ export default function DeleteConfirmModal({
       onClick={() => !isDeleting && onClose()}
     >
       <div 
-        className="relative w-full max-w-md rounded-2xl border p-6 shadow-2xl transition-all duration-200
+        className="relative w-full max-w-md rounded-2xl border p-6 shadow-2xl transform transition-all duration-200 ease-out scale-100 opacity-100 animate-in fade-in zoom-in-95
                    bg-white border-neutral-200 text-neutral-900
                    dark:bg-neutral-900 dark:border-neutral-800 dark:text-neutral-100"
         onClick={(e) => e.stopPropagation()}
@@ -54,7 +56,7 @@ export default function DeleteConfirmModal({
             <h3 className="text-base font-semibold leading-6 text-neutral-900 dark:text-white">
               {resolvedTitle}
             </h3>
-            <p className="mt-1.5 text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed">
+            <p className="mt-2 text-sm text-neutral-500 dark:text-neutral-400 leading-relaxed">
               {resolvedDescription}
             </p>
           </div>

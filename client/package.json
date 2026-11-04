@@ -11,7 +11,9 @@
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.3",
+    "file-saver": "^2.0.5",
     "framer-motion": "^13.4.4",
+    "jszip": "^3.10.2",
     "lucide-react": "^1.48.0",
     "plyr": "^3.8.5",
     "plyr-react": "^6.0.0",
