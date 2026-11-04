@@ -189,6 +189,19 @@ export async function downloadBatchZipWithProgress(
   registerAbort,
   onNotice
 ) {
+  // 1. Declare abort state and current XHR at the root of the function
+  let isAborted = false;
+  let currentXhr = null;
+
+  if (typeof registerAbort === 'function') {
+    registerAbort(() => {
+      isAborted = true;
+      if (currentXhr) {
+        currentXhr.abort();
+      }
+    });
+  }
+
   const totalBatchBytes = selectedFiles.reduce((sum, f) => sum + (f.size || 0), 0);
   const hasOversizedFile = selectedFiles.some((f) => (f.size || 0) >= BROWSER_ZIP_LIMIT);
 
@@ -201,13 +214,6 @@ export async function downloadBatchZipWithProgress(
       onNotice(
         `Large batch (${formattedTotal}). Downloading files individually to ensure full download speed.`
       );
-    }
-
-    let isAborted = false;
-    if (registerAbort) {
-      registerAbort(() => {
-        isAborted = true;
-      });
     }
 
     // 2. Sequentially trigger native direct downloads with a 900ms stagger
@@ -251,16 +257,6 @@ export async function downloadBatchZipWithProgress(
   // Standard JSZip flow for batches under 1.5 GB
   const zip = new JSZip();
   let aggregateLoadedBytes = 0;
-  let currentXhr = null;
-
-  if (registerAbort) {
-    registerAbort(() => {
-      isAborted = true;
-      if (currentXhr) {
-        currentXhr.abort();
-      }
-    });
-  }
 
   let lastLoaded = 0;
   let lastTime = Date.now();

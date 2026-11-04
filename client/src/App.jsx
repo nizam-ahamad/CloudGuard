@@ -1664,7 +1664,7 @@ function App() {
             <div className="flex sm:hidden items-center gap-2 mb-4">
               <button
                 onClick={() => fileInputRef.current?.click()}
-                className="flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-blue-600 text-white text-xs font-semibold shadow-sm active:scale-[0.98] transition-transform cursor-pointer"
+                className="flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900 text-xs font-semibold shadow-sm hover:opacity-90 active:scale-[0.98] transition-all cursor-pointer"
               >
                 <UploadCloud className="w-4 h-4"/>
                 <span>Upload Files</span>
@@ -2448,7 +2448,7 @@ function App() {
             ) : (
               <>
                 <span className="sm:hidden">All</span>
-                <span className="hidden sm:inline">Select All (${totalViewItems})</span>
+                <span className="hidden sm:inline">Select All ({totalViewItems})</span>
               </>
             )}
           </button>
