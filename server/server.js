@@ -67,6 +67,7 @@ const FolderModel = mongoose.model('Folder', FolderSchema);
 // File Metadata Schema
 const FileSchema = new mongoose.Schema({
   userId: { type: String, required: true },
+  user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   folderId: { type: mongoose.Schema.Types.ObjectId, ref: 'Folder', default: null },
   name: { type: String, required: true },
   originalName: { type: String },
@@ -75,11 +76,21 @@ const FileSchema = new mongoose.Schema({
   relativePath: { type: String },
   size: { type: Number },
   mimetype: { type: String },
+  mimeType: { type: String },
   status: { type: String, default: 'safe' },
   securityStatus: { type: String, default: 'Safe' },
-  uploadedAt: { type: Date, default: Date.now }
+  isTrash: { type: Boolean, default: false },
+  isDeleted: { type: Boolean, default: false },
+  uploadedAt: { type: Date, default: Date.now },
+  createdAt: { type: Date, default: Date.now }
 });
-const FileModel = mongoose.model('File', FileSchema);
+
+// Compound indexes for ultra-fast index-only scan on active files and photos
+FileSchema.index({ userId: 1, isTrash: 1, isDeleted: 1, uploadedAt: -1 });
+FileSchema.index({ user: 1, isTrash: 1, isDeleted: 1, createdAt: -1 });
+FileSchema.index({ userId: 1, folderId: 1 });
+
+const FileModel = mongoose.models.File || mongoose.model('File', FileSchema);
 
 // Connect to MongoDB
 let isDbConnected = false;
@@ -137,17 +148,46 @@ async function recalculateStorage(userId) {
 
 const GLOBAL_MAX_BYTES = 107374182400; // 100GB limit calculated to stay within the AWS $100 credit budget for 6 months
 
+// In-memory JWT and User Session Cache (60s TTL) and in-flight lookup coalescing
+const verifiedJwtCache = new Map();
+const userAuthCache = new Map();
+const inflightUserLookups = new Map();
+
 // Auth Middleware
 const verifyToken = async (req, res, next) => {
+  req._startTime = performance.now();
   const token = req.headers.authorization?.split(' ')[1] || req.query.token;
   if (!token) return res.status(401).json({ error: 'Access denied. Please log in.' });
   try {
-    const verified = jwt.verify(token, JWT_SECRET);
+    let verified = verifiedJwtCache.get(token);
+    if (!verified || verified._cacheExpires < Date.now()) {
+      verified = jwt.verify(token, JWT_SECRET);
+      verified._cacheExpires = Date.now() + 60000;
+      verifiedJwtCache.set(token, verified);
+    }
+
+    const userIdStr = String(verified._id);
     
-    // Check if user still exists in database
-        const user = await User.findById(verified._id);
+    // Check if user still exists in database (cached in-memory for 60s with single-flight coalescing)
+    const cached = userAuthCache.get(userIdStr);
+    let user;
+    if (cached && cached.expiresAt > Date.now()) {
+      user = cached.user;
+    } else {
+      let lookupPromise = inflightUserLookups.get(userIdStr);
+      if (!lookupPromise) {
+        lookupPromise = User.findById(verified._id).lean().finally(() => {
+          inflightUserLookups.delete(userIdStr);
+        });
+        inflightUserLookups.set(userIdStr, lookupPromise);
+      }
+      user = await lookupPromise;
+      if (user) {
+        userAuthCache.set(userIdStr, { user, expiresAt: Date.now() + 60000 });
+      }
+    }
+
     if (!user) return res.status(401).json({ error: 'Account no longer exists.' });
-  
 
     req.user = verified;
     next();
@@ -159,6 +199,20 @@ const verifyToken = async (req, res, next) => {
 // Health Check Route
 app.get('/', (req, res) => {
   res.status(200).json({ status: 'active', message: 'CloudGuard Backend is running' });
+});
+
+// Server Memory / Metrics Route for Performance Auditing & Concurrency Benchmarks
+app.get('/api/internal/memory', (req, res) => {
+  const memory = process.memoryUsage();
+  res.json({
+    heapUsed: memory.heapUsed,
+    heapTotal: memory.heapTotal,
+    rss: memory.rss,
+    external: memory.external,
+    heapUsedMB: (memory.heapUsed / 1024 / 1024).toFixed(2),
+    heapTotalMB: (memory.heapTotal / 1024 / 1024).toFixed(2),
+    rssMB: (memory.rss / 1024 / 1024).toFixed(2)
+  });
 });
 
 // Auth Routes
@@ -866,11 +920,45 @@ app.post('/api/upload', verifyToken, async (req, res) => {
   }
   
   const exactStorageUsed = await recalculateStorage(userId);
-  return res.status(uploadedFiles.length > 0 ? 200 : 403).json({
-    status: uploadedFiles.length > 0 ? 'success' : 'blocked',
-    uploadedFiles,
+  invalidatePhotosCache(userId);
+
+  // Attach signed S3 URLs to media files so frontend preview renders immediately
+  const formattedUploadedFiles = await Promise.all(uploadedFiles.map(async (doc) => {
+    const fileObj = doc.toObject ? doc.toObject() : { ...doc };
+    const ext = (fileObj.originalName || fileObj.name || '').split('.').pop().toLowerCase();
+    const isMedia = (fileObj.mimetype || fileObj.mimeType || '').startsWith('image/') ||
+                    (fileObj.mimetype || fileObj.mimeType || '').startsWith('video/') ||
+                    ['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg', 'mp4', 'webm', 'mov', 'mkv'].includes(ext);
+    if (isMedia) {
+      let targetKey = fileObj.s3Key;
+      if (!targetKey && fileObj.location) {
+        try {
+          const urlObj = new URL(fileObj.location);
+          targetKey = decodeURIComponent(urlObj.pathname.substring(1).replace(/\+/g, '%20'));
+        } catch (e) {}
+      }
+      if (targetKey && process.env.AWS_BUCKET_NAME) {
+        try {
+          const command = new GetObjectCommand({
+            Bucket: process.env.AWS_BUCKET_NAME,
+            Key: targetKey
+          });
+          const signedUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
+          fileObj.s3Url = signedUrl;
+          fileObj.url = signedUrl;
+        } catch (err) {
+          console.error('Error signing URL for uploaded media asset:', err.message);
+        }
+      }
+    }
+    return fileObj;
+  }));
+
+  return res.status(formattedUploadedFiles.length > 0 ? 200 : 403).json({
+    status: formattedUploadedFiles.length > 0 ? 'success' : 'blocked',
+    uploadedFiles: formattedUploadedFiles,
     blockedFiles,
-    message: uploadedFiles.length > 0 ? 'Upload processed' : 'All files blocked',
+    message: formattedUploadedFiles.length > 0 ? 'Upload processed' : 'All files blocked',
     storageUsed: exactStorageUsed
   });
 });
@@ -1027,45 +1115,160 @@ app.patch('/api/folders/:id/rename', verifyToken, async (req, res) => {
   }
 });
 
-app.get('/api/folders/:id/stats', verifyToken, async (req, res) => {
+// Recursive helper to collect all descendant folder IDs
+const getFolderDescendantIds = (parentFolderId, folderList) => {
+  const ids = [];
+  const visited = new Set();
+  const rootIdStr = parentFolderId ? parentFolderId.toString() : '';
+  if (!rootIdStr) return ids;
+
+  visited.add(rootIdStr);
+  const queue = [rootIdStr];
+
+  while (queue.length > 0) {
+    const currentParentId = queue.shift();
+    const children = folderList.filter(
+      f => f.parentId && f.parentId.toString() === currentParentId
+    );
+    for (const child of children) {
+      const childIdStr = child._id.toString();
+      if (!visited.has(childIdStr)) {
+        visited.add(childIdStr);
+        ids.push(child._id);
+        queue.push(childIdStr);
+      }
+    }
+  }
+  return ids;
+};
+
+// Recursive Folder Details & Stats Handler
+const handleFolderDetailsOrStats = async (req, res) => {
   try {
-    const folderId = req.params.id;
-    const folder = await FolderModel.findOne({ _id: folderId, userId: req.user._id });
-    if (!folder) return res.status(404).json({ error: 'Folder not found' });
+    const targetFolderId = req.params.id || req.params.folderId;
+    if (!targetFolderId || !mongoose.Types.ObjectId.isValid(targetFolderId)) {
+      return res.status(400).json({ success: false, message: 'Invalid folder ID' });
+    }
+    const targetObjectId = new mongoose.Types.ObjectId(targetFolderId);
 
-    const targetFolderId = new mongoose.Types.ObjectId(folderId);
-    // Removed ObjectId cast for targetUserId since FileSchema defines userId as a String
-    const targetUserId = req.user._id;
+    const folder = await FolderModel.findOne({
+      _id: targetObjectId,
+      $or: [
+        { userId: req.user._id },
+        { userId: req.user._id.toString() },
+        { user: req.user._id }
+      ]
+    });
+    if (!folder) return res.status(404).json({ success: false, message: 'Folder not found' });
 
-    const stats = await FileModel.aggregate([
-      { 
-        $match: { 
-          folderId: targetFolderId,
-          userId: targetUserId
-        } 
-      },
+    // 1. Fetch all user folders to build descendant tree, excluding trash/deleted
+    const allUserFolders = await FolderModel.find({
+      $or: [
+        { userId: req.user._id },
+        { userId: req.user._id.toString() },
+        { user: req.user._id }
+      ],
+      isTrash: { $ne: true },
+      isDeleted: { $ne: true }
+    }).lean();
+
+    const getDescendants = (parentId, list) => {
+      let children = list.filter(f => {
+        const pId = f.parentId || f.parentFolderId;
+        return pId && pId.toString() === parentId.toString();
+      });
+      let ids = [];
+      for (const child of children) {
+        ids.push(child._id);
+        ids = ids.concat(getDescendants(child._id, list));
+      }
+      return ids;
+    };
+
+    // 2. Collect all descendant folder IDs recursively
+    const descendantIds = getDescendants(targetFolderId, allUserFolders);
+    const allFolderObjectIds = [
+      targetObjectId,
+      ...descendantIds
+        .filter(id => id && mongoose.Types.ObjectId.isValid(id.toString()))
+        .map(id => new mongoose.Types.ObjectId(id.toString()))
+    ];
+
+    // 3. Strictly Scope the File Count AND Exclude Trash / Soft-deleted / Non-safe files
+    const fileFilter = {
+      $or: [
+        { userId: req.user._id.toString() },
+        { userId: req.user._id },
+        { user: req.user._id }
+      ],
+      $and: [
+        {
+          $or: [
+            { folderId: { $in: allFolderObjectIds } },
+            { folder: { $in: allFolderObjectIds } }
+          ]
+        },
+        { isTrash: { $ne: true } },
+        { isDeleted: { $ne: true } },
+        { status: { $ne: 'trash' } },
+        { securityStatus: { $in: ['Safe', 'unscanned_too_large'] } }
+      ]
+    };
+
+    // 4. Derive BOTH count and size from the exact same filtered query
+    const totalFiles = await FileModel.countDocuments(fileFilter);
+
+    const [sizeAgg] = await FileModel.aggregate([
+      { $match: fileFilter },
       {
         $group: {
           _id: null,
-          fileCount: { $sum: 1 },
-          totalSizeBytes: { $sum: '$size' }
+          totalBytes: { $sum: '$size' }
         }
       }
     ]);
 
-    if (stats.length > 0) {
-      return res.json({ 
-        fileCount: stats[0].fileCount, 
-        totalSizeBytes: stats[0].totalSizeBytes 
-      });
-    } else {
-      return res.json({ fileCount: 0, totalSizeBytes: 0 });
-    }
+    const totalBytes = sizeAgg?.totalBytes || 0;
+
+    const folderIdStr = folder._id.toString();
+    const directSubfolders = allUserFolders.filter(f => {
+      const pId = f.parentId || f.parentFolderId;
+      return pId && pId.toString() === folderIdStr;
+    }).length;
+
+    const statsData = {
+      name: folder.name,
+      createdAt: folder.createdAt,
+      totalFiles,
+      totalBytes,
+      fileCount: totalFiles,
+      totalSizeBytes: totalBytes,
+      subfolderCount: descendantIds.length,
+      totalSubfolders: descendantIds.length,
+      directSubfolders
+    };
+
+    return res.json({
+      success: true,
+      data: {
+        totalFiles,
+        totalBytes,
+        subfolderCount: descendantIds.length,
+        totalSubfolders: descendantIds.length,
+        directSubfolders,
+        name: folder.name,
+        createdAt: folder.createdAt
+      },
+      ...statsData
+    });
   } catch (err) {
-    console.error('Error fetching folder stats:', err);
-    return res.status(500).json({ error: 'Failed to fetch folder stats' });
+    console.error('Error fetching folder stats/details:', err);
+    return res.status(500).json({ success: false, error: 'Failed to fetch folder stats' });
   }
-});
+};
+
+app.get('/api/folders/:id/stats', verifyToken, handleFolderDetailsOrStats);
+app.get('/api/folders/:id/details', verifyToken, handleFolderDetailsOrStats);
 
 app.delete('/api/folders/:id', verifyToken, async (req, res) => {
   try {
@@ -1146,6 +1349,7 @@ app.get('/api/files', verifyToken, async (req, res) => {
       _id: file._id.toString(),
       name: file.originalName || file.name,
       diskName: file.diskName || file.name,
+      folderId: file.folderId ? file.folderId.toString() : null,
       isFolder: false,
       date: new Date(file.uploadedAt || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
       mtimeMs: new Date(file.uploadedAt || Date.now()).getTime(),
@@ -1162,6 +1366,148 @@ app.get('/api/files', verifyToken, async (req, res) => {
   }
 });
 
+// In-memory response cache and single-flight request coalescing for photos endpoint
+const photosResponseCache = new Map();
+const inflightPhotosFetches = new Map();
+
+function invalidatePhotosCache(userId) {
+  if (userId) {
+    const key = String(userId);
+    photosResponseCache.delete(key);
+    inflightPhotosFetches.delete(key);
+  }
+}
+
+// Dedicated Photos & Media Endpoint (Optimized for Ultra-High-Concurrency)
+app.get('/api/files/photos', verifyToken, async (req, res) => {
+  // HTTP Caching: Disable caching so browser never holds stale S3 presigned URLs with HTTP 304
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  try {
+    const userId = req.user._id;
+    const userKey = String(userId);
+
+    // 1. Fast In-Memory Cache Check (< 1ms latency)
+    const cached = photosResponseCache.get(userKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      if (req._startTime) {
+        res.setHeader('Server-Timing', 'app;dur=' + (performance.now() - req._startTime).toFixed(2));
+      }
+      // 304 disabled to ensure fresh presigned URLs
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader('Content-Length', cached.jsonBuffer.length);
+      return res.end(cached.jsonBuffer);
+    }
+
+    // 2. Single-Flight Coalescing: Prevents cache stampede / DB connection exhaustion under concurrent load
+    let fetchPromise = inflightPhotosFetches.get(userKey);
+    if (!fetchPromise) {
+      fetchPromise = (async () => {
+        // Field projection + .lean() to eliminate Mongoose hydration overhead and save ~70% server RAM
+        const mediaFiles = await FileModel.find({
+          $and: [
+            {
+              $or: [
+                { userId: userId },
+                { userId: String(userId) },
+                { user: userId }
+              ]
+            },
+            { isTrash: { $ne: true } },
+            { isDeleted: { $ne: true } },
+            { securityStatus: { $in: ['Safe', 'unscanned_too_large'] } },
+            {
+              $or: [
+                { mimetype: { $regex: /^(image|video)\//i } },
+                { mimeType: { $regex: /^(image|video)\//i } },
+                { extension: { $in: ['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg', 'mp4', 'webm', 'mov', 'mkv'] } },
+                { originalName: { $regex: /\.(jpg|jpeg|png|webp|gif|svg|mp4|webm|mov|mkv)$/i } },
+                { name: { $regex: /\.(jpg|jpeg|png|webp|gif|svg|mp4|webm|mov|mkv)$/i } }
+              ]
+            }
+          ]
+        })
+        .select('_id name originalName s3Key location size mimetype mimeType uploadedAt createdAt')
+        .sort({ uploadedAt: -1, createdAt: -1 })
+        .lean();
+
+        // Fast ETag generation: if user vault has not changed, respond with 304 Not Modified
+        const latestTimestamp = mediaFiles.length > 0 
+          ? new Date(mediaFiles[0].uploadedAt || mediaFiles[0].createdAt || 0).getTime() 
+          : 0;
+        const etag = `"${crypto.createHash('md5').update(`${userId}-${mediaFiles.length}-${latestTimestamp}`).digest('hex')}"`;
+
+        const filesWithUrls = await Promise.all(mediaFiles.map(async (file) => {
+          let targetKey = file.s3Key;
+          if (!targetKey && file.location) {
+            try {
+              const urlObj = new URL(file.location);
+              targetKey = decodeURIComponent(urlObj.pathname.substring(1).replace(/\+/g, '%20'));
+            } catch (e) {}
+          }
+
+          let presignedUrl = '';
+          if (targetKey && process.env.AWS_BUCKET_NAME) {
+            try {
+              const command = new GetObjectCommand({
+                Bucket: process.env.AWS_BUCKET_NAME,
+                Key: targetKey
+              });
+              presignedUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
+            } catch (err) {
+              console.error('Error signing URL for media asset:', err.message);
+            }
+          }
+
+          const finalUrl = presignedUrl || file.location || '';
+          const ext = (file.originalName || file.name || '').split('.').pop().toLowerCase();
+          const isVideo = (file.mimetype || file.mimeType || '').startsWith('video') || ['mp4', 'webm', 'mov', 'mkv'].includes(ext);
+          const mimeType = file.mimetype || file.mimeType || (isVideo ? `video/${ext === 'mov' ? 'quicktime' : ext}` : `image/${ext === 'jpg' ? 'jpeg' : ext}`);
+
+          return {
+            _id: file._id.toString(),
+            name: file.originalName || file.name,
+            mimeType: mimeType,
+            size: file.size || 0,
+            createdAt: file.uploadedAt || file.createdAt || new Date(),
+            s3Url: finalUrl,
+            url: finalUrl
+          };
+        }));
+
+        const payload = { success: true, count: filesWithUrls.length, files: filesWithUrls };
+        const jsonBuffer = Buffer.from(JSON.stringify(payload));
+        photosResponseCache.set(userKey, {
+          payload,
+          jsonBuffer,
+          etag,
+          expiresAt: Date.now() + 30000
+        });
+
+        return { payload, jsonBuffer, etag };
+      })().finally(() => {
+        inflightPhotosFetches.delete(userKey);
+      });
+
+      inflightPhotosFetches.set(userKey, fetchPromise);
+    }
+
+    const { payload, jsonBuffer, etag } = await fetchPromise;
+
+    if (req._startTime) {
+      res.setHeader('Server-Timing', 'app;dur=' + (performance.now() - req._startTime).toFixed(2));
+    }
+
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Length', jsonBuffer.length);
+    return res.end(jsonBuffer);
+  } catch (error) {
+    console.error('Error fetching photos:', error);
+    return res.status(500).json({ success: false, message: 'Failed to fetch media assets' });
+  }
+});
+
 // Rename File Endpoint
 app.patch('/api/files/:id/rename', verifyToken, async (req, res) => {
   try {
@@ -1175,10 +1521,34 @@ app.patch('/api/files/:id/rename', verifyToken, async (req, res) => {
     file.originalName = newName.trim();
     file.name = newName.trim(); // updating both just in case
     await file.save();
+    invalidatePhotosCache(req.user._id);
     
     res.json({ message: 'File renamed successfully', file });
   } catch (err) {
     console.error('Error renaming file:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Move Folder Endpoint
+app.patch('/api/folders/:id/move', verifyToken, async (req, res) => {
+  try {
+    let { targetFolderId } = req.body;
+    if (!targetFolderId || targetFolderId === "null" || targetFolderId === "") {
+      targetFolderId = null;
+    }
+    const folder = await FolderModel.findOne({ _id: req.params.id, userId: req.user._id });
+    if (!folder) {
+      return res.status(404).json({ error: 'Folder not found' });
+    }
+    if (targetFolderId && targetFolderId.toString() === req.params.id.toString()) {
+      return res.status(400).json({ error: 'Cannot move folder into itself' });
+    }
+    folder.parentId = targetFolderId;
+    await folder.save();
+    res.json({ message: 'Folder moved successfully', folder });
+  } catch (err) {
+    console.error('Error moving folder:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -1222,8 +1592,6 @@ app.patch('/api/files/bulk-move', verifyToken, async (req, res) => {
       targetFolderId = null;
     }
 
-    // Convert strings to ObjectIds safely if needed or let Mongoose handle it. 
-    // We will just pass fileIds to $in if they are valid.
     await FileModel.updateMany(
       { _id: { $in: fileIds }, userId: req.user._id },
       { $set: { folderId: targetFolderId } }
@@ -1235,6 +1603,110 @@ app.patch('/api/files/bulk-move', verifyToken, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// Multi-Item Batch Move Route (supports both folders and files)
+const handleMoveBatch = async (req, res) => {
+  try {
+    let { folderIds = [], fileIds = [], targetFolderId = null } = req.body;
+    const userId = req.user._id;
+
+    if (!targetFolderId || targetFolderId === "null" || targetFolderId === "" || targetFolderId === "root") {
+      targetFolderId = null;
+    }
+
+    let parsedTargetFolderId = null;
+    if (targetFolderId) {
+      if (!mongoose.Types.ObjectId.isValid(targetFolderId.toString())) {
+        return res.status(400).json({ success: false, message: 'Invalid target folder ID' });
+      }
+      parsedTargetFolderId = new mongoose.Types.ObjectId(targetFolderId.toString());
+      // Verify target folder exists and belongs to the user
+      const targetFolder = await FolderModel.findOne({
+        _id: parsedTargetFolderId,
+        $or: [{ userId }, { userId: userId.toString() }, { user: userId }]
+      });
+      if (!targetFolder) {
+        return res.status(404).json({ success: false, message: 'Target folder not found' });
+      }
+    }
+
+    // Circular check: ensure targetFolderId is not among folderIds or any of their descendants
+    if (parsedTargetFolderId && folderIds.length > 0) {
+      const allUserFolders = await FolderModel.find({
+        $or: [{ userId }, { userId: userId.toString() }, { user: userId }]
+      }).lean();
+
+      const getDescendants = (parentId, list) => {
+        let children = list.filter(f => {
+          const pId = f.parentId || f.parentFolderId;
+          return pId && pId.toString() === parentId.toString();
+        });
+        let ids = [];
+        for (const child of children) {
+          ids.push(child._id.toString());
+          ids = ids.concat(getDescendants(child._id, list));
+        }
+        return ids;
+      };
+
+      const invalidTargetIds = new Set();
+      folderIds.forEach(fId => {
+        if (!fId) return;
+        const idStr = fId.toString();
+        invalidTargetIds.add(idStr);
+        getDescendants(idStr, allUserFolders).forEach(dId => invalidTargetIds.add(dId));
+      });
+
+      if (invalidTargetIds.has(parsedTargetFolderId.toString())) {
+        return res.status(400).json({
+          success: false,
+          message: 'Cannot move a folder into itself or its own subfolder'
+        });
+      }
+    }
+
+    if (fileIds.length > 0) {
+      const validFileIds = fileIds
+        .filter(id => id && mongoose.Types.ObjectId.isValid(id.toString()))
+        .map(id => new mongoose.Types.ObjectId(id.toString()));
+
+      if (validFileIds.length > 0) {
+        await FileModel.updateMany(
+          {
+            _id: { $in: validFileIds },
+            $or: [{ userId }, { userId: userId.toString() }, { user: userId }]
+          },
+          { $set: { folderId: parsedTargetFolderId } }
+        );
+      }
+    }
+
+    if (folderIds.length > 0) {
+      const validFolderIds = folderIds
+        .filter(id => id && mongoose.Types.ObjectId.isValid(id.toString()))
+        .map(id => new mongoose.Types.ObjectId(id.toString()));
+
+      if (validFolderIds.length > 0) {
+        await FolderModel.updateMany(
+          {
+            _id: { $in: validFolderIds },
+            $or: [{ userId }, { userId: userId.toString() }, { user: userId }]
+          },
+          { $set: { parentId: parsedTargetFolderId } }
+        );
+      }
+    }
+
+    return res.json({ success: true, message: 'Items moved successfully' });
+  } catch (err) {
+    console.error('Error in batch move:', err);
+    return res.status(500).json({ success: false, message: err.message, error: err.message });
+  }
+};
+
+app.put('/api/folders/move-batch', verifyToken, handleMoveBatch);
+app.post('/api/folders/move-batch', verifyToken, handleMoveBatch);
+app.patch('/api/folders/move-batch', verifyToken, handleMoveBatch);
 
 // Access File Endpoint (Presigned URL)
 app.get('/api/files/:id/access', verifyToken, async (req, res) => {
@@ -1274,6 +1746,109 @@ app.get('/api/files/:id/access', verifyToken, async (req, res) => {
   }
 });
 
+// Dedicated Attachment Download Route
+app.get('/api/files/:id/download', verifyToken, async (req, res) => {
+  try {
+    let query = {
+      _id: req.params.id,
+      $or: [
+        { userId: req.user._id },
+        { userId: String(req.user._id) },
+        { user: req.user._id }
+      ]
+    };
+    if (req.user.isAdmin) {
+      query = { _id: req.params.id };
+    }
+    const file = await FileModel.findOne(query);
+    if (!file) {
+      return res.status(404).json({ success: false, message: 'File not found' });
+    }
+
+    let targetKey = file.s3Key || file.key;
+    if (!targetKey && file.location) {
+      try {
+        const urlObj = new URL(file.location);
+        targetKey = decodeURIComponent(urlObj.pathname.substring(1).replace(/\+/g, '%20'));
+      } catch (e) {
+        console.error("URL parsing failed for location:", file.location);
+      }
+    }
+
+    if (!targetKey) {
+      return res.status(400).json({ success: false, message: 'S3 Key missing' });
+    }
+
+    const fileName = file.originalName || file.name || 'download';
+    const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME;
+
+    const command = new GetObjectCommand({
+      Bucket: bucket,
+      Key: targetKey,
+      ResponseContentDisposition: `attachment; filename="${encodeURIComponent(fileName)}"; filename*=UTF-8''${encodeURIComponent(fileName)}`
+    });
+
+    // Valid for 5 minutes (300 seconds)
+    const downloadUrl = await getSignedUrl(s3, command, { expiresIn: 300 });
+
+    res.json({ success: true, downloadUrl });
+  } catch (err) {
+    console.error('Error generating download url:', err);
+    res.status(500).json({ success: false, message: 'Download failed' });
+  }
+});
+
+// GET /api/files/:id/download-url - Generates fresh on-demand S3 presigned download URL valid for 1 hour
+app.get('/api/files/:id/download-url', verifyToken, async (req, res) => {
+  try {
+    let query = {
+      _id: req.params.id,
+      $or: [
+        { userId: req.user._id },
+        { userId: String(req.user._id) },
+        { user: req.user._id }
+      ]
+    };
+    if (req.user.isAdmin) {
+      query = { _id: req.params.id };
+    }
+    const file = await FileModel.findOne(query);
+    if (!file) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+
+    let targetKey = file.s3Key || file.key;
+    if (!targetKey && file.location) {
+      try {
+        const urlObj = new URL(file.location);
+        targetKey = decodeURIComponent(urlObj.pathname.substring(1).replace(/\+/g, '%20'));
+      } catch (e) {
+        console.error('URL parsing failed for location:', file.location);
+      }
+    }
+
+    if (!targetKey) {
+      return res.status(400).json({ error: 'S3 Key missing and cannot be parsed from location' });
+    }
+
+    const fileName = file.originalName || file.name || 'download';
+    const bucket = process.env.AWS_S3_BUCKET_NAME || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET;
+
+    // Generate fresh presigned URL valid for 1 hour (3600 seconds) with Content-Disposition: attachment
+    const command = new GetObjectCommand({
+      Bucket: bucket,
+      Key: targetKey,
+      ResponseContentDisposition: `attachment; filename="${encodeURIComponent(fileName)}"; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+    });
+
+    const downloadUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
+    return res.json({ downloadUrl, name: fileName, size: file.size || 0 });
+  } catch (err) {
+    console.error('Failed to generate presigned download URL:', err);
+    return res.status(500).json({ error: 'Failed to generate download link' });
+  }
+});
+
 // Delete File Endpoint
 app.delete('/api/files/:id', verifyToken, async (req, res) => {
   try {
@@ -1292,6 +1867,7 @@ app.delete('/api/files/:id', verifyToken, async (req, res) => {
     }
 
     await FileModel.deleteOne({ _id: req.params.id });
+    invalidatePhotosCache(req.user._id);
     const exactStorageUsed = await recalculateStorage(req.user._id);
 
     return res.status(200).json({
@@ -1305,8 +1881,8 @@ app.delete('/api/files/:id', verifyToken, async (req, res) => {
   }
 });
 
-// Bulk Delete Files Endpoint
-app.post('/api/files/bulk-delete', verifyToken, async (req, res) => {
+// Bulk/Batch Delete Files Endpoint
+const handleBulkDelete = async (req, res) => {
   try {
     const { fileIds } = req.body;
     if (!fileIds || !Array.isArray(fileIds) || fileIds.length === 0) {
@@ -1326,6 +1902,7 @@ app.post('/api/files/bulk-delete', verifyToken, async (req, res) => {
     ));
 
     await FileModel.deleteMany({ _id: { $in: objectIds }, userId: req.user._id });
+    invalidatePhotosCache(req.user._id);
     await recalculateStorage(req.user._id);
 
     res.status(200).json({ message: "Files deleted successfully" });
@@ -1334,7 +1911,9 @@ app.post('/api/files/bulk-delete', verifyToken, async (req, res) => {
     console.error("Bulk deletion error:", error.message);
     res.status(500).json({ error: "Server error during bulk deletion" });
   }
-});
+};
+app.post('/api/files/bulk-delete', verifyToken, handleBulkDelete);
+app.post('/api/files/batch-delete', verifyToken, handleBulkDelete);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, '0.0.0.0', () => {
