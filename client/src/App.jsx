@@ -13,7 +13,7 @@ import LandingPage from './pages/LandingPage';
 import AuthPage from './pages/AuthPage';
 import PrivacyPolicy from './pages/PrivacyPolicy';
 import TermsOfService from './pages/TermsOfService';
-import PhotosView from './pages/PhotosView';
+import PhotosView, { invalidatePhotosCache } from './pages/PhotosView';
 import { Folder, FolderInput, X, MoreVertical, Pencil, Info, LayoutGrid, List, Check, Trash2, Image, Play, ChevronLeft, ChevronRight, Download, Clock } from 'lucide-react';
 
 import { API_BASE_URL } from "./config";
@@ -230,6 +230,7 @@ function App() {
     setToken(null);
     setUser(null);
     setShowProfileMenu(false);
+    invalidatePhotosCache();
   };
 
   const [files, setFiles] = useState([]);
@@ -617,6 +618,7 @@ function App() {
       if (response.status === 200) {
         setFiles(prev => prev.filter(f => f._id !== fileToDelete._id && f.diskName !== fileToDelete.diskName));
         setSelectedFiles(prev => prev.filter(id => id !== fileToDelete._id));
+        invalidatePhotosCache();
         await fetchStorageStats();
         setFileToDelete(null);
         addToast('success', 'File deleted successfully.');
@@ -654,6 +656,7 @@ function App() {
         );
       }
       addToast('success', 'Selected item(s) deleted successfully.');
+      invalidatePhotosCache();
       clearSelection();
       setShowBulkDeleteModal(false);
       await fetchFiles();
@@ -780,6 +783,7 @@ function App() {
             const newFiles = uploadedFiles.filter(uf => uf && !safePrevFiles.some(pf => pf?._id === uf?._id));
             return [...newFiles, ...safePrevFiles];
           });
+          invalidatePhotosCache();
         }
       } catch (err) {
         if (axios.isCancel(err) || err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED') {
@@ -810,6 +814,7 @@ function App() {
          addToast('error', `Security Alert: Malware detected! ${name}`);
       } else if (finalStatus === 'completed') {
          addToast('success', `Uploaded: ${name}`);
+         invalidatePhotosCache();
       } else if (finalStatus === 'failed' && errorMsg !== 'Canceled') {
          addToast('error', errorMsg || `Upload failed for ${name}`);
       }

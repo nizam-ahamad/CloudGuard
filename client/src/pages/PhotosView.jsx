@@ -22,9 +22,14 @@ const BATCH_SIZE = 40;
 // Module-level cache (persists in memory across component unmounts during the session)
 let photosMemoryCache = null;
 let lastFetchTime = 0;
-const CACHE_TTL = 2 * 60 * 1000; // 2 minutes auto-refresh
+
+export const invalidatePhotosCache = () => {
+  photosMemoryCache = null;
+  lastFetchTime = 0;
+};
 
 export default function PhotosView({ token: propToken }) {
+  // 1. Stale-While-Revalidate: Immediate render from cache with 0ms delay
   const [photos, setPhotos] = useState(() => photosMemoryCache || []);
   const [loading, setLoading] = useState(!photosMemoryCache);
   const [error, setError] = useState(null);
@@ -45,31 +50,40 @@ export default function PhotosView({ token: propToken }) {
       return;
     }
 
-    const isCacheValid = photosMemoryCache && (Date.now() - lastFetchTime < CACHE_TTL);
-
-    // Serve from cache instantly if fresh
-    if (!forceRefresh && isCacheValid) {
-      setPhotos(photosMemoryCache);
-      setLoading(false);
-      return;
+    // If cache is null (initial load, post-upload, or post-logout), show loader
+    if (!photosMemoryCache || forceRefresh) {
+      setLoading(true);
     }
-
-    if (!photosMemoryCache) setLoading(true);
     setError(null);
 
     try {
+      // Background revalidation
       const response = await axios.get(`${API_BASE_URL}/api/files/photos`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const media = response.data?.files || (Array.isArray(response.data) ? response.data : []);
 
-      // Update state and memory cache
+      // Check if data has changed compared to cached snapshot
+      const hasChanged = !photosMemoryCache ||
+        media.length !== photosMemoryCache.length ||
+        media.some((item, i) => {
+          const prev = photosMemoryCache[i];
+          return !prev || prev._id !== item._id || prev.s3Url !== item.s3Url || prev.name !== item.name;
+        });
+
+      if (hasChanged) {
+        setPhotos(media);
+      }
+
+      // Update in-memory session cache & timestamp
       photosMemoryCache = media;
       lastFetchTime = Date.now();
-      setPhotos(media);
     } catch (err) {
       console.error('Error fetching photos:', err);
-      setError(err.response?.data?.message || 'Failed to load media assets');
+      // Only display error if no cached data is already visible
+      if (!photosMemoryCache || photosMemoryCache.length === 0) {
+        setError(err.response?.data?.message || 'Failed to load media assets');
+      }
     } finally {
       setLoading(false);
     }
