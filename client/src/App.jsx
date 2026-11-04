@@ -8,6 +8,7 @@ import OTPVerification from './OTPVerification';
 import { useToast } from './context/ToastContext';
 import MoveModal from './components/MoveModal';
 import FolderDetailsModal from './components/FolderDetailsModal';
+import NewFolderModal from './components/NewFolderModal';
 import DeleteConfirmModal from './components/DeleteConfirmModal';
 import LandingPage from './pages/LandingPage';
 import AuthPage from './pages/AuthPage';
@@ -19,7 +20,7 @@ import {
   downloadBatchZipWithProgress 
 } from './utils/downloadHelper';
 import { HeaderDownloadButton, useDownload } from './context/DownloadContext';
-import { Folder, FolderInput, X, MoreVertical, Pencil, Info, LayoutGrid, List, Check, Trash2, Image, Play, ChevronLeft, ChevronRight, Download, Clock, UploadCloud, FolderPlus } from 'lucide-react';
+import { Folder, FolderInput, X, MoreVertical, Pencil, Info, LayoutGrid, List, Check, Trash2, Image, Play, ChevronLeft, ChevronRight, Download, Clock, UploadCloud, FolderPlus, Menu, Sun, Moon } from 'lucide-react';
 
 import { API_BASE_URL } from "./config";
 
@@ -280,7 +281,6 @@ function App() {
   const [breadcrumbs, setBreadcrumbs] = useState([{ id: null, name: 'Home' }]);
   const [folders, setFolders] = useState([]);
   const [showNewFolderModal, setShowNewFolderModal] = useState(false);
-  const [newFolderName, setNewFolderName] = useState('');
   const [showMoveModal, setShowMoveModal] = useState(false);
   const [fileToMove, setFileToMove] = useState(null);
   const [moveFolders, setMoveFolders] = useState([]);
@@ -522,23 +522,17 @@ function App() {
     }
   }, [token, searchParams]);
 
-  const handleCreateFolder = async (e) => {
-    e.preventDefault();
-    if (!newFolderName.trim()) return;
-    try {
-      const response = await axios.post(`${API_BASE_URL}/api/folders`, {
-        name: newFolderName,
-        parentId: currentFolderId
-      }, { headers: { Authorization: `Bearer ${token}` } });
-      if (response.status === 201) {
-        setNewFolderName('');
-        setShowNewFolderModal(false);
-        fetchFolders(currentFolderId);
-        toast.success('Folder created successfully');
-      }
-    } catch (err) {
-      console.error('Error creating folder', err);
-      addToast('error', 'Failed to create folder');
+  const handleCreateFolder = async (name, parentId) => {
+    const trimmed = (name || '').trim();
+    if (!trimmed) return;
+    const response = await axios.post(`${API_BASE_URL}/api/folders`, {
+      name: trimmed,
+      parentId: parentId || null
+    }, { headers: { Authorization: `Bearer ${token}` } });
+    if (response.status === 201) {
+      setShowNewFolderModal(false);
+      fetchFolders(currentFolderId);
+      toast.success('Folder created successfully');
     }
   };
 
@@ -1454,71 +1448,96 @@ function App() {
       </nav>
 
       {/* TopAppBar */}
-      <header className={`bg-white/95 dark:bg-neutral-950/95 backdrop-blur-md fixed top-0 right-0 w-full h-16 border-b border-neutral-200/80 dark:border-neutral-800/80 flex justify-between items-center px-margin-mobile md:px-margin-desktop z-30 transition-all duration-300 ease-in-out ${isCollapsed ? 'md:w-[calc(100%-80px)]' : 'md:w-[calc(100%-256px)]'}`}>
-        <div className="flex items-center gap-4">
-          <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="md:hidden p-2 text-on-surface-variant hover:bg-surface-container-high rounded-full transition-colors">
-            <span className="material-symbols-outlined">menu</span>
-          </button>
-          <CloudGuardLogo className="h-10 w-auto md:hidden shrink-0" />
-          <h1 className="font-headline-md text-headline-md font-bold text-primary dark:text-[#e3e3e3] md:hidden -ml-2">CloudGuard</h1>
-        </div>
-          <div className="hidden md:flex flex-1 max-w-md ml-4 mr-8">
-            <div className="relative w-full focus-within:ring-2 focus-within:ring-secondary rounded-lg transition-all">
-              <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant">search</span>
-              <input 
-                value={searchQuery} 
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-surface dark:bg-zinc-800 text-on-surface dark:text-zinc-200 border border-outline-variant dark:border-zinc-700 rounded-lg pl-10 pr-10 py-2 font-body-md text-body-md outline-none" 
-                placeholder="Search files, folders..." 
-                type="text" 
-              />
-              {searchQuery && (
-                <button
-                  onClick={() => setSearchQuery('')}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 transition-colors"
-                >
-                  <X size={16} strokeWidth={2} />
-                </button>
-              )}
-            </div>
-          </div>
-        <div className="flex items-center gap-2">
-          <HeaderDownloadButton />
+      <header className={`bg-white/95 dark:bg-neutral-950/95 backdrop-blur-md fixed top-0 right-0 w-full h-16 border-b border-neutral-200/80 dark:border-neutral-800/80 flex justify-between items-center px-3 sm:px-6 z-30 transition-all duration-300 ease-in-out select-none ${isCollapsed ? 'md:w-[calc(100%-80px)]' : 'md:w-[calc(100%-256px)]'}`}>
+        
+        {/* 1. Left: Hamburger & Brand Title */}
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0 shrink-0">
           <button
-            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-            className="p-2 text-on-surface-variant dark:text-zinc-100 hover:bg-surface-container-high dark:hover:bg-zinc-800/70 rounded-full transition-colors flex items-center justify-center"
-            title="Toggle Theme"
+            type="button"
+            onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+            className="md:hidden p-1.5 -ml-1 sm:ml-0 rounded-lg text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
+            aria-label="Toggle navigation menu"
           >
-            <span className="material-symbols-outlined">
-              {theme === 'dark' ? 'light_mode' : 'dark_mode'}
-            </span>
+            <Menu className="w-5 h-5"/>
           </button>
-          <div className="relative ml-2">
+
+          <div className="flex items-center gap-2 cursor-pointer md:hidden">
+            <CloudGuardLogo className="w-7 h-7 sm:w-8 h-8 shrink-0"/>
+            <span className="text-base sm:text-lg font-bold tracking-tight text-neutral-900 dark:text-white truncate">
+              CloudGuard
+            </span>
+          </div>
+        </div>
+
+        {/* 2. Center: Desktop Search (Hidden on mobile to avoid squeezing the brand or actions) */}
+        <div className="hidden md:flex flex-1 max-w-md mx-4">
+          <div className="relative w-full focus-within:ring-2 focus-within:ring-secondary rounded-xl transition-all">
+            <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-sm">search</span>
+            <input 
+              value={searchQuery} 
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full bg-neutral-100 dark:bg-neutral-800/80 text-neutral-900 dark:text-white border border-neutral-200 dark:border-neutral-700/60 rounded-xl pl-9 pr-9 py-2 text-xs outline-none placeholder-neutral-400 focus:ring-2 focus:ring-blue-500/40 transition-all" 
+              placeholder="Search files, folders..." 
+              type="text" 
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 transition-colors cursor-pointer"
+              >
+                <X size={14} strokeWidth={2} />
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* 3. Right: Header Action Group (Strictly in-flow flex items, zero absolute positioning) */}
+        <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
+          {/* Header Download Tray */}
+          <HeaderDownloadButton/>
+
+          {/* Theme Toggle Button */}
+          <button
+            type="button"
+            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+            className="relative p-2 rounded-lg text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
+            aria-label="Toggle theme"
+            title="Toggle theme"
+          >
+            {theme === 'dark' ? (
+              <Sun className="w-5 h-5 text-amber-400"/>
+            ) : (
+              <Moon className="w-5 h-5 text-neutral-700 dark:text-neutral-300"/>
+            )}
+          </button>
+
+          {/* User Profile Avatar with dropdown */}
+          <div className="relative">
             <div 
               onClick={(e) => { e.stopPropagation(); setShowProfileMenu(!showProfileMenu); }}
-              className="w-10 h-10 rounded-full bg-secondary text-on-secondary flex items-center justify-center font-title-md cursor-pointer border-2 border-surface-container-lowest select-none"
+              className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs sm:text-sm font-semibold shadow-sm select-none shrink-0 cursor-pointer"
             >
-              {user?.name ? user.name.charAt(0).toUpperCase() : 'U'}
+              {user?.name ? user.name.charAt(0).toUpperCase() : 'S'}
             </div>
-              <div className={`absolute right-0 mt-2 w-48 bg-surface-container-lowest dark:bg-[#1e1f20] border border-outline-variant dark:border-zinc-800 shadow-lg rounded-xl overflow-hidden z-50 transition-all duration-200 ease-out origin-top-right ${showProfileMenu ? 'opacity-100 scale-100 visible translate-y-0' : 'opacity-0 scale-95 invisible -translate-y-2 pointer-events-none'}`}>
-                <div className="px-4 py-3 border-b border-outline-variant dark:border-zinc-800 bg-surface-container-low dark:bg-[#131314] cursor-default">
-                  <p className="text-sm font-bold text-on-surface dark:text-[#e3e3e3] truncate">{user?.name || 'User'}</p>
-                  <p className="text-xs text-on-surface-variant dark:text-[#c4c7c5] truncate">{user?.email || 'user@example.com'}</p>
-                </div>
-                <button 
-                  onClick={() => { setViewMode('settings'); setShowProfileMenu(false); }}
-                  className="w-full text-left px-4 py-3 text-on-surface dark:text-[#e3e3e3] hover:bg-surface-container-high dark:hover:bg-zinc-800/70 text-sm flex items-center gap-2 transition-colors"
-                >
-                  <span className="material-symbols-outlined text-[18px]">person</span> Profile Settings
-                </button>
-                <div className="w-full h-px bg-outline-variant dark:bg-zinc-800"></div>
-                <button 
-                  onClick={handleLogout}
-                  className="w-full text-left px-4 py-3 text-error dark:text-red-400 hover:bg-error/10 dark:hover:bg-red-950/30 text-sm flex items-center gap-2 transition-colors"
-                >
-                  <span className="material-symbols-outlined text-[18px]">logout</span> Sign out
-                </button>
+            <div className={`absolute right-0 mt-2 w-48 bg-surface-container-lowest dark:bg-[#1e1f20] border border-outline-variant dark:border-zinc-800 shadow-lg rounded-xl overflow-hidden z-50 transition-all duration-200 ease-out origin-top-right ${showProfileMenu ? 'opacity-100 scale-100 visible translate-y-0' : 'opacity-0 scale-95 invisible -translate-y-2 pointer-events-none'}`}>
+              <div className="px-4 py-3 border-b border-outline-variant dark:border-zinc-800 bg-surface-container-low dark:bg-[#131314] cursor-default">
+                <p className="text-sm font-bold text-on-surface dark:text-[#e3e3e3] truncate">{user?.name || 'User'}</p>
+                <p className="text-xs text-on-surface-variant dark:text-[#c4c7c5] truncate">{user?.email || 'user@example.com'}</p>
               </div>
+              <button 
+                onClick={() => { setViewMode('settings'); setShowProfileMenu(false); }}
+                className="w-full text-left px-4 py-3 text-on-surface dark:text-[#e3e3e3] hover:bg-surface-container-high dark:hover:bg-zinc-800/70 text-sm flex items-center gap-2 transition-colors cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-[18px]">person</span> Profile Settings
+              </button>
+              <div className="w-full h-px bg-outline-variant dark:bg-zinc-800"></div>
+              <button 
+                onClick={handleLogout}
+                className="w-full text-left px-4 py-3 text-error dark:text-red-400 hover:bg-error/10 dark:hover:bg-red-950/30 text-sm flex items-center gap-2 transition-colors cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-[18px]">logout</span> Sign out
+              </button>
+            </div>
           </div>
         </div>
       </header>
@@ -2535,33 +2554,13 @@ function App() {
           </div>
         </div>
       )}
-      {showNewFolderModal && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-[#1e1f20] rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
-            <div className="p-6 border-b border-outline-variant dark:border-zinc-800">
-              <h3 className="text-xl font-semibold text-gray-900 dark:text-white">New Folder</h3>
-            </div>
-            <form onSubmit={handleCreateFolder} className="p-6">
-              <input 
-                type="text" 
-                value={newFolderName}
-                onChange={e => setNewFolderName(e.target.value)}
-                autoFocus
-                placeholder="Folder name"
-                className="w-full bg-surface dark:bg-[#0a0a0a] text-on-surface dark:text-zinc-200 border border-outline-variant dark:border-zinc-700 focus:ring-2 focus:ring-primary rounded-lg px-4 py-3 outline-none mb-6"
-              />
-              <div className="flex justify-end gap-3">
-                <button type="button" onClick={() => setShowNewFolderModal(false)} className="px-5 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-neutral-200 dark:hover:bg-zinc-800 rounded-lg transition-colors duration-200">
-                  Cancel
-                </button>
-                <button type="submit" disabled={!newFolderName.trim()} className="px-5 py-2.5 text-sm font-medium text-white bg-primary hover:bg-primary/90 rounded-lg transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed">
-                  Create
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      {/* New Folder Modal */}
+      <NewFolderModal
+        isOpen={showNewFolderModal}
+        onClose={() => setShowNewFolderModal(false)}
+        onCreateFolder={handleCreateFolder}
+        currentFolderId={currentFolderId}
+      />
     </div>
   );
 

@@ -1053,10 +1053,22 @@ app.get('/api/files/sync', verifyToken, async (req, res) => {
 app.post('/api/folders', verifyToken, async (req, res) => {
   try {
     const { name, parentId } = req.body;
-    if (!name || name.trim() === '') return res.status(400).json({ error: 'Folder name is required' });
+    const trimmedName = (name || '').trim();
+    if (!trimmedName) return res.status(400).json({ error: 'Folder name is required' });
+
+    // Check if a folder with the same name already exists in this folder
+    const existing = await FolderModel.findOne({
+      name: trimmedName,
+      parentId: parentId || null,
+      userId: req.user._id,
+    });
+
+    if (existing) {
+      return res.status(409).json({ error: 'A folder with this name already exists here' });
+    }
     
     const newFolder = new FolderModel({
-      name: name.trim(),
+      name: trimmedName,
       userId: req.user._id,
       parentId: parentId || null
     });
