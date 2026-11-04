@@ -8,7 +8,6 @@ import OTPVerification from './OTPVerification';
 import { useToast } from './context/ToastContext';
 import MoveModal from './components/MoveModal';
 import FolderDetailsModal from './components/FolderDetailsModal';
-import NewFolderModal from './components/NewFolderModal';
 import DeleteConfirmModal from './components/DeleteConfirmModal';
 import LandingPage from './pages/LandingPage';
 import AuthPage from './pages/AuthPage';
@@ -20,7 +19,7 @@ import {
   downloadBatchZipWithProgress 
 } from './utils/downloadHelper';
 import { HeaderDownloadButton, useDownload } from './context/DownloadContext';
-import { Folder, FolderInput, X, MoreVertical, Pencil, Info, LayoutGrid, List, Check, Trash2, Image, Play, ChevronLeft, ChevronRight, Download, Clock, UploadCloud, FolderPlus, Menu, Sun, Moon } from 'lucide-react';
+import { Folder, FolderInput, X, MoreVertical, Pencil, Info, LayoutGrid, List, Check, Trash2, Image, Play, ChevronLeft, ChevronRight, Download, Clock, UploadCloud, FolderPlus, Menu, Sun, Moon, Loader2 } from 'lucide-react';
 
 import { API_BASE_URL } from "./config";
 
@@ -281,6 +280,8 @@ function App() {
   const [breadcrumbs, setBreadcrumbs] = useState([{ id: null, name: 'Home' }]);
   const [folders, setFolders] = useState([]);
   const [showNewFolderModal, setShowNewFolderModal] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [isCreatingFolder, setIsCreatingFolder] = useState(false);
   const [showMoveModal, setShowMoveModal] = useState(false);
   const [fileToMove, setFileToMove] = useState(null);
   const [moveFolders, setMoveFolders] = useState([]);
@@ -522,17 +523,39 @@ function App() {
     }
   }, [token, searchParams]);
 
-  const handleCreateFolder = async (name, parentId) => {
-    const trimmed = (name || '').trim();
-    if (!trimmed) return;
-    const response = await axios.post(`${API_BASE_URL}/api/folders`, {
-      name: trimmed,
-      parentId: parentId || null
-    }, { headers: { Authorization: `Bearer ${token}` } });
-    if (response.status === 201) {
-      setShowNewFolderModal(false);
-      fetchFolders(currentFolderId);
-      toast.success('Folder created successfully');
+  const handleCreateFolder = async (e) => {
+    if (e) e.preventDefault();
+    const trimmedName = (newFolderName || '').trim();
+    
+    if (!trimmedName || isCreatingFolder) return;
+
+    try {
+      setIsCreatingFolder(true);
+
+      const response = await axios.post(`${API_BASE_URL}/api/folders`, {
+        name: trimmedName,
+        parentId: currentFolderId || null
+      }, { headers: { Authorization: `Bearer ${token}` } });
+
+      if (response.status === 201) {
+        setShowNewFolderModal(false);
+        setNewFolderName('');
+        toast.success(`Folder "${trimmedName}" created`);
+        fetchFolders(currentFolderId);
+      }
+    } catch (err) {
+      console.error('Folder creation error:', err);
+
+      // Handle 409 Duplicate Name Conflict specifically
+      if (err.response?.status === 409) {
+        toast.error(
+          err.response?.data?.error || `A folder named "${trimmedName}" already exists here.`
+        );
+      } else {
+        toast.error(err.response?.data?.error || 'Failed to create folder. Please try again.');
+      }
+    } finally {
+      setIsCreatingFolder(false);
     }
   };
 
@@ -2555,12 +2578,76 @@ function App() {
         </div>
       )}
       {/* New Folder Modal */}
-      <NewFolderModal
-        isOpen={showNewFolderModal}
-        onClose={() => setShowNewFolderModal(false)}
-        onCreateFolder={handleCreateFolder}
-        currentFolderId={currentFolderId}
-      />
+      {showNewFolderModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm select-none animate-in fade-in">
+          <div className="w-full max-w-sm rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-5 shadow-2xl">
+            
+            {/* Modal Header */}
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2 text-sm font-semibold text-neutral-900 dark:text-white">
+                <FolderPlus className="w-4 h-4 text-blue-500 shrink-0"/>
+                <span>New Folder</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!isCreatingFolder) {
+                    setShowNewFolderModal(false);
+                    setNewFolderName('');
+                  }
+                }}
+                disabled={isCreatingFolder}
+                className="p-1 rounded-md text-neutral-400 hover:text-neutral-700 dark:hover:text-white transition-colors cursor-pointer disabled:opacity-50"
+                title="Close"
+              >
+                <X className="w-4 h-4"/>
+              </button>
+            </div>
+
+            {/* Form */}
+            <form onSubmit={handleCreateFolder} className="space-y-4">
+              <input
+                type="text"
+                autoFocus
+                disabled={isCreatingFolder}
+                value={newFolderName}
+                onChange={(e) => setNewFolderName(e.target.value)}
+                placeholder="Folder name"
+                className="w-full px-3.5 py-2.5 text-sm rounded-xl bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-white border border-neutral-200 dark:border-neutral-700 focus:outline-none focus:ring-2 focus:ring-blue-500/40 disabled:opacity-60 transition-all"
+              />
+
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  disabled={isCreatingFolder}
+                  onClick={() => {
+                    setShowNewFolderModal(false);
+                    setNewFolderName('');
+                  }}
+                  className="px-4 py-2 text-xs font-medium rounded-lg text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                
+                <button
+                  type="submit"
+                  disabled={isCreatingFolder || !newFolderName.trim()}
+                  className="flex items-center justify-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900 hover:opacity-90 active:scale-95 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed min-w-[84px]"
+                >
+                  {isCreatingFolder ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0"/>
+                      <span>Creating...</span>
+                    </>
+                  ) : (
+                    <span>Create</span>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 
