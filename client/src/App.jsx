@@ -1484,9 +1484,9 @@ function App() {
             <Menu className="w-5 h-5"/>
           </button>
 
-          <div className="flex items-center gap-2 cursor-pointer select-none shrink-0 md:hidden">
-            <CloudGuardLogo className="w-12 h-12 sm:w-12 sm:h-12 shrink-0 transition-transform active:scale-95"/>
-            <span className="text-base sm:text-lg font-bold tracking-tight text-neutral-900 dark:text-white">
+          <div className="flex items-center gap-2.5 cursor-pointer select-none shrink-0 md:hidden">
+            <CloudGuardLogo className="w-14 h-14 sm:w-14 sm:h-14 shrink-0 transition-transform active:scale-95"/>
+            <span className="text-xl sm:text-2xl font-bold tracking-tight text-neutral-900 dark:text-white">
               CloudGuard
             </span>
           </div>
