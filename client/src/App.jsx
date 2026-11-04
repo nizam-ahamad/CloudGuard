@@ -18,6 +18,7 @@ import {
   downloadSingleFileWithProgress, 
   downloadBatchZipWithProgress 
 } from './utils/downloadHelper';
+import { HeaderDownloadButton, useDownload } from './context/DownloadContext';
 import { Folder, FolderInput, X, MoreVertical, Pencil, Info, LayoutGrid, List, Check, Trash2, Image, Play, ChevronLeft, ChevronRight, Download, Clock } from 'lucide-react';
 
 import { API_BASE_URL } from "./config";
@@ -37,6 +38,7 @@ class ErrorBoundary extends React.Component {
 
 function App() {
   const toast = useToast();
+  const { triggerDownload, startDownload } = useDownload();
   const location = useLocation();
   const navigate = useNavigate();
   const [isLoading, setIsLoading] = useState(true);
@@ -250,6 +252,7 @@ function App() {
   const setSelectedFolders = setSelectedFolderIds;
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState({ percent: 0, text: '' });
+  const abortDownloadRef = useRef(null);
   const [itemsToMove, setItemsToMove] = useState([]);
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
@@ -410,34 +413,37 @@ function App() {
   const handleOpenMoveModal = handleBatchMove;
   const handleBatchDelete = () => setShowBulkDeleteModal(true);
 
+  const handleCancelDownload = (e) => {
+    e?.stopPropagation();
+    if (abortDownloadRef.current) {
+      abortDownloadRef.current();
+      abortDownloadRef.current = null;
+    }
+    setIsDownloading(false);
+    setDownloadProgress({ percent: 0, text: '' });
+    toast.info('Download cancelled');
+  };
+
   const handleBatchDownload = async () => {
     const itemsToDownload = files.filter(f => selectedFileIds.includes(String(f._id || f.id)));
     if (!itemsToDownload || itemsToDownload.length === 0) return;
 
     try {
       setIsDownloading(true);
-      setDownloadProgress({ percent: 0, text: 'Starting download...' });
-
-      if (itemsToDownload.length === 1) {
-        await downloadSingleFileWithProgress(itemsToDownload[0], (progress) => {
-          setDownloadProgress(progress);
-        });
-        toast.success(`Downloaded: ${itemsToDownload[0].name}`);
-      } else {
-        await downloadBatchZipWithProgress(itemsToDownload, (progress) => {
-          setDownloadProgress(progress);
-        });
-        toast.success(`Downloaded ${itemsToDownload.length} files as ZIP`);
-      }
-
+      await startDownload(itemsToDownload);
       setSelectedFiles([]);
       setSelectedFolderIds([]);
+      toast.success(itemsToDownload.length === 1 
+        ? `Downloaded: ${itemsToDownload[0].name}` 
+        : `Downloaded ${itemsToDownload.length} files as ZIP`
+      );
     } catch (err) {
-      console.error('Download failed:', err);
-      toast.error('Download failed. Check your network connection.');
+      if (err.message !== 'DOWNLOAD_CANCELLED') {
+        console.error('Download failed:', err);
+        toast.error('Download failed. Check your network connection.');
+      }
     } finally {
       setIsDownloading(false);
-      setDownloadProgress({ percent: 0, text: '' });
     }
   };
 
@@ -1004,24 +1010,8 @@ function App() {
   };
 
   const handleDownload = async (file) => {
-    if (file.isFolder || !file.diskName || file.status !== 'Safe') return;
-    
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/files/${file._id}/access?download=true`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (!response.ok) throw new Error("Could not fetch secure access URL");
-      const { url } = await response.json();
-      
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = file.name;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-    } catch (err) {
-      addToast('error', "Download failed: " + err.message);
-    }
+    if (file.isFolder || !file.diskName || (file.status !== 'Safe' && file.status !== 'unscanned_too_large')) return;
+    triggerDownload(file);
   };
 
   const sortedFiles = [...files].sort((a, b) => {
@@ -1435,7 +1425,7 @@ function App() {
       </nav>
 
       {/* TopAppBar */}
-      <header className={`bg-slate-50 dark:bg-[#1e1f20] fixed top-0 right-0 w-full h-16 border-b border-slate-200 dark:border-zinc-800 flex justify-between items-center px-margin-mobile md:px-margin-desktop z-10 transition-all duration-300 ease-in-out ${isCollapsed ? 'md:w-[calc(100%-80px)]' : 'md:w-[calc(100%-256px)]'}`}>
+      <header className={`bg-white/95 dark:bg-neutral-950/95 backdrop-blur-md fixed top-0 right-0 w-full h-16 border-b border-neutral-200/80 dark:border-neutral-800/80 flex justify-between items-center px-margin-mobile md:px-margin-desktop z-30 transition-all duration-300 ease-in-out ${isCollapsed ? 'md:w-[calc(100%-80px)]' : 'md:w-[calc(100%-256px)]'}`}>
         <div className="flex items-center gap-4">
           <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="md:hidden p-2 text-on-surface-variant hover:bg-surface-container-high rounded-full transition-colors">
             <span className="material-symbols-outlined">menu</span>
@@ -1464,6 +1454,7 @@ function App() {
             </div>
           </div>
         <div className="flex items-center gap-2">
+          <HeaderDownloadButton />
           <button
             onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
             className="p-2 text-on-surface-variant dark:text-zinc-100 hover:bg-surface-container-high dark:hover:bg-zinc-800/70 rounded-full transition-colors flex items-center justify-center"
@@ -2156,7 +2147,7 @@ function App() {
                               </button>
                             )}
                             {!file.isFolder && file.diskName && (file.status === 'Safe' || file.status === 'unscanned_too_large') && (
-                              <button onClick={(e) => { e.stopPropagation(); handleDownload(file); setActiveMenuId(null); }} className="w-full text-left px-4 py-2.5 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-neutral-700 transition-colors flex items-center gap-3">
+                              <button onClick={(e) => { e.stopPropagation(); setActiveMenuId(null); triggerDownload(file); }} className="w-full text-left px-4 py-2.5 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-neutral-700 transition-colors flex items-center gap-3">
                                 <span className="material-symbols-outlined text-[18px]">download</span> Download
                               </button>
                             )}
@@ -2430,21 +2421,10 @@ function App() {
             <button
               onClick={handleBatchDownload}
               disabled={isDownloading}
-              className="relative overflow-hidden flex items-center gap-2 text-xs font-medium px-3.5 py-1.5 rounded-md hover:bg-white/10 transition-colors cursor-pointer text-white disabled:cursor-wait"
+              className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-md hover:bg-white/10 transition-colors cursor-pointer text-white disabled:opacity-60 disabled:cursor-wait whitespace-nowrap"
             >
-              {/* Progress Bar Fill Background */}
-              {isDownloading && (
-                <div
-                  className="absolute inset-0 bg-blue-600/40 transition-all duration-150 ease-out"
-                  style={{ width: `${downloadProgress.percent}%` }}
-                />
-              )}
-
-              <Download className={`w-3.5 h-3.5 relative z-10 ${isDownloading ? 'animate-bounce' : ''}`} />
-              
-              <span className="relative z-10 whitespace-nowrap font-mono">
-                {isDownloading ? downloadProgress.text || 'Downloading...' : 'Download'}
-              </span>
+              <Download className={`w-3.5 h-3.5 text-blue-400 ${isDownloading ? 'animate-bounce' : ''}`} />
+              <span>{isDownloading ? 'Downloading...' : 'Download'}</span>
             </button>
           )}
 

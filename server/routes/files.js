@@ -7,12 +7,15 @@ const FileModel = require('../models/File');
 
 /**
  * GET /api/files/photos
- * Ultra-lightweight endpoint with field projection, lean query, and 30s cache header
+ * Ultra-lightweight endpoint with field projection and lean query.
+ * Cache-Control: no-store prevents caching stale S3 presigned URLs.
  */
 router.get('/photos', async (req, res) => {
-  res.setHeader('Cache-Control', 'private, max-age=30');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
   try {
-    const userId = req.user._id;
+    const userId = req.user?._id || req.user?.id;
 
     // Field projection: minimal fields required by frontend grid
     const mediaFiles = await FileModel.find({
@@ -42,16 +45,8 @@ router.get('/photos', async (req, res) => {
     .sort({ uploadedAt: -1, createdAt: -1 })
     .lean();
 
-    // Fast ETag check
-    const latestTimestamp = mediaFiles.length > 0 
-      ? new Date(mediaFiles[0].uploadedAt || mediaFiles[0].createdAt || 0).getTime() 
-      : 0;
-    const etag = `"${crypto.createHash('md5').update(`${userId}-${mediaFiles.length}-${latestTimestamp}`).digest('hex')}"`;
-    res.setHeader('ETag', etag);
-
-    if (req.headers['if-none-match'] === etag) {
-      return res.status(304).end();
-    }
+    const bucket = process.env.AWS_S3_BUCKET_NAME || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET;
+    const s3Client = req.s3 || global.s3;
 
     const filesWithUrls = await Promise.all(mediaFiles.map(async (file) => {
       let targetKey = file.s3Key;
@@ -63,13 +58,13 @@ router.get('/photos', async (req, res) => {
       }
 
       let presignedUrl = '';
-      if (targetKey && process.env.AWS_BUCKET_NAME) {
+      if (targetKey && bucket && s3Client) {
         try {
           const command = new GetObjectCommand({
-            Bucket: process.env.AWS_BUCKET_NAME,
+            Bucket: bucket,
             Key: targetKey
           });
-          presignedUrl = await getSignedUrl(req.s3 || global.s3, command, { expiresIn: 3600 });
+          presignedUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
         } catch (err) {
           console.error('Error signing URL for media asset:', err.message);
         }
@@ -98,5 +93,49 @@ router.get('/photos', async (req, res) => {
   }
 });
 
-module.exports = router;
+/**
+ * GET /api/files/:id/download-url
+ * Generates fresh on-demand S3 presigned download URL with ResponseContentDisposition attachment
+ */
+router.get('/:id/download-url', async (req, res) => {
+  try {
+    const userId = req.user?._id || req.user?.id;
+    const file = await FileModel.findOne({
+      _id: req.params.id,
+      $or: [
+        { userId: userId },
+        { userId: String(userId) },
+        { user: userId }
+      ]
+    });
+    if (!file) return res.status(404).json({ error: 'File not found' });
 
+    let targetKey = file.s3Key || file.key;
+    if (!targetKey && file.location) {
+      try {
+        const urlObj = new URL(file.location);
+        targetKey = decodeURIComponent(urlObj.pathname.substring(1).replace(/\+/g, '%20'));
+      } catch (e) {}
+    }
+
+    if (!targetKey) return res.status(400).json({ error: 'S3 Key missing' });
+
+    const fileName = file.originalName || file.name || 'download';
+    const bucket = process.env.AWS_S3_BUCKET_NAME || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET;
+
+    const command = new GetObjectCommand({
+      Bucket: bucket,
+      Key: targetKey,
+      ResponseContentDisposition: `attachment; filename="${encodeURIComponent(fileName)}"; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+    });
+
+    const s3Client = req.s3 || global.s3;
+    const downloadUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
+    return res.json({ downloadUrl, name: fileName, size: file.size || 0 });
+  } catch (err) {
+    console.error('Failed to generate presigned download URL:', err);
+    return res.status(500).json({ error: 'Failed to generate download link' });
+  }
+});
+
+module.exports = router;

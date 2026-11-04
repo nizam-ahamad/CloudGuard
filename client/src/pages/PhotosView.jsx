@@ -25,6 +25,7 @@ import {
   downloadBatchZipWithProgress 
 } from '../utils/downloadHelper';
 import { useToast } from '../context/ToastContext';
+import { useDownload } from '../context/DownloadContext';
 
 const INITIAL_BATCH = 40;
 const BATCH_SIZE = 40;
@@ -115,10 +116,12 @@ export default function PhotosView({ token: propToken }) {
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState({ percent: 0, text: '' });
+  const abortDownloadRef = useRef(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [visibleCount, setVisibleCount] = useState(INITIAL_BATCH);
   const observerTarget = useRef(null);
   const toast = useToast();
+  const { startDownload } = useDownload();
 
   const [viewMode, setViewMode] = useState(() => {
     return localStorage.getItem('cg_photos_view_mode') || 'grid'; // 'grid' | 'list'
@@ -369,6 +372,17 @@ export default function PhotosView({ token: propToken }) {
     setSelectedCarouselIndex(null);
   };
 
+  const handleCancelDownload = (e) => {
+    e?.stopPropagation();
+    if (abortDownloadRef.current) {
+      abortDownloadRef.current();
+      abortDownloadRef.current = null;
+    }
+    setIsDownloading(false);
+    setDownloadProgress({ percent: 0, text: '' });
+    toast.info('Download cancelled');
+  };
+
   const handleBatchDownload = async () => {
     if (selectedIds.length === 0) return;
     const itemsToDownload = photos.filter((p) => selectedIds.includes(p._id));
@@ -376,27 +390,19 @@ export default function PhotosView({ token: propToken }) {
 
     try {
       setIsDownloading(true);
-      setDownloadProgress({ percent: 0, text: 'Starting download...' });
-
-      if (itemsToDownload.length === 1) {
-        await downloadSingleFileWithProgress(itemsToDownload[0], (progress) => {
-          setDownloadProgress(progress);
-        });
-        toast.success(`Downloaded: ${itemsToDownload[0].name}`);
-      } else {
-        await downloadBatchZipWithProgress(itemsToDownload, (progress) => {
-          setDownloadProgress(progress);
-        });
-        toast.success(`Downloaded ${itemsToDownload.length} files as ZIP`);
-      }
-
+      await startDownload(itemsToDownload);
       setSelectedIds([]);
+      toast.success(itemsToDownload.length === 1 
+        ? `Downloaded: ${itemsToDownload[0].name}` 
+        : `Downloaded ${itemsToDownload.length} files as ZIP`
+      );
     } catch (err) {
-      console.error('Download failed:', err);
-      toast.error('Download failed. Check your network connection.');
+      if (err.message !== 'DOWNLOAD_CANCELLED') {
+        console.error('Download failed:', err);
+        toast.error('Download failed. Check your network connection.');
+      }
     } finally {
       setIsDownloading(false);
-      setDownloadProgress({ percent: 0, text: '' });
     }
   };
 
@@ -621,7 +627,7 @@ export default function PhotosView({ token: propToken }) {
                   {/* Checkmark Button (Top-Left) */}
                   <div
                     onClick={(e) => toggleSelect(item._id, e)}
-                    className={`absolute top-2.5 left-2.5 z-20 w-6 h-6 rounded-full flex items-center justify-center transition-all ${
+                    className={`absolute top-2.5 left-2.5 z-10 w-6 h-6 rounded-full flex items-center justify-center transition-all ${
                       selectedIds.includes(String(item._id))
                         ? 'bg-blue-600 text-white shadow-sm'
                         : isSelectionActive
@@ -700,25 +706,14 @@ export default function PhotosView({ token: propToken }) {
             {isAllSelected ? 'Deselect All' : `Select All (${photos.length})`}
           </button>
 
-          {/* 3. Download Action Button */}
+          {/* 3. Clean, Non-Expanding Download Button in Floating Pill */}
           <button
             onClick={handleBatchDownload}
             disabled={isDownloading}
-            className="relative overflow-hidden flex items-center gap-2 text-xs font-medium px-3.5 py-1.5 rounded-md hover:bg-white/10 transition-colors cursor-pointer text-white disabled:cursor-wait"
+            className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-md hover:bg-white/10 transition-colors cursor-pointer text-white disabled:opacity-60 disabled:cursor-wait whitespace-nowrap"
           >
-            {/* Progress Bar Fill Background */}
-            {isDownloading && (
-              <div
-                className="absolute inset-0 bg-blue-600/40 transition-all duration-150 ease-out"
-                style={{ width: `${downloadProgress.percent}%` }}
-              />
-            )}
-
-            <Download className={`w-3.5 h-3.5 relative z-10 ${isDownloading ? 'animate-bounce' : ''}`} />
-            
-            <span className="relative z-10 whitespace-nowrap font-mono">
-              {isDownloading ? downloadProgress.text || 'Downloading...' : 'Download'}
-            </span>
+            <Download className={`w-3.5 h-3.5 text-blue-400 ${isDownloading ? 'animate-bounce' : ''}`} />
+            <span>{isDownloading ? 'Downloading...' : 'Download'}</span>
           </button>
 
           {/* 4. Delete Action Button */}

@@ -1380,8 +1380,10 @@ function invalidatePhotosCache(userId) {
 
 // Dedicated Photos & Media Endpoint (Optimized for Ultra-High-Concurrency)
 app.get('/api/files/photos', verifyToken, async (req, res) => {
-  // HTTP Caching: Allow browser to serve from cache for 30s during tab navigation
-  res.setHeader('Cache-Control', 'private, max-age=30');
+  // HTTP Caching: Disable caching so browser never holds stale S3 presigned URLs with HTTP 304
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
   try {
     const userId = req.user._id;
     const userKey = String(userId);
@@ -1392,10 +1394,7 @@ app.get('/api/files/photos', verifyToken, async (req, res) => {
       if (req._startTime) {
         res.setHeader('Server-Timing', 'app;dur=' + (performance.now() - req._startTime).toFixed(2));
       }
-      res.setHeader('ETag', cached.etag);
-      if (req.headers['if-none-match'] === cached.etag) {
-        return res.status(304).end();
-      }
+      // 304 disabled to ensure fresh presigned URLs
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       res.setHeader('Content-Length', cached.jsonBuffer.length);
       return res.end(cached.jsonBuffer);
@@ -1495,11 +1494,6 @@ app.get('/api/files/photos', verifyToken, async (req, res) => {
     }
 
     const { payload, jsonBuffer, etag } = await fetchPromise;
-    res.setHeader('ETag', etag);
-
-    if (req.headers['if-none-match'] === etag) {
-      return res.status(304).end();
-    }
 
     if (req._startTime) {
       res.setHeader('Server-Timing', 'app;dur=' + (performance.now() - req._startTime).toFixed(2));
@@ -1801,6 +1795,57 @@ app.get('/api/files/:id/download', verifyToken, async (req, res) => {
   } catch (err) {
     console.error('Error generating download url:', err);
     res.status(500).json({ success: false, message: 'Download failed' });
+  }
+});
+
+// GET /api/files/:id/download-url - Generates fresh on-demand S3 presigned download URL valid for 1 hour
+app.get('/api/files/:id/download-url', verifyToken, async (req, res) => {
+  try {
+    let query = {
+      _id: req.params.id,
+      $or: [
+        { userId: req.user._id },
+        { userId: String(req.user._id) },
+        { user: req.user._id }
+      ]
+    };
+    if (req.user.isAdmin) {
+      query = { _id: req.params.id };
+    }
+    const file = await FileModel.findOne(query);
+    if (!file) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+
+    let targetKey = file.s3Key || file.key;
+    if (!targetKey && file.location) {
+      try {
+        const urlObj = new URL(file.location);
+        targetKey = decodeURIComponent(urlObj.pathname.substring(1).replace(/\+/g, '%20'));
+      } catch (e) {
+        console.error('URL parsing failed for location:', file.location);
+      }
+    }
+
+    if (!targetKey) {
+      return res.status(400).json({ error: 'S3 Key missing and cannot be parsed from location' });
+    }
+
+    const fileName = file.originalName || file.name || 'download';
+    const bucket = process.env.AWS_S3_BUCKET_NAME || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET;
+
+    // Generate fresh presigned URL valid for 1 hour (3600 seconds) with Content-Disposition: attachment
+    const command = new GetObjectCommand({
+      Bucket: bucket,
+      Key: targetKey,
+      ResponseContentDisposition: `attachment; filename="${encodeURIComponent(fileName)}"; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+    });
+
+    const downloadUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
+    return res.json({ downloadUrl, name: fileName, size: file.size || 0 });
+  } catch (err) {
+    console.error('Failed to generate presigned download URL:', err);
+    return res.status(500).json({ error: 'Failed to generate download link' });
   }
 });
 
