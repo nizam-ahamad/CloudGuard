@@ -390,12 +390,29 @@ export default function PhotosView({ token: propToken }) {
 
     try {
       setIsDownloading(true);
-      await startDownload(itemsToDownload);
+
+      if (itemsToDownload.length === 1) {
+        const file = itemsToDownload[0];
+        const isLarge = (file.size || 0) >= 1 * 1024 * 1024 * 1024;
+
+        const result = await startDownload(file);
+
+        if (isLarge || result?.mode === 'stream') {
+          toast.info(`Download started in browser: ${file.name}`);
+        } else {
+          toast.success(`Downloaded: ${file.name}`);
+        }
+      } else {
+        const result = await startDownload(itemsToDownload);
+
+        if (result?.mode === 'stream') {
+          toast.info(`${itemsToDownload.length} downloads started in browser`);
+        } else {
+          toast.success(`Downloaded ${itemsToDownload.length} files as ZIP`);
+        }
+      }
+
       setSelectedIds([]);
-      toast.success(itemsToDownload.length === 1 
-        ? `Downloaded: ${itemsToDownload[0].name}` 
-        : `Downloaded ${itemsToDownload.length} files as ZIP`
-      );
     } catch (err) {
       if (err.message !== 'DOWNLOAD_CANCELLED') {
         console.error('Download failed:', err);
@@ -407,7 +424,7 @@ export default function PhotosView({ token: propToken }) {
   };
 
   return (
-    <div className="w-full pb-20">
+    <div className="w-full pb-28">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 select-none">
         <div>
@@ -688,48 +705,60 @@ export default function PhotosView({ token: propToken }) {
 
       {/* Floating Action Pill */}
       {selectedIds.length > 0 && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 px-4 py-2.5 rounded-full bg-neutral-900/90 dark:bg-neutral-800/90 backdrop-blur-md border border-neutral-700/60 shadow-2xl text-white select-none">
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 sm:py-2.5 rounded-full bg-neutral-900/90 dark:bg-neutral-800/90 backdrop-blur-md border border-neutral-700/60 shadow-2xl text-white select-none max-w-[95vw]">
           
           {/* 1. Selection Count (Status indicator on the left) */}
-          <span className="text-xs text-neutral-300 font-medium pl-1">
-            {selectedIds.length} selected
+          <span className="text-xs text-neutral-300 font-medium pl-1 whitespace-nowrap">
+            {selectedIds.length} <span className="hidden sm:inline">selected</span>
           </span>
 
           {/* Vertical Divider */}
-          <div className="h-4 w-[1px] bg-neutral-700" />
+          <div className="h-4 w-[1px] bg-neutral-700 shrink-0" />
 
           {/* 2. Select All / Deselect All Action Button */}
           <button
             onClick={handleToggleSelectAll}
-            className="text-xs font-medium px-2.5 py-1.5 rounded-md hover:bg-white/10 transition-colors cursor-pointer text-white whitespace-nowrap"
+            className="text-xs font-medium px-2 sm:px-2.5 py-1.5 rounded-md hover:bg-white/10 transition-colors cursor-pointer text-white whitespace-nowrap"
           >
-            {isAllSelected ? 'Deselect All' : `Select All (${photos.length})`}
+            {isAllSelected ? (
+              <>
+                <span className="sm:hidden">Deselect</span>
+                <span className="hidden sm:inline">Deselect All</span>
+              </>
+            ) : (
+              <>
+                <span className="sm:hidden">All</span>
+                <span className="hidden sm:inline">Select All ({photos.length})</span>
+              </>
+            )}
           </button>
 
           {/* 3. Clean, Non-Expanding Download Button in Floating Pill */}
           <button
             onClick={handleBatchDownload}
             disabled={isDownloading}
-            className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-md hover:bg-white/10 transition-colors cursor-pointer text-white disabled:opacity-60 disabled:cursor-wait whitespace-nowrap"
+            className="flex items-center gap-1.5 text-xs font-medium px-2.5 sm:px-3 py-1.5 rounded-md hover:bg-white/10 transition-colors cursor-pointer text-white disabled:opacity-60 disabled:cursor-wait whitespace-nowrap"
+            title={isDownloading ? 'Downloading...' : 'Download'}
           >
             <Download className={`w-3.5 h-3.5 text-blue-400 ${isDownloading ? 'animate-bounce' : ''}`} />
-            <span>{isDownloading ? 'Downloading...' : 'Download'}</span>
+            <span className="hidden sm:inline">{isDownloading ? 'Downloading...' : 'Download'}</span>
           </button>
 
           {/* 4. Delete Action Button */}
           <button
             onClick={() => setIsDeleteModalOpen(true)}
             disabled={isDeleting}
-            className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-md bg-red-600/90 hover:bg-red-600 transition-colors cursor-pointer disabled:opacity-50"
+            className="flex items-center gap-1.5 text-xs font-medium px-2.5 sm:px-3 py-1.5 rounded-md bg-red-600/90 hover:bg-red-600 transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap"
+            title="Delete"
           >
             <Trash2 className="w-3.5 h-3.5" />
-            <span>Delete</span>
+            <span className="hidden sm:inline">Delete</span>
           </button>
 
           {/* 5. Clear / Close Button */}
           <button
             onClick={() => setSelectedIds([])}
-            className="p-1 rounded-full hover:bg-white/10 text-neutral-400 hover:text-white transition-colors cursor-pointer ml-0.5"
+            className="p-1 rounded-full hover:bg-white/10 text-neutral-400 hover:text-white transition-colors cursor-pointer ml-0.5 shrink-0"
             title="Clear selection"
           >
             <X className="w-4 h-4" />

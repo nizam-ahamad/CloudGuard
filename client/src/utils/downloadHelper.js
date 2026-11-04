@@ -2,7 +2,9 @@ import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { API_BASE_URL } from '../config';
 
-// Helper to format bytes cleanly (e.g., 1.3 GB, 450 MB)
+// Safe memory threshold for browser JSZip (1.5 GB)
+const BROWSER_ZIP_LIMIT = 1.5 * 1024 * 1024 * 1024;
+
 export function formatDownloadBytes(bytes) {
   if (!bytes || bytes === 0) return '0 B';
   const k = 1024;
@@ -23,10 +25,9 @@ function resolveFetchUrl(rawUrl) {
 }
 
 /**
- * Requests a fresh 1-hour presigned URL from backend on demand.
- * If file._id is present, requests /api/files/:id/download-url to eliminate expired signatures (HTTP 403).
+ * Gets a fresh, valid presigned S3 URL from backend with attachment headers
  */
-export async function getFreshUrl(file) {
+export async function getFreshDownloadUrl(file) {
   if (typeof file === 'string') {
     file = { _id: file };
   }
@@ -42,7 +43,7 @@ export async function getFreshUrl(file) {
         if (data.downloadUrl) return data.downloadUrl;
       }
     } catch (err) {
-      console.warn(`Could not refresh URL for ${file.name || file._id}, using fallback url:`, err);
+      console.warn(`Could not fetch fresh download URL for ${file.name || file._id}:`, err);
     }
 
     try {
@@ -65,22 +66,56 @@ export async function getFreshUrl(file) {
   return file.s3Url || file.url || '';
 }
 
-// Backwards compatibility alias
-export const getFileUrl = getFreshUrl;
+// Backwards compatibility aliases
+export const getFreshUrl = getFreshDownloadUrl;
+export const getFileUrl = getFreshDownloadUrl;
 
 /**
- * Downloads a single file with live speed, byte progress, and cancel support.
- * Requests fresh on-demand presigned URL before downloading.
+ * Native direct trigger: streams directly to disk via browser download manager.
+ * Consumes 0 MB of tab RAM and bypasses all 2GB browser ArrayBuffer limits.
+ */
+export function triggerDirectDownload(url, fileName) {
+  const targetUrl = resolveFetchUrl(url);
+  const a = document.createElement('a');
+  a.style.display = 'none';
+  a.href = targetUrl;
+  a.download = fileName || 'download';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    if (a.parentNode) {
+      document.body.removeChild(a);
+    }
+  }, 2000);
+}
+
+/**
+ * Single File Download with threshold protection
  */
 export async function downloadSingleFileWithProgress(file, onProgress, registerAbort) {
-  const freshUrl = await getFreshUrl(file);
-  const targetUrl = resolveFetchUrl(freshUrl);
+  const rawUrl = await getFreshDownloadUrl(file);
+  const targetUrl = resolveFetchUrl(rawUrl);
   if (!targetUrl) {
     throw new Error('Could not resolve file download URL');
   }
+  const fileSize = file.size || 0;
   const fileName = file.name || 'download';
-  const expectedSize = file.size || 0;
 
+  // If file is >= 1 GB, bypass in-memory XHR buffering completely
+  if (fileSize >= 1 * 1024 * 1024 * 1024) {
+    if (onProgress) {
+      onProgress({
+        percent: 100,
+        speed: '',
+        text: `Streaming ${formatDownloadBytes(fileSize)} directly to disk...`,
+      });
+    }
+    triggerDirectDownload(targetUrl, fileName);
+    await new Promise((r) => setTimeout(r, 1200));
+    return { mode: 'stream', count: 1 };
+  }
+
+  // Files < 1 GB can be streamed with live XHR tracking
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('GET', targetUrl, true);
@@ -98,7 +133,7 @@ export async function downloadSingleFileWithProgress(file, onProgress, registerA
     let speedText = '';
 
     xhr.onprogress = (event) => {
-      const total = event.lengthComputable && event.total > 0 ? event.total : expectedSize;
+      const total = event.lengthComputable && event.total > 0 ? event.total : fileSize;
       const loaded = event.loaded;
       const percent = total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : 0;
 
@@ -106,8 +141,7 @@ export async function downloadSingleFileWithProgress(file, onProgress, registerA
       const timeDiff = (now - lastTime) / 1000;
       if (timeDiff >= 0.5) {
         const bytesDiff = loaded - lastLoaded;
-        const bytesPerSec = bytesDiff / timeDiff;
-        speedText = `${formatDownloadBytes(bytesPerSec)}/s`;
+        speedText = `${formatDownloadBytes(bytesDiff / timeDiff)}/s`;
         lastLoaded = loaded;
         lastTime = now;
       }
@@ -128,7 +162,7 @@ export async function downloadSingleFileWithProgress(file, onProgress, registerA
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
         saveAs(xhr.response, fileName);
-        resolve();
+        resolve({ mode: 'blob', count: 1 });
       } else {
         reject(new Error(`HTTP ${xhr.status}`));
       }
@@ -143,20 +177,85 @@ export async function downloadSingleFileWithProgress(file, onProgress, registerA
 }
 
 /**
- * Bundles multiple files into a ZIP with aggregate progress tracking and cancel support.
- * Requests fresh on-demand presigned URLs for each item.
+ * Batch Download: Smart Hybrid Routing with Polished Sequential Handoff
+ * @param {Array} selectedFiles - Array of file objects to download
+ * @param {Function} onProgress - Callback for header tray progress { percent, speed, text }
+ * @param {Function} registerAbort - Callback to register abort controller
+ * @param {Function} onNotice - Optional callback to fire an informational toast notification
  */
-export async function downloadBatchZipWithProgress(selectedFiles, onProgress, registerAbort) {
+export async function downloadBatchZipWithProgress(
+  selectedFiles,
+  onProgress,
+  registerAbort,
+  onNotice
+) {
+  const totalBatchBytes = selectedFiles.reduce((sum, f) => sum + (f.size || 0), 0);
+  const hasOversizedFile = selectedFiles.some((f) => (f.size || 0) >= BROWSER_ZIP_LIMIT);
+
+  // Fallback branch for batches >= 1.5 GB or files >= 1.5 GB
+  if (totalBatchBytes >= BROWSER_ZIP_LIMIT || hasOversizedFile) {
+    const formattedTotal = formatDownloadBytes(totalBatchBytes);
+
+    // 1. Fire informative toast notification
+    if (typeof onNotice === 'function') {
+      onNotice(
+        `Large batch (${formattedTotal}). Downloading files individually to ensure full download speed.`
+      );
+    }
+
+    let isAborted = false;
+    if (registerAbort) {
+      registerAbort(() => {
+        isAborted = true;
+      });
+    }
+
+    // 2. Sequentially trigger native direct downloads with a 900ms stagger
+    for (let i = 0; i < selectedFiles.length; i++) {
+      if (isAborted) break;
+
+      const file = selectedFiles[i];
+      const progressPercent = Math.round(((i + 1) / selectedFiles.length) * 100);
+
+      // 3. Keep top header tray updated with exact file index and name
+      if (onProgress) {
+        onProgress({
+          percent: progressPercent,
+          speed: '',
+          text: `Triggering ${i + 1}/${selectedFiles.length}: ${file.name}`,
+        });
+      }
+
+      const rawUrl = await getFreshDownloadUrl(file);
+      const url = resolveFetchUrl(rawUrl);
+      triggerDirectDownload(url, file.name);
+
+      // Increased stagger: 900ms gives browser shelf ample time to register each stream
+      if (i < selectedFiles.length - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 900));
+      }
+    }
+
+    if (onProgress) {
+      onProgress({
+        percent: 100,
+        speed: '',
+        text: 'All downloads dispatched to browser.',
+      });
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    return { mode: 'stream', count: selectedFiles.length };
+  }
+
+  // Standard JSZip flow for batches under 1.5 GB
   const zip = new JSZip();
-  const totalFiles = selectedFiles.length;
-  let totalBatchBytes = selectedFiles.reduce((sum, f) => sum + (f.size || 0), 0);
   let aggregateLoadedBytes = 0;
-  let cancelled = false;
   let currentXhr = null;
 
   if (registerAbort) {
     registerAbort(() => {
-      cancelled = true;
+      isAborted = true;
       if (currentXhr) {
         currentXhr.abort();
       }
@@ -168,16 +267,16 @@ export async function downloadBatchZipWithProgress(selectedFiles, onProgress, re
   let speedText = '';
 
   for (let i = 0; i < selectedFiles.length; i++) {
-    if (cancelled) {
+    if (isAborted) {
       throw new Error('DOWNLOAD_CANCELLED');
     }
     const file = selectedFiles[i];
-    const freshUrl = await getFreshUrl(file);
-    const targetUrl = resolveFetchUrl(freshUrl);
+    const rawUrl = await getFreshDownloadUrl(file);
+    const targetUrl = resolveFetchUrl(rawUrl);
     const fileName = file.name || `file_${i + 1}`;
 
     await new Promise((resolve, reject) => {
-      if (cancelled) {
+      if (isAborted) {
         return reject(new Error('DOWNLOAD_CANCELLED'));
       }
       const xhr = new XMLHttpRequest();
@@ -188,7 +287,7 @@ export async function downloadBatchZipWithProgress(selectedFiles, onProgress, re
       let lastLoadedForFile = 0;
 
       xhr.onprogress = (event) => {
-        if (cancelled) return;
+        if (isAborted) return;
         const diff = event.loaded - lastLoadedForFile;
         lastLoadedForFile = event.loaded;
         aggregateLoadedBytes += diff;
@@ -197,15 +296,14 @@ export async function downloadBatchZipWithProgress(selectedFiles, onProgress, re
         const timeDiff = (now - lastTime) / 1000;
         if (timeDiff >= 0.5) {
           const bytesDiff = aggregateLoadedBytes - lastLoaded;
-          const bytesPerSec = bytesDiff / timeDiff;
-          speedText = `${formatDownloadBytes(bytesPerSec)}/s`;
+          speedText = `${formatDownloadBytes(bytesDiff / timeDiff)}/s`;
           lastLoaded = aggregateLoadedBytes;
           lastTime = now;
         }
 
         const percent = totalBatchBytes > 0 
           ? Math.min(95, Math.round((aggregateLoadedBytes / totalBatchBytes) * 100)) 
-          : Math.round(((i) / totalFiles) * 100);
+          : Math.round((i / selectedFiles.length) * 100);
 
         if (onProgress) {
           onProgress({
@@ -215,28 +313,26 @@ export async function downloadBatchZipWithProgress(selectedFiles, onProgress, re
             speed: speedText,
             text: totalBatchBytes > 0
               ? `${formatDownloadBytes(aggregateLoadedBytes)} / ${formatDownloadBytes(totalBatchBytes)} (${percent}%)`
-              : `Downloading ${i + 1}/${totalFiles} (${percent}%)`,
+              : `Downloading ${i + 1}/${selectedFiles.length} (${percent}%)`,
           });
         }
       };
 
       xhr.onload = () => {
         currentXhr = null;
-        if (cancelled) {
-          return reject(new Error('DOWNLOAD_CANCELLED'));
-        }
+        if (isAborted) return reject(new Error('DOWNLOAD_CANCELLED'));
         if (xhr.status >= 200 && xhr.status < 300) {
           zip.file(fileName, xhr.response);
           resolve();
         } else {
           console.warn(`Skipping ${fileName}: HTTP ${xhr.status}`);
-          resolve(); // Continue with remaining files
+          resolve();
         }
       };
 
       xhr.onerror = () => {
         currentXhr = null;
-        if (cancelled) return reject(new Error('DOWNLOAD_CANCELLED'));
+        if (isAborted) return reject(new Error('DOWNLOAD_CANCELLED'));
         console.warn(`Network error on ${fileName}`);
         resolve();
       };
@@ -250,7 +346,7 @@ export async function downloadBatchZipWithProgress(selectedFiles, onProgress, re
     });
   }
 
-  if (cancelled) {
+  if (isAborted) {
     throw new Error('DOWNLOAD_CANCELLED');
   }
 
@@ -259,20 +355,21 @@ export async function downloadBatchZipWithProgress(selectedFiles, onProgress, re
   }
 
   const zipBlob = await zip.generateAsync(
-    { type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 2 } },
+    { type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 1 } },
     (meta) => {
-      if (cancelled) return;
+      if (isAborted) return;
       if (onProgress) {
         onProgress({ percent: Math.round(meta.percent), speed: '', text: `Zipping ${Math.round(meta.percent)}%` });
       }
     }
   );
 
-  if (cancelled) {
+  if (isAborted) {
     throw new Error('DOWNLOAD_CANCELLED');
   }
 
   saveAs(zipBlob, `CloudGuard_Batch_${Date.now()}.zip`);
+  return { mode: 'zip', count: selectedFiles.length };
 }
 
 // Backwards compatibility aliases

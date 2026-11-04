@@ -19,7 +19,7 @@ import {
   downloadBatchZipWithProgress 
 } from './utils/downloadHelper';
 import { HeaderDownloadButton, useDownload } from './context/DownloadContext';
-import { Folder, FolderInput, X, MoreVertical, Pencil, Info, LayoutGrid, List, Check, Trash2, Image, Play, ChevronLeft, ChevronRight, Download, Clock } from 'lucide-react';
+import { Folder, FolderInput, X, MoreVertical, Pencil, Info, LayoutGrid, List, Check, Trash2, Image, Play, ChevronLeft, ChevronRight, Download, Clock, UploadCloud, FolderPlus } from 'lucide-react';
 
 import { API_BASE_URL } from "./config";
 
@@ -430,13 +430,30 @@ function App() {
 
     try {
       setIsDownloading(true);
-      await startDownload(itemsToDownload);
+
+      if (itemsToDownload.length === 1) {
+        const file = itemsToDownload[0];
+        const isLarge = (file.size || 0) >= 1 * 1024 * 1024 * 1024;
+
+        const result = await startDownload(file);
+
+        if (isLarge || result?.mode === 'stream') {
+          toast.info(`Download started in browser: ${file.name}`);
+        } else {
+          toast.success(`Downloaded: ${file.name}`);
+        }
+      } else {
+        const result = await startDownload(itemsToDownload);
+
+        if (result?.mode === 'stream') {
+          toast.info(`${itemsToDownload.length} downloads started in browser`);
+        } else {
+          toast.success(`Downloaded ${itemsToDownload.length} files as ZIP`);
+        }
+      }
+
       setSelectedFiles([]);
       setSelectedFolderIds([]);
-      toast.success(itemsToDownload.length === 1 
-        ? `Downloaded: ${itemsToDownload[0].name}` 
-        : `Downloaded ${itemsToDownload.length} files as ZIP`
-      );
     } catch (err) {
       if (err.message !== 'DOWNLOAD_CANCELLED') {
         console.error('Download failed:', err);
@@ -1011,7 +1028,19 @@ function App() {
 
   const handleDownload = async (file) => {
     if (file.isFolder || !file.diskName || (file.status !== 'Safe' && file.status !== 'unscanned_too_large')) return;
-    triggerDownload(file);
+    try {
+      const isLarge = (file.size || 0) >= 1 * 1024 * 1024 * 1024;
+      const res = await triggerDownload(file);
+      if (isLarge || res?.mode === 'stream') {
+        toast.info(`Download started in browser: ${file.name}`);
+      } else {
+        toast.success(`Downloaded: ${file.name}`);
+      }
+    } catch (err) {
+      if (err.message !== 'DOWNLOAD_CANCELLED') {
+        toast.error('Download failed. Check your network connection.');
+      }
+    }
   };
 
   const sortedFiles = [...files].sort((a, b) => {
@@ -1497,7 +1526,7 @@ function App() {
       {/* Main Content Canvas */}
       <main 
         onClick={() => { setShowProfileMenu(false); setIsSidebarOpen(false); setActiveMenuId(null); setActiveFolderMenuId(null); }} 
-        className={`pt-24 pb-12 px-margin-mobile md:px-margin-desktop max-w-container-max mx-auto w-full min-h-screen bg-white dark:bg-[#131314] transition-all duration-300 ease-in-out ${isCollapsed ? 'md:ml-20' : 'md:ml-64'}`}
+        className={`pt-24 pb-28 px-margin-mobile md:px-margin-desktop max-w-container-max mx-auto w-full min-h-screen bg-white dark:bg-[#131314] transition-all duration-300 ease-in-out ${isCollapsed ? 'md:ml-20' : 'md:ml-64'}`}
       >
         {viewMode === 'settings' ? (
           <div className="max-w-3xl mx-auto space-y-6">
@@ -1598,36 +1627,55 @@ function App() {
               style={{ display: 'none' }}
               multiple
             />
+            {/* Desktop Drag-and-Drop Area (Hidden on mobile) */}
             <div 
               onDrop={onDrop} 
               onDragOver={onDragOver} 
               onClick={triggerFileInput}
-              className="w-full border-2 border-dashed border-outline-variant dark:border-zinc-800/50 bg-white dark:bg-[#1e1f20] dark:text-zinc-300 hover:bg-surface-container-low transition-colors duration-200 rounded-xl p-12 flex flex-col items-center justify-center cursor-pointer group"
+              className="hidden sm:flex flex-col items-center justify-center p-8 border-2 border-dashed border-neutral-200 dark:border-neutral-800 rounded-2xl bg-neutral-50/50 dark:bg-neutral-900/30 text-center mb-6 cursor-pointer group hover:bg-neutral-100/50 dark:hover:bg-neutral-800/30 transition-colors"
             >
-              <div className="w-16 h-16 rounded-full bg-surface-container flex items-center justify-center mb-4 group-hover:scale-110 transition-transform duration-300">
-                <span className="material-symbols-outlined text-secondary text-3xl">
-                  cloud_upload
-                </span>
+              <div className="p-3 rounded-full bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 mb-3 group-hover:scale-110 transition-transform">
+                <UploadCloud className="w-6 h-6"/>
               </div>
-              <h3 className="font-title-lg text-title-lg text-on-surface dark:text-zinc-200 mb-2">
+              <p className="text-sm font-semibold text-neutral-800 dark:text-neutral-200">
                 Drag & drop files or folders here
-              </h3>
-              <p className="font-body-md text-body-md text-on-surface-variant dark:text-zinc-400 text-center max-w-md mb-6">Securely upload documents, images, and archives. Maximum file size 5GB.</p>
+              </p>
+              <p className="text-xs text-neutral-400 mt-1 mb-4">
+                Securely upload documents, images, and archives. Maximum file size 5GB.
+              </p>
               
-              <div className="flex gap-4">
+              <div className="flex items-center gap-3">
                 <button 
                   onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}
-                  className="px-6 py-2.5 bg-primary text-on-primary rounded-lg font-label-lg hover:bg-primary/90 transition-colors"
+                  className="px-4 py-2 text-xs font-semibold rounded-lg bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 hover:opacity-90 transition-opacity cursor-pointer"
                 >
                   Upload
                 </button>
                 <button 
                   onClick={(e) => { e.stopPropagation(); setShowNewFolderModal(true); }}
-                  className="px-6 py-2.5 border border-primary text-primary dark:text-zinc-300 dark:border-zinc-500 rounded-lg font-label-lg hover:bg-primary/10 transition-colors"
+                  className="px-4 py-2 text-xs font-semibold rounded-lg bg-neutral-100 text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200 hover:bg-neutral-200 dark:hover:bg-neutral-700 transition-colors cursor-pointer"
                 >
                   + New Folder
                 </button>
               </div>
+            </div>
+
+            {/* Mobile Compact Upload Bar (Visible only on mobile) */}
+            <div className="flex sm:hidden items-center gap-2 mb-4">
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-blue-600 text-white text-xs font-semibold shadow-sm active:scale-[0.98] transition-transform cursor-pointer"
+              >
+                <UploadCloud className="w-4 h-4"/>
+                <span>Upload Files</span>
+              </button>
+              <button
+                onClick={() => setShowNewFolderModal(true)}
+                className="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-neutral-100 dark:bg-neutral-800 text-neutral-800 dark:text-neutral-200 text-xs font-semibold border border-neutral-200/80 dark:border-neutral-700/60 active:scale-[0.98] transition-transform cursor-pointer"
+              >
+                <FolderPlus className="w-4 h-4"/>
+                <span>New Folder</span>
+              </button>
             </div>
           </section>
         )}
@@ -1710,9 +1758,9 @@ function App() {
 
         {/* Recent Files Table */}
         <section>
-          <div className="flex items-center justify-between mb-stack-md">
-            <div className="flex items-center gap-3">
-              <div className="flex md:hidden items-center">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+            <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
+              <div className="flex md:hidden items-center shrink-0">
                 <input 
                   type="checkbox" 
                   className="cursor-pointer w-4 h-4 rounded border-outline-variant text-primary focus:ring-primary focus:ring-offset-surface"
@@ -1726,25 +1774,25 @@ function App() {
                   }}
                 />
               </div>
-              <h3 className="font-title-lg text-title-lg text-on-surface dark:text-[#e3e3e3] flex items-center gap-2 flex-wrap">
+              <h3 className="font-title-lg text-title-lg text-on-surface dark:text-[#e3e3e3] flex items-center gap-2 flex-wrap min-w-0">
                 {viewMode === 'recent' ? 'Recent Files' : (
                   breadcrumbs.map((crumb, index) => (
                     <React.Fragment key={crumb.id || 'home'}>
                       <span 
-                        className={`cursor-pointer hover:underline ${index === breadcrumbs.length - 1 ? 'font-bold text-neutral-900 dark:text-neutral-100' : 'text-neutral-500 dark:text-neutral-400'}`}
+                        className={`cursor-pointer hover:underline truncate ${index === breadcrumbs.length - 1 ? 'font-bold text-neutral-900 dark:text-neutral-100' : 'text-neutral-500 dark:text-neutral-400'}`}
                         onClick={() => handleBreadcrumbClick(crumb.id, index)}
                       >
                         {crumb.name}
                       </span>
-                      {index < breadcrumbs.length - 1 && <span className="text-neutral-400 dark:text-neutral-600">&gt;</span>}
+                      {index < breadcrumbs.length - 1 && <span className="text-neutral-400 dark:text-neutral-600 shrink-0">&gt;</span>}
                     </React.Fragment>
                   ))
                 )}
               </h3>
             </div>
-            <div className="flex items-center gap-4">
+            <div className="flex items-center justify-between sm:justify-end gap-2 shrink-0">
               {viewMode !== 'recent' && (
-                <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2 sm:gap-4 w-full sm:w-auto justify-between sm:justify-end">
                   {/* Grid / List Mode Segmented Toggle (Matches PhotosView) */}
                   <div className="flex items-center bg-neutral-100 dark:bg-neutral-800/80 p-0.5 rounded-lg border border-neutral-200 dark:border-neutral-700/60 select-none">
                     {/* Grid View Button */}
@@ -1779,10 +1827,11 @@ function App() {
                   </div>
                   <button 
                     onClick={toggleSort}
-                    className="px-3 py-1.5 rounded-md text-sm font-medium transition-colors bg-neutral-200 hover:bg-neutral-300 dark:bg-neutral-800 dark:hover:bg-neutral-700 flex items-center gap-1 text-neutral-800 dark:text-neutral-100"
+                    className="px-2.5 sm:px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-colors bg-neutral-200 hover:bg-neutral-300 dark:bg-neutral-800 dark:hover:bg-neutral-700 flex items-center gap-1 text-neutral-800 dark:text-neutral-100 whitespace-nowrap"
                   >
                     <span className="material-symbols-outlined text-sm">sort</span>
-                    Sort: {sortOrder === 'newest' ? 'Newest First' : 'Oldest First'}
+                    <span>Sort: {sortOrder === 'newest' ? 'Newest' : 'Oldest'}</span>
+                    <span className="hidden sm:inline"> First</span>
                   </button>
                 </div>
               )}
@@ -2095,10 +2144,11 @@ function App() {
                           <div className="w-8 h-8 rounded flex items-center justify-center shrink-0 bg-surface-dim text-on-surface-variant">
                             <span className="material-symbols-outlined text-sm">{getIconForType(file.type)}</span>
                           </div>
-                          <div className="flex flex-col min-w-0 w-full">
-                            <span className="font-medium line-clamp-2 break-all md:block md:truncate max-w-full md:max-w-[250px]">{file.name}</span>
-                            <div className="md:hidden flex flex-col text-xs text-gray-500 dark:text-zinc-400 mt-0.5">
+                          <div className="flex flex-col min-w-0 flex-1">
+                            <span className="font-medium truncate max-w-full md:max-w-[250px]" title={file.name}>{file.name}</span>
+                            <div className="md:hidden flex items-center gap-2 text-xs text-gray-500 dark:text-zinc-400 mt-0.5">
                               <span>{file.date}</span>
+                              <span>•</span>
                               <span>{formatSize(file.size)}</span>
                             </div>
                           </div>
@@ -2106,27 +2156,27 @@ function App() {
                       </td>
                       <td className="hidden md:table-cell py-3 px-6 text-on-surface-variant dark:text-[#c4c7c5]">{file.date}</td>
                       <td className="hidden md:table-cell py-3 px-6 text-on-surface-variant dark:text-[#c4c7c5]">{formatSize(file.size)}</td>
-                      <td className="block md:table-cell ml-auto md:ml-0 md:py-3 md:px-6">
+                      <td className="block md:table-cell ml-auto md:ml-0 md:py-3 md:px-6 shrink-0">
                         {!file.isFolder && (
                           file.status === 'Safe' ? (
-                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#dcfce7] text-[#166534] border border-[#bbf7d0]">
+                            <div className="inline-flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-full bg-[#dcfce7] text-[#166534] border border-[#bbf7d0]" title="Safe">
                               <span className="material-symbols-outlined text-[14px]">check_circle</span>
-                              <span className="font-label-md text-[11px]">Safe</span>
+                              <span className="font-label-md text-[11px] hidden sm:inline">Safe</span>
                             </div>
                           ) : file.status === 'unscanned_too_large' ? (
-                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-neutral-200 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300 border border-neutral-300 dark:border-neutral-700">
+                            <div className="inline-flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-full bg-neutral-200 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300 border border-neutral-300 dark:border-neutral-700" title="Unscanned (Too Large)">
                               <span className="material-symbols-outlined text-[14px]">info</span>
-                              <span className="font-label-md text-[11px]">Unscanned (Too Large)</span>
+                              <span className="font-label-md text-[11px] hidden sm:inline">Unscanned (Too Large)</span>
                             </div>
                           ) : file.status === 'Malicious' || file.status === 'malware' ? (
-                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-error/10 text-error border border-error/20">
+                            <div className="inline-flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-full bg-error/10 text-error border border-error/20" title="Malicious">
                               <span className="material-symbols-outlined text-[14px]">warning</span>
-                              <span className="font-label-md text-[11px]">Malicious</span>
+                              <span className="font-label-md text-[11px] hidden sm:inline">Malicious</span>
                             </div>
                           ) : (
-                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-surface-container-high text-on-surface-variant border border-outline-variant">
+                            <div className="inline-flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-full bg-surface-container-high text-on-surface-variant border border-outline-variant" title={file.status || 'Pending'}>
                               <span className="material-symbols-outlined text-[14px]">hourglass_empty</span>
-                              <span className="font-label-md text-[11px]">{file.status || 'Pending'}</span>
+                              <span className="font-label-md text-[11px] hidden sm:inline">{file.status || 'Pending'}</span>
                             </div>
                           )
                         )}
@@ -2389,31 +2439,42 @@ function App() {
 
       {/* Unified Floating Action Pill (Matches PhotosView) */}
       {totalSelected > 0 && location.pathname !== '/dashboard/photos' && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 px-4 py-2.5 rounded-full bg-neutral-900/90 dark:bg-neutral-800/90 backdrop-blur-md border border-neutral-700/60 shadow-2xl text-white select-none">
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 sm:py-2.5 rounded-full bg-neutral-900/95 dark:bg-neutral-800/95 backdrop-blur-md border border-neutral-700/60 shadow-2xl text-white select-none max-w-[95vw]">
           
           {/* 1. Counter */}
           <span className="text-xs text-neutral-300 font-medium pl-1 whitespace-nowrap">
-            {totalSelected} selected
+            {totalSelected} <span className="hidden sm:inline">selected</span>
           </span>
 
           {/* Vertical Divider */}
-          <div className="h-4 w-[1px] bg-neutral-700" />
+          <div className="h-4 w-[1px] bg-neutral-700 shrink-0" />
 
           {/* 2. Unified Select All */}
           <button
             onClick={handleToggleSelectAll}
-            className="text-xs font-medium px-2.5 py-1.5 rounded-md hover:bg-white/10 transition-colors cursor-pointer text-white whitespace-nowrap"
+            className="text-xs font-medium px-2 py-1 rounded-md hover:bg-white/10 transition-colors cursor-pointer text-white whitespace-nowrap"
           >
-            {isAllSelected ? 'Deselect All' : `Select All (${totalViewItems})`}
+            {isAllSelected ? (
+              <>
+                <span className="sm:hidden">Deselect</span>
+                <span className="hidden sm:inline">Deselect All</span>
+              </>
+            ) : (
+              <>
+                <span className="sm:hidden">All</span>
+                <span className="hidden sm:inline">Select All (${totalViewItems})</span>
+              </>
+            )}
           </button>
 
           {/* 3. Move Action (Supports both folders and files) */}
           <button
             onClick={() => setIsMoveModalOpen(true)}
-            className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-md hover:bg-white/10 transition-colors cursor-pointer text-white"
+            className="flex items-center gap-1.5 text-xs font-medium px-2.5 sm:px-3 py-1.5 rounded-md hover:bg-white/10 transition-colors cursor-pointer text-white shrink-0"
+            title="Move"
           >
             <FolderInput className="w-3.5 h-3.5"/>
-            <span>Move</span>
+            <span className="hidden sm:inline">Move</span>
           </button>
 
           {/* 4. Download Action: STRICTLY HIDDEN IF ANY FOLDER IS SELECTED */}
@@ -2421,29 +2482,31 @@ function App() {
             <button
               onClick={handleBatchDownload}
               disabled={isDownloading}
-              className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-md hover:bg-white/10 transition-colors cursor-pointer text-white disabled:opacity-60 disabled:cursor-wait whitespace-nowrap"
+              className="flex items-center gap-1.5 text-xs font-medium px-2.5 sm:px-3 py-1.5 rounded-md hover:bg-white/10 transition-colors cursor-pointer text-white disabled:opacity-50 shrink-0 whitespace-nowrap"
+              title={isDownloading ? 'Downloading...' : 'Download'}
             >
               <Download className={`w-3.5 h-3.5 text-blue-400 ${isDownloading ? 'animate-bounce' : ''}`} />
-              <span>{isDownloading ? 'Downloading...' : 'Download'}</span>
+              <span className="hidden sm:inline">{isDownloading ? 'Downloading...' : 'Download'}</span>
             </button>
           )}
 
           {/* 5. Delete Action (Supports both folders and files) */}
           <button
             onClick={() => setIsDeleteModalOpen(true)}
-            className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-md bg-red-600/90 hover:bg-red-600 transition-colors cursor-pointer text-white"
+            className="flex items-center gap-1.5 text-xs font-medium px-2.5 sm:px-3 py-1.5 rounded-md bg-red-600/90 hover:bg-red-600 transition-colors cursor-pointer text-white shrink-0 whitespace-nowrap"
+            title="Delete"
           >
             <Trash2 className="w-3.5 h-3.5"/>
-            <span>Delete</span>
+            <span className="hidden sm:inline">Delete</span>
           </button>
 
           {/* 6. Clear Selection: Now calls handleClearAllSelection */}
           <button
             onClick={handleClearAllSelection}
-            className="p-1 rounded-full hover:bg-white/10 text-neutral-400 hover:text-white transition-colors cursor-pointer ml-0.5"
+            className="p-1 rounded-full hover:bg-white/10 text-neutral-400 hover:text-white transition-colors cursor-pointer ml-0.5 shrink-0"
             title="Clear selection"
           >
-            <X className="w-4 h-4"/>
+            <X className="w-3.5 h-3.5"/>
           </button>
         </div>
       )}

@@ -1,12 +1,14 @@
 import React, { createContext, useContext, useState, useRef, useCallback } from 'react';
 import { Download, X } from 'lucide-react';
 import { downloadSingleFileWithProgress, downloadBatchZipWithProgress } from '../utils/downloadHelper';
+import { useToast } from './ToastContext';
 
 const DownloadContext = createContext(null);
 
 export const DownloadProvider = ({ children }) => {
   const [activeDownload, setActiveDownload] = useState(null);
   const abortFnRef = useRef(null);
+  const toast = useToast();
 
   const cancelActiveDownload = useCallback(() => {
     if (abortFnRef.current) {
@@ -31,27 +33,29 @@ export const DownloadProvider = ({ children }) => {
 
     try {
       if (!isBatch) {
-        await downloadSingleFileWithProgress(
+        return await downloadSingleFileWithProgress(
           itemsArray[0],
           (p) => setActiveDownload((prev) => (prev ? { ...prev, ...p } : null)),
           (cancelFn) => { abortFnRef.current = cancelFn; }
         );
       } else {
-        await downloadBatchZipWithProgress(
+        return await downloadBatchZipWithProgress(
           itemsArray,
           (p) => setActiveDownload((prev) => (prev ? { ...prev, ...p } : null)),
-          (cancelFn) => { abortFnRef.current = cancelFn; }
+          (cancelFn) => { abortFnRef.current = cancelFn; },
+          (noticeMsg) => toast?.info?.(noticeMsg)
         );
       }
     } catch (err) {
       if (err.message !== 'DOWNLOAD_CANCELLED') {
         console.error('Download error:', err);
       }
+      throw err;
     } finally {
       setActiveDownload(null);
       abortFnRef.current = null;
     }
-  }, []);
+  }, [toast]);
 
   // Backwards compatibility alias
   const triggerDownload = startDownload;
@@ -98,7 +102,7 @@ export const HeaderDownloadButton = () => {
 
       {/* Tray Dropdown Popover */}
       {isOpen && (
-        <div className="absolute right-0 mt-2.5 w-80 p-4 rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-2xl z-50 select-none animate-in fade-in zoom-in-95">
+        <div className="fixed sm:absolute top-16 sm:top-full left-4 sm:left-auto right-4 sm:right-0 mt-2 sm:w-80 p-3.5 rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-2xl z-50 select-none animate-in fade-in zoom-in-95">
           <div className="flex items-start justify-between gap-3 mb-2.5">
             <div className="min-w-0 flex-1">
               <p className="text-xs font-semibold text-neutral-900 dark:text-white truncate">
