@@ -43,14 +43,6 @@ function App() {
   const navigate = useNavigate();
   const [isLoading, setIsLoading] = useState(true);
 
-  // Automatically synchronize viewMode with route and ?view=settings query param
-  useEffect(() => {
-    if (searchParams.get('view') === 'settings') {
-      setViewMode('settings');
-    } else if (viewMode === 'settings') {
-      setViewMode('all');
-    }
-  }, [location.pathname, searchParams]);
 
   useEffect(() => {
     if (document.fonts && document.fonts.ready) {
@@ -285,6 +277,15 @@ function App() {
 
   const [searchParams, setSearchParams] = useSearchParams();
   const isSettingsOpen = (viewMode === 'settings' || searchParams.get('view') === 'settings') && location.pathname === '/dashboard';
+
+  // Automatically synchronize viewMode with route and ?view=settings query param
+  useEffect(() => {
+    if (searchParams.get('view') === 'settings') {
+      setViewMode('settings');
+    } else if (viewMode === 'settings') {
+      setViewMode('all');
+    }
+  }, [location.pathname, searchParams]);
   const folderParam = searchParams.get('folder');
   const [currentFolderId, setCurrentFolderId] = useState(folderParam || null);
   const [breadcrumbs, setBreadcrumbs] = useState([{ id: null, name: 'Home' }]);
