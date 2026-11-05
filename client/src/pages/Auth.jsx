@@ -347,7 +347,7 @@ export default function AuthPage() {
           title="Back to CloudGuard Home"
         >
           {/* Shark Logo */}
-          <SharkLogo className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 transition-transform group-hover:scale-105" />
+          <SharkLogo className="w-14 h-14 sm:w-16 sm:h-16 shrink-0 transition-transform group-hover:scale-105" />
 
           {/* Restored Brand Title */}
           <span className="text-2xl font-bold tracking-tight text-white group-hover:text-neutral-200 transition-colors">
