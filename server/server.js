@@ -1106,26 +1106,51 @@ app.get('/api/folders/:id', verifyToken, async (req, res) => {
   }
 });
 
-app.patch('/api/folders/:id/rename', verifyToken, async (req, res) => {
+const handleFolderRename = async (req, res) => {
   try {
-    const { newName } = req.body;
-    if (!newName || newName.trim() === '') {
-      return res.status(400).json({ error: 'Folder name is required' });
+    const { newName, name } = req.body;
+    const trimmedName = (newName || name || '').trim();
+    if (!trimmedName) {
+      return res.status(400).json({ error: 'Folder name cannot be empty' });
     }
 
     const folderId = req.params.id;
     const folder = await FolderModel.findOne({ _id: folderId, userId: req.user._id });
     if (!folder) return res.status(404).json({ error: 'Folder not found' });
 
-    folder.name = newName.trim();
+    // If the name hasn't changed, return early
+    if (folder.name === trimmedName) {
+      return res.json(folder);
+    }
+
+    // Check for any OTHER folder in the SAME parent directory with the same name
+    const existingDuplicate = await FolderModel.findOne({
+      _id: { $ne: folderId },
+      parentId: folder.parentId || null,
+      name: trimmedName,
+      userId: req.user._id,
+    });
+
+    if (existingDuplicate) {
+      return res.status(409).json({
+        error: `A folder named "${trimmedName}" already exists in this directory.`,
+      });
+    }
+
+    folder.name = trimmedName;
     await folder.save();
 
     return res.json(folder);
   } catch (err) {
-    console.error('Error renaming folder:', err);
-    return res.status(500).json({ error: 'Failed to rename folder' });
+    console.error('Rename folder error:', err);
+    return res.status(500).json({ error: 'Server error while renaming folder' });
   }
-});
+};
+
+app.patch('/api/folders/:id/rename', verifyToken, handleFolderRename);
+app.put('/api/folders/:id/rename', verifyToken, handleFolderRename);
+app.patch('/api/folders/:id', verifyToken, handleFolderRename);
+app.put('/api/folders/:id', verifyToken, handleFolderRename);
 
 // Recursive helper to collect all descendant folder IDs
 const getFolderDescendantIds = (parentFolderId, folderList) => {

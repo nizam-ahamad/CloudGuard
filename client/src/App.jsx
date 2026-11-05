@@ -43,6 +43,13 @@ function App() {
   const navigate = useNavigate();
   const [isLoading, setIsLoading] = useState(true);
 
+  // Automatically exit Profile Settings whenever the route changes (e.g. clicking Photos or Recent)
+  useEffect(() => {
+    if (viewMode === 'settings') {
+      setViewMode('all');
+    }
+  }, [location.pathname]);
+
   useEffect(() => {
     if (document.fonts && document.fonts.ready) {
       document.fonts.ready.then(() => {
@@ -291,6 +298,7 @@ function App() {
   const [showRenameFolderModal, setShowRenameFolderModal] = useState(false);
   const [folderToRename, setFolderToRename] = useState(null);
   const [newRenameFolderName, setNewRenameFolderName] = useState('');
+  const [isRenamingFolder, setIsRenamingFolder] = useState(false);
   const [folderView, setFolderView] = useState(() => {
     return localStorage.getItem('cloudguard_folder_view') || 'grid';
   });
@@ -321,17 +329,31 @@ function App() {
   };
 
   const handleRenameFolderSubmit = async (e) => {
-    e.preventDefault();
-    if (!folderToRename || !newRenameFolderName.trim()) return;
+    if (e) e.preventDefault();
+    const trimmed = (newRenameFolderName || '').trim();
+    if (!folderToRename || !trimmed || isRenamingFolder) return;
     try {
-      await axios.patch(`${API_BASE_URL}/api/folders/${folderToRename._id}/rename`, { newName: newRenameFolderName }, { headers: { Authorization: `Bearer ${token}` } });
+      setIsRenamingFolder(true);
+      await axios.patch(`${API_BASE_URL}/api/folders/${folderToRename._id}/rename`, { 
+        newName: trimmed,
+        name: trimmed 
+      }, { headers: { Authorization: `Bearer ${token}` } });
       setShowRenameFolderModal(false);
       setFolderToRename(null);
       setNewRenameFolderName('');
-      addToast('success', 'Folder renamed successfully');
+      toast.success('Folder renamed successfully');
       fetchFolders(currentFolderId);
     } catch (err) {
-      addToast('error', 'Failed to rename folder');
+      console.error('Rename failed:', err);
+      if (err.response?.status === 409) {
+        toast.error(
+          err.response?.data?.error || `A folder named "${trimmed}" already exists here.`
+        );
+      } else {
+        toast.error(err.response?.data?.error || 'Failed to rename folder');
+      }
+    } finally {
+      setIsRenamingFolder(false);
     }
   };
 
@@ -1403,7 +1425,10 @@ function App() {
 
           <NavLink 
             to="/dashboard/photos"
-            onClick={() => { setIsSidebarOpen(false); }}
+            onClick={() => { 
+              setViewMode('all');
+              setIsSidebarOpen(false); 
+            }}
             className={({ isActive }) =>
               `group relative w-full flex items-center h-12 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 text-center ${
                 isActive || location.pathname === '/dashboard/photos'
@@ -1570,7 +1595,7 @@ function App() {
         onClick={() => { setShowProfileMenu(false); setIsSidebarOpen(false); setActiveMenuId(null); setActiveFolderMenuId(null); }} 
         className={`pt-24 pb-28 px-margin-mobile md:px-margin-desktop max-w-container-max mx-auto w-full min-h-screen bg-white dark:bg-[#131314] transition-all duration-300 ease-in-out ${isCollapsed ? 'md:ml-20' : 'md:ml-64'}`}
       >
-        {viewMode === 'settings' ? (
+        {viewMode === 'settings' && location.pathname !== '/dashboard/photos' ? (
           <div className="max-w-3xl mx-auto space-y-6">
             <h2 className="font-headline-md text-headline-md font-bold text-on-surface dark:text-[#e3e3e3] mb-8">Profile Settings</h2>
             
@@ -2297,7 +2322,8 @@ function App() {
                 autoFocus
                 type="text" 
                 required 
-                className="w-full px-4 py-3 bg-white dark:bg-[#131314] border border-outline-variant dark:border-zinc-700 dark:text-zinc-200 rounded-xl focus:ring-2 focus:ring-secondary outline-none transition-all mb-6 font-body-md"
+                disabled={isRenamingFolder}
+                className="w-full px-4 py-3 bg-white dark:bg-[#131314] border border-outline-variant dark:border-zinc-700 dark:text-zinc-200 rounded-xl focus:ring-2 focus:ring-secondary outline-none transition-all mb-6 font-body-md disabled:opacity-60"
                 placeholder="Folder name" 
                 value={newRenameFolderName} 
                 onChange={(e) => setNewRenameFolderName(e.target.value)}
@@ -2305,17 +2331,31 @@ function App() {
               <div className="flex items-center justify-end gap-3">
                 <button 
                   type="button" 
-                  onClick={() => { setShowRenameFolderModal(false); setFolderToRename(null); setNewRenameFolderName(''); }}
-                  className="px-4 py-2 text-sm font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-800 rounded-xl transition-colors duration-200"
+                  disabled={isRenamingFolder}
+                  onClick={() => { 
+                    if (!isRenamingFolder) {
+                      setShowRenameFolderModal(false); 
+                      setFolderToRename(null); 
+                      setNewRenameFolderName(''); 
+                    }
+                  }}
+                  className="px-4 py-2 text-sm font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-800 rounded-xl transition-colors duration-200 disabled:opacity-50"
                 >
                   Cancel
                 </button>
                 <button 
                   type="submit" 
-                  disabled={!newRenameFolderName.trim()}
-                  className={`px-6 py-2 text-sm font-medium bg-primary text-on-primary rounded-xl transition-colors duration-200 ${!newRenameFolderName.trim() ? 'opacity-50 cursor-not-allowed' : 'hover:bg-primary/90'}`}
+                  disabled={isRenamingFolder || !newRenameFolderName.trim()}
+                  className={`flex items-center justify-center gap-2 px-6 py-2 text-sm font-medium bg-primary text-on-primary rounded-xl transition-colors duration-200 min-w-[100px] ${(!newRenameFolderName.trim() || isRenamingFolder) ? 'opacity-50 cursor-not-allowed' : 'hover:bg-primary/90'}`}
                 >
-                  Rename
+                  {isRenamingFolder ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0"/>
+                      <span>Renaming...</span>
+                    </>
+                  ) : (
+                    <span>Rename</span>
+                  )}
                 </button>
               </div>
             </form>

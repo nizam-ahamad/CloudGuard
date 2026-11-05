@@ -138,4 +138,60 @@ router.get('/:id/download-url', async (req, res) => {
   }
 });
 
+/**
+ * PUT /folder/:id & PATCH /folder/:id - Rename folder with duplicate name guard
+ */
+const handleFolderRenameInFiles = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, newName } = req.body;
+    const trimmedName = (name || newName || '').trim();
+
+    if (!trimmedName) {
+      return res.status(400).json({ error: 'Folder name cannot be empty' });
+    }
+
+    const mongoose = require('mongoose');
+    const Folder = mongoose.models.Folder || mongoose.model('Folder');
+    const userId = req.user?._id || req.user?.id;
+
+    // 1. Find the target folder
+    const targetFolder = await Folder.findOne({ _id: id, userId });
+    if (!targetFolder) {
+      return res.status(404).json({ error: 'Folder not found' });
+    }
+
+    // 2. If the name hasn't changed, return early
+    if (targetFolder.name === trimmedName) {
+      return res.json(targetFolder);
+    }
+
+    // 3. Check for any OTHER folder in the SAME parent directory with the same name
+    const existingDuplicate = await Folder.findOne({
+      _id: { $ne: id },
+      parentId: targetFolder.parentId || null,
+      name: trimmedName,
+      userId,
+    });
+
+    if (existingDuplicate) {
+      return res.status(409).json({
+        error: `A folder named "${trimmedName}" already exists in this directory.`,
+      });
+    }
+
+    // 4. Save updated name
+    targetFolder.name = trimmedName;
+    await targetFolder.save();
+
+    return res.json(targetFolder);
+  } catch (err) {
+    console.error('Rename folder error:', err);
+    return res.status(500).json({ error: 'Server error while renaming folder' });
+  }
+};
+
+router.put('/folder/:id', handleFolderRenameInFiles);
+router.patch('/folder/:id', handleFolderRenameInFiles);
+
 module.exports = router;

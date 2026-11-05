@@ -25,7 +25,7 @@ const navItems = [
   }
 ];
 
-export default function Sidebar({ isCollapsed = false, onClose }) {
+export default function Sidebar({ isCollapsed = false, onClose, setShowSettings }) {
   return (
     <aside className="w-full">
       <nav className="flex flex-col space-y-1">
@@ -34,7 +34,10 @@ export default function Sidebar({ isCollapsed = false, onClose }) {
             key={item.path}
             to={item.path}
             end={item.end}
-            onClick={onClose}
+            onClick={() => {
+              if (typeof setShowSettings === 'function') setShowSettings(false);
+              if (typeof onClose === 'function') onClose();
+            }}
             className={({ isActive }) =>
               `group relative w-full flex items-center h-12 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 text-center ${
                 isActive
