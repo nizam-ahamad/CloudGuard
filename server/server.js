@@ -62,7 +62,9 @@ const FolderSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now }
 });
 FolderSchema.index({ userId: 1, parentId: 1 });
-const FolderModel = mongoose.model('Folder', FolderSchema);
+FolderSchema.index({ user: 1, parentFolder: 1, isTrash: 1 });
+FolderSchema.index({ userId: 1, parentId: 1, isTrash: 1 });
+const FolderModel = mongoose.models.Folder || mongoose.model('Folder', FolderSchema);
 
 // File Metadata Schema
 const FileSchema = new mongoose.Schema({
@@ -89,6 +91,11 @@ const FileSchema = new mongoose.Schema({
 FileSchema.index({ userId: 1, isTrash: 1, isDeleted: 1, uploadedAt: -1 });
 FileSchema.index({ user: 1, isTrash: 1, isDeleted: 1, createdAt: -1 });
 FileSchema.index({ userId: 1, folderId: 1 });
+FileSchema.index({ user: 1, folder: 1, isTrash: 1 });
+FileSchema.index({ user: 1, folderId: 1, isTrash: 1 });
+FileSchema.index({ userId: 1, folderId: 1, isTrash: 1 });
+FileSchema.index({ user: 1, createdAt: -1 });
+FileSchema.index({ userId: 1, createdAt: -1 });
 
 const FileModel = mongoose.models.File || mongoose.model('File', FileSchema);
 
@@ -1088,7 +1095,7 @@ app.get('/api/folders', verifyToken, async (req, res) => {
     if (req.query.all !== 'true') {
       query.parentId = req.query.parentId || null;
     }
-    const folders = await FolderModel.find(query).sort({ createdAt: -1 });
+    const folders = await FolderModel.find(query).select('_id name parentId parentFolder userId createdAt updatedAt isTrash').sort({ createdAt: -1 }).lean();
     return res.json(folders);
   } catch (err) {
     console.error('Error fetching folders:', err);
@@ -1381,7 +1388,7 @@ app.get('/api/files', verifyToken, async (req, res) => {
       dbFilesQuery = dbFilesQuery.sort({ uploadedAt: -1 }).limit(50);
     }
     
-    const dbFiles = await dbFilesQuery;
+    const dbFiles = await dbFilesQuery.select('_id name originalName diskName folderId size securityStatus mimetype mimeType uploadedAt createdAt').lean();
     
     const mappedFiles = dbFiles.map(file => ({
       id: file.diskName || file.name,

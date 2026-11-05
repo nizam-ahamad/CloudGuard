@@ -25,6 +25,10 @@ const FileSchema = new mongoose.Schema({
 FileSchema.index({ userId: 1, isTrash: 1, isDeleted: 1, uploadedAt: -1 });
 FileSchema.index({ user: 1, isTrash: 1, isDeleted: 1, createdAt: -1 });
 FileSchema.index({ userId: 1, folderId: 1 });
+FileSchema.index({ user: 1, folder: 1, isTrash: 1 });
+FileSchema.index({ user: 1, folderId: 1, isTrash: 1 });
+FileSchema.index({ userId: 1, folderId: 1, isTrash: 1 });
+FileSchema.index({ user: 1, createdAt: -1 });
+FileSchema.index({ userId: 1, createdAt: -1 });
 
 module.exports = mongoose.models.File || mongoose.model('File', FileSchema);
-

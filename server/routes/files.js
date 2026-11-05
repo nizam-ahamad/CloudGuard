@@ -4,6 +4,42 @@ const crypto = require('crypto');
 const { GetObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const FileModel = require('../models/File');
+const FolderModel = require('../models/Folder');
+
+/**
+ * GET /api/files - Streamlined files and folders query with projection & .lean()
+ */
+router.get('/', async (req, res) => {
+  try {
+    const userId = req.user?._id || req.user?.id;
+    const folderId = req.query.folderId || req.query.folder || null;
+
+    const [files, folders] = await Promise.all([
+      FileModel.find({
+        $or: [{ userId }, { user: userId }],
+        folderId: folderId || null,
+        isTrash: { $ne: true },
+        isDeleted: { $ne: true }
+      })
+        .select('name size type updatedAt securityStatus mimeType folder folderId user createdAt uploadedAt')
+        .sort({ createdAt: -1 })
+        .lean(),
+      FolderModel.find({
+        $or: [{ userId }, { user: userId }],
+        parentId: folderId || null,
+        isTrash: { $ne: true }
+      })
+        .select('name parentFolder parentId updatedAt user createdAt')
+        .sort({ name: 1 })
+        .lean(),
+    ]);
+
+    return res.json({ files, folders });
+  } catch (err) {
+    console.error('Error fetching files and folders:', err);
+    return res.status(500).json({ error: 'Failed to fetch files and folders' });
+  }
+});
 
 /**
  * GET /api/files/photos

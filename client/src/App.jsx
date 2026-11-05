@@ -313,6 +313,7 @@ function App() {
   }, [location.pathname, searchParams]);
   const folderParam = searchParams.get('folder');
   const [currentFolderId, setCurrentFolderId] = useState(folderParam || null);
+  const [isContentLoading, setIsContentLoading] = useState(false);
   const [breadcrumbs, setBreadcrumbs] = useState([{ id: null, name: 'Home' }]);
   const [folders, setFolders] = useState([]);
   const [showNewFolderModal, setShowNewFolderModal] = useState(false);
@@ -561,9 +562,9 @@ function App() {
     }
   };
 
-  const fetchFolders = useCallback(async () => {
+  const fetchFolders = useCallback(async (targetFolderId) => {
     try {
-      const parentId = searchParams.get('folder') || null;
+      const parentId = targetFolderId !== undefined ? (targetFolderId || null) : (searchParams.get('folder') || null);
       const url = parentId 
         ? `${API_BASE_URL}/api/folders?parentId=${parentId}` 
         : `${API_BASE_URL}/api/folders`;
@@ -639,15 +640,37 @@ function App() {
 
   const handleFolderClick = (folder) => {
     clearSelection();
+    // 1. Instant folder navigation handler (0ms UI response)
     setCurrentFolderId(folder._id);
+    setBreadcrumbs(prev => {
+      const existingIndex = prev.findIndex(b => b.id === folder._id);
+      if (existingIndex >= 0) {
+        return prev.slice(0, existingIndex + 1);
+      }
+      return [...prev, { id: folder._id, name: folder.name }];
+    });
     setSearchParams({ folder: folder._id });
+
+    // 2. Clear previous list so stale items vanish immediately
+    setFiles([]);
+    setFolders([]);
+    setIsContentLoading(true);
+
+    // 3. Trigger data fetch for target folder
+    fetchContents(folder._id);
   };
 
   const handleBreadcrumbClick = (folderId, index) => {
     clearSelection();
     setCurrentFolderId(folderId);
-    setSearchParams(folderId ? { folder: folderId } : {});
     setBreadcrumbs(prev => prev.slice(0, index + 1));
+    setSearchParams(folderId ? { folder: folderId } : {});
+
+    setFiles([]);
+    setFolders([]);
+    setIsContentLoading(true);
+
+    fetchContents(folderId);
   };
 
   const handleCloseSettings = () => {
@@ -717,7 +740,7 @@ function App() {
     setIsAccountDeleteModalOpen(true);
   };
 
-  const fetchFiles = useCallback(async () => {
+  const fetchFiles = useCallback(async (targetFolderId) => {
     try {
       let url = `${API_BASE_URL}/api/files?`;
       const params = new URLSearchParams();
@@ -727,7 +750,7 @@ function App() {
         if (viewMode === 'recent') {
           params.append('recent', 'true');
         } else {
-          const folderId = searchParams.get('folder');
+          const folderId = targetFolderId !== undefined ? (targetFolderId || null) : searchParams.get('folder');
           if (folderId) {
             params.append('folderId', folderId);
           }
@@ -748,11 +771,25 @@ function App() {
     }
   }, [searchParams, viewMode, token, searchQuery]);
 
+  const fetchContents = useCallback(async (targetFolderId) => {
+    setIsContentLoading(true);
+    try {
+      await Promise.all([
+        fetchFiles(targetFolderId),
+        fetchFolders(targetFolderId)
+      ]);
+    } catch (err) {
+      console.error('Error fetching folder contents:', err);
+    } finally {
+      setIsContentLoading(false);
+    }
+  }, [fetchFiles, fetchFolders]);
+
   useEffect(() => {
     if (token) {
       axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
       fetchStorageStats();
-      fetchFiles();
+      fetchFiles().finally(() => setIsContentLoading(false));
       fetchFolders();
     } else {
       delete axios.defaults.headers.common['Authorization'];
@@ -1934,6 +1971,31 @@ function App() {
             </div>
           </div>
 
+          {isContentLoading ? (
+            <div className="space-y-2 mt-4 animate-pulse">
+              {/* Folder Skeletons */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+                {[1, 2, 3, 4].map((i) => (
+                  <div key={i} className="h-12 bg-neutral-900/60 border border-neutral-800/60 rounded-lg" />
+                ))}
+              </div>
+
+              {/* File Row Skeletons */}
+              {[1, 2, 3, 4, 5].map((i) => (
+                <div
+                  key={i}
+                  className="h-12 w-full bg-neutral-900/40 border border-neutral-800/40 rounded-lg flex items-center justify-between px-4"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-5 h-5 bg-neutral-800 rounded" />
+                    <div className="w-36 h-3 bg-neutral-800 rounded" />
+                  </div>
+                  <div className="w-16 h-3 bg-neutral-800 rounded" />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <>
           {viewMode !== 'recent' && folders.length > 0 && (
             <div className="mb-6">
               <div className="text-neutral-500 dark:text-neutral-400 text-xs font-semibold uppercase tracking-wider mb-3">
@@ -2325,6 +2387,8 @@ function App() {
               </table>
             </div>
           </div>
+            </>
+          )}
           </section>
           </>
         )}
