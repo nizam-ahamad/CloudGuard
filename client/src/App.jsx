@@ -9,6 +9,7 @@ import { useToast } from './context/ToastContext';
 import MoveModal from './components/MoveModal';
 import FolderDetailsModal from './components/FolderDetailsModal';
 import DeleteConfirmModal from './components/DeleteConfirmModal';
+import ProfileSettings from './components/ProfileSettings';
 import LandingPage from './pages/LandingPage';
 import AuthPage from './pages/AuthPage';
 import PrivacyPolicy from './pages/PrivacyPolicy';
@@ -74,6 +75,25 @@ function App() {
     const userStr = localStorage.getItem('user') || sessionStorage.getItem('user');
     return userStr ? JSON.parse(userStr) : null;
   });
+
+  // Synchronize auth state with storage and auth-change events
+  useEffect(() => {
+    const syncAuth = () => {
+      const storedToken = localStorage.getItem('token') || sessionStorage.getItem('token');
+      const storedUser = localStorage.getItem('user') || sessionStorage.getItem('user');
+      setToken(storedToken);
+      setUser(storedUser ? JSON.parse(storedUser) : null);
+    };
+
+    window.addEventListener('storage', syncAuth);
+    window.addEventListener('auth-change', syncAuth);
+    syncAuth();
+
+    return () => {
+      window.removeEventListener('storage', syncAuth);
+      window.removeEventListener('auth-change', syncAuth);
+    };
+  }, [location.pathname]);
   const [authMode, setAuthMode] = useState('login');
   const [authForm, setAuthForm] = useState({ name: '', email: '', password: '', remember: false });
   const [authError, setAuthError] = useState('');
@@ -276,12 +296,17 @@ function App() {
   const [activeFolderMenuId, setActiveFolderMenuId] = useState(null);
 
   const [searchParams, setSearchParams] = useSearchParams();
-  const isSettingsOpen = (viewMode === 'settings' || searchParams.get('view') === 'settings') && location.pathname === '/dashboard';
+  const isSettingsOpen = searchParams.get('view') === 'settings' && location.pathname === '/dashboard';
+  const isFilesActive = location.pathname === '/dashboard' && !searchParams.get('view') && searchParams.get('tab') !== 'recent' && viewMode === 'all';
+  const isRecentActive = location.pathname === '/dashboard' && !searchParams.get('view') && (searchParams.get('tab') === 'recent' || viewMode === 'recent');
+  const isPhotosActive = location.pathname === '/dashboard/photos';
 
-  // Automatically synchronize viewMode with route and ?view=settings query param
+  // Automatically synchronize viewMode with route and query params
   useEffect(() => {
     if (searchParams.get('view') === 'settings') {
       setViewMode('settings');
+    } else if (searchParams.get('tab') === 'recent') {
+      setViewMode('recent');
     } else if (viewMode === 'settings') {
       setViewMode('all');
     }
@@ -627,7 +652,40 @@ function App() {
 
   const handleCloseSettings = () => {
     setViewMode('all');
-    setSearchParams({});
+    const newParams = new URLSearchParams(searchParams);
+    newParams.delete('view');
+    setSearchParams(newParams);
+  };
+
+  const handleNavClick = (tab) => {
+    setCurrentDirectory('');
+    setIsSidebarOpen(false);
+
+    // 1. Immediately dismiss settings in query string
+    const newParams = new URLSearchParams(searchParams);
+    newParams.delete('view');
+
+    // 2. Navigate cleanly to the target view and update viewMode
+    if (tab === 'files') {
+      newParams.delete('tab');
+      setViewMode('all');
+      setSearchParams(newParams);
+      if (location.pathname !== '/dashboard') {
+        navigate('/dashboard');
+      }
+    } else if (tab === 'recent') {
+      newParams.set('tab', 'recent');
+      setViewMode('recent');
+      setSearchParams(newParams);
+      if (location.pathname !== '/dashboard') {
+        navigate('/dashboard?tab=recent');
+      }
+    } else if (tab === 'photos') {
+      newParams.delete('tab');
+      setViewMode('all');
+      setSearchParams(newParams);
+      navigate('/dashboard/photos');
+    }
   };
   const handlePasswordUpdate = async (e) => {
     e.preventDefault();
@@ -1149,7 +1207,8 @@ function App() {
     </div>
   ) : null;
 
-  if (!token) {
+  const activeToken = token || localStorage.getItem('token') || sessionStorage.getItem('token');
+  if (!activeToken) {
     const authContent = (() => {
       if (window.location.pathname.startsWith('/reset-password/')) {
         const resetToken = window.location.pathname.split('/reset-password/')[1];
@@ -1418,11 +1477,12 @@ function App() {
         {/* Main Navigation */}
         <div className="flex-1 px-4 space-y-1">
           <button 
-            onClick={() => { setViewMode('all'); setCurrentDirectory(''); setIsSidebarOpen(false); if (location.pathname !== '/dashboard') navigate('/dashboard'); }}
-            className={`group relative w-full flex items-center h-12 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${viewMode === 'all' && location.pathname !== '/dashboard/photos' ? 'text-secondary bg-surface-container-low dark:bg-[#282a2c] dark:text-[#e3e3e3]' : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'}`}
+            type="button"
+            onClick={() => handleNavClick('files')}
+            className={`group relative w-full flex items-center h-12 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${isFilesActive ? 'text-secondary bg-surface-container-low dark:bg-[#282a2c] dark:text-[#e3e3e3]' : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'}`}
           >
             <div className="min-w-[3rem] flex justify-center items-center">
-              <span className="material-symbols-outlined shrink-0" data-weight={viewMode === 'all' && location.pathname !== '/dashboard/photos' ? "fill" : ""}>folder_open</span>
+              <span className="material-symbols-outlined shrink-0" data-weight={isFilesActive ? "fill" : ""}>folder_open</span>
             </div>
             <span className={`font-semibold font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-32 opacity-100'}`}>My Files</span>
             {isCollapsed && (
@@ -1432,22 +1492,17 @@ function App() {
             )}
           </button>
 
-          <NavLink 
-            to="/dashboard/photos"
-            onClick={() => { 
-              setViewMode('all');
-              setIsSidebarOpen(false); 
-            }}
-            className={({ isActive }) =>
-              `group relative w-full flex items-center h-12 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 text-center ${
-                isActive || location.pathname === '/dashboard/photos'
-                  ? 'text-secondary bg-surface-container-low dark:bg-[#282a2c] dark:text-[#e3e3e3]'
-                  : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'
-              }`
-            }
+          <button 
+            type="button"
+            onClick={() => handleNavClick('photos')}
+            className={`group relative w-full flex items-center h-12 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 text-left ${
+              isPhotosActive
+                ? 'text-secondary bg-surface-container-low dark:bg-[#282a2c] dark:text-[#e3e3e3]'
+                : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'
+            }`}
           >
             <div className="min-w-[3rem] flex justify-center items-center">
-              <span className="material-symbols-outlined shrink-0" data-weight={location.pathname === '/dashboard/photos' ? "fill" : ""}>photo_library</span>
+              <span className="material-symbols-outlined shrink-0" data-weight={isPhotosActive ? "fill" : ""}>photo_library</span>
             </div>
             <span className={`text-center font-semibold font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-32 opacity-100'}`}>Photos</span>
             {isCollapsed && (
@@ -1455,14 +1510,15 @@ function App() {
                 Photos
               </div>
             )}
-          </NavLink>
+          </button>
           
           <button 
-            onClick={() => { setViewMode('recent'); setCurrentDirectory(''); setIsSidebarOpen(false); if (location.pathname !== '/dashboard') navigate('/dashboard'); }}
-            className={`group relative w-full flex items-center h-12 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${viewMode === 'recent' && location.pathname !== '/dashboard/photos' ? 'text-secondary bg-surface-container-low dark:bg-[#282a2c] dark:text-[#e3e3e3]' : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'}`}
+            type="button"
+            onClick={() => handleNavClick('recent')}
+            className={`group relative w-full flex items-center h-12 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${isRecentActive ? 'text-secondary bg-surface-container-low dark:bg-[#282a2c] dark:text-[#e3e3e3]' : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'}`}
           >
             <div className="min-w-[3rem] flex justify-center items-center">
-              <span className="material-symbols-outlined shrink-0" data-weight={viewMode === 'recent' && location.pathname !== '/dashboard/photos' ? "fill" : ""}>history</span>
+              <span className="material-symbols-outlined shrink-0" data-weight={isRecentActive ? "fill" : ""}>history</span>
             </div>
             <span className={`font-semibold font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-32 opacity-100'}`}>Recent</span>
             {isCollapsed && (
@@ -1618,44 +1674,12 @@ function App() {
           <div className="max-w-3xl mx-auto space-y-6">
             <h2 className="font-headline-md text-headline-md font-bold text-on-surface dark:text-[#e3e3e3] mb-8">Profile Settings</h2>
             
-            <div className="border border-gray-200 dark:border-[#333] bg-gray-50 dark:bg-transparent px-6 py-4 shadow-sm dark:shadow-none">
-              <h3 className="font-title-md text-on-surface dark:text-[#e3e3e3] mb-4">Profile Details</h3>
-              <div className="space-y-4">
-                <div>
-                  <label className="text-xs font-mono text-slate-500 dark:text-gray-400 uppercase tracking-wider mb-2 block">Name</label>
-                  <input type="text" value={user?.name || ''} readOnly className="w-full h-12 bg-transparent border border-slate-300 dark:border-[#333] focus:border-black dark:focus:border-white outline-none text-black dark:text-white px-4 transition-colors opacity-70 cursor-not-allowed" />
-                </div>
-                <div>
-                  <label className="text-xs font-mono text-slate-500 dark:text-gray-400 uppercase tracking-wider mb-2 block">Email</label>
-                  <input type="text" value={user?.email || ''} readOnly className="w-full h-12 bg-transparent border border-slate-300 dark:border-[#333] focus:border-black dark:focus:border-white outline-none text-black dark:text-white px-4 transition-colors opacity-70 cursor-not-allowed" />
-                </div>
-              </div>
-            </div>
-
-            <div className="border border-gray-200 dark:border-[#333] bg-gray-50 dark:bg-transparent px-6 py-4 shadow-sm dark:shadow-none">
-              <h3 className="font-title-md text-on-surface dark:text-[#e3e3e3] mb-4">Security</h3>
-              <form onSubmit={handlePasswordUpdate} className="space-y-4">
-                <div>
-                  <label className="text-xs font-mono text-slate-500 dark:text-gray-400 uppercase tracking-wider mb-2 block">Current Password</label>
-                  <PasswordInput value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} required className="w-full h-12 bg-transparent border border-slate-300 dark:border-[#333] focus:border-black dark:focus:border-white outline-none text-black dark:text-white px-4 transition-colors" />
-                </div>
-                <div>
-                  <label className="text-xs font-mono text-slate-500 dark:text-gray-400 uppercase tracking-wider mb-2 block">New Password</label>
-                  <PasswordInput value={newPassword} onChange={e => setNewPassword(e.target.value)} required className="w-full h-12 bg-transparent border border-slate-300 dark:border-[#333] focus:border-black dark:focus:border-white outline-none text-black dark:text-white px-4 transition-colors" />
-                  <p className="text-xs font-mono text-slate-500 dark:text-[#777] mt-2">Must be at least 8 characters with 1 letter and 1 number</p>
-                </div>
-                <button type="submit" disabled={isUpdatingPassword} className={`px-6 py-2 bg-primary dark:bg-zinc-800 text-on-primary dark:text-[#e3e3e3] rounded-lg font-medium transition-colors shadow-sm ${isUpdatingPassword ? 'opacity-70 cursor-not-allowed' : 'hover:bg-primary/90 dark:hover:bg-zinc-700'}`}>
-                  {isUpdatingPassword ? (
-                    <span className="flex items-center justify-center gap-2">
-                      <span className="animate-spin inline-block w-4 h-4 border-[2px] border-current border-t-transparent rounded-full" role="status" aria-label="loading"></span>
-                      Updating...
-                    </span>
-                  ) : (
-                    'Update Password'
-                  )}
-                </button>
-              </form>
-            </div>
+            <ProfileSettings 
+              user={user} 
+              setUser={setUser} 
+              addToast={addToast} 
+              onClose={handleCloseSettings} 
+            />
 
             <div className="border border-red-200 dark:border-red-500/50 bg-red-50/50 dark:bg-transparent px-6 py-4 dark:text-red-200 shadow-sm dark:shadow-none">
               <h3 className="font-title-md text-error dark:text-red-200 mb-2">Danger Zone</h3>

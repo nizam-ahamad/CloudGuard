@@ -79,6 +79,18 @@ export default function LandingPage() {
     {
       q: "What types of files can I store?",
       a: "You can upload all common file formats, including documents, high-resolution photos, videos, and archives up to 5GB per batch."
+    },
+    {
+      question: "What is CloudGuard Vault?",
+      answer: "Cloud Guard Vault is a secure digital space designed for your personal files. Acting as a real-time cloud guard for your storage, it automatically inspects every upload so harmful threats never compromise your vault.",
+      q: "What is CloudGuard Vault?",
+      a: "CloudGuard Vault is a secure digital space designed for your personal files. Acting as a real-time cloud guard for your storage, it automatically inspects every upload so harmful threats never compromise your vault."
+    },
+    {
+      question: "Can I access my vault from my phone?",
+      answer: "Yes. You can access your cloud guard vault from any modern web browser on your phone, tablet, laptop, or desktop with zero setup required.",
+      q: "Can I access my vault from my phone?",
+      a: "Yes. You can access your cloud guard vault from any modern web browser on your phone, tablet, laptop, or desktop with zero setup required."
     }
   ];
 
@@ -255,7 +267,7 @@ export default function LandingPage() {
                   aria-expanded={isOpen}
                 >
                   <span className="text-base sm:text-lg font-medium text-[#e3e3e3] tracking-tight">
-                    {item.q}
+                    {item.question || item.q}
                   </span>
                   <ChevronDown 
                     size={20} 
@@ -264,7 +276,7 @@ export default function LandingPage() {
                 </button>
                 {isOpen && (
                   <div className="px-6 pb-6 pt-1 text-sm text-neutral-400 font-light leading-relaxed border-t border-neutral-900">
-                    {item.a}
+                    {item.answer || item.a}
                   </div>
                 )}
               </div>

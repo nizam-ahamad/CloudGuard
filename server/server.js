@@ -116,21 +116,8 @@ mongoose.connect(mongoURI, {
     console.error("[DB Error]", err);
   });
 
-// User Schema
-const UserSchema = new mongoose.Schema({
-  name: { type: String, required: true },
-  email: { type: String, required: true, unique: true },
-  password: { type: String, required: true },
-  isAdmin: { type: Boolean, default: false },
-  storageUsed: { type: Number, default: 0 },
-  resetPasswordToken: String,
-  resetPasswordExpire: Date,
-  isVerified: { type: Boolean, default: false },
-  otpHash: String,
-  otpExpire: Date,
-  otpAttempts: { type: Number, default: 0 }
-});
-const User = mongoose.model('User', UserSchema);
+// User Model
+const User = require('./models/User');
 
 async function recalculateStorage(userId) {
     try {
@@ -234,6 +221,9 @@ async function getGlobalStorageUsed() {
   return 0;
 }
 
+// Auth Routes (including Google OAuth)
+app.use('/api/auth', require('./routes/auth'));
+
 app.post('/api/auth/register', async (req, res) => {
   try {
     const globalUsed = await getGlobalStorageUsed();
@@ -256,8 +246,15 @@ app.post('/api/auth/register', async (req, res) => {
         existingUser = await User.findOne({ email });
   
     
-    if (existingUser && existingUser.isVerified !== false) {
-      return res.status(400).json({ error: 'Email already exists' });
+    if (existingUser) {
+      if (!existingUser.password) {
+        return res.status(409).json({
+          error: 'An account with this email already exists via Google. Please use "Sign in with Google" to access your vault.',
+        });
+      }
+      if (existingUser.isVerified !== false) {
+        return res.status(409).json({ error: 'An account with this email already exists. Please log in.' });
+      }
     }
     
     const salt = await bcrypt.genSalt(10);
@@ -420,6 +417,12 @@ app.post('/api/auth/login', async (req, res) => {
   
     
     if (!user) return res.status(400).json({ error: 'Invalid credentials' });
+    if (!user.password) {
+      return res.status(400).json({
+        error: 'This account was registered using Google. Please click "Sign in with Google", or use "Forgot Password" to create a password.',
+        isOAuthUser: true,
+      });
+    }
     if (user.isVerified === false) {
       return res.status(403).json({ error: 'Please verify your email before logging in.', unverified: true });
     }
@@ -534,32 +537,31 @@ app.put('/api/auth/reset-password/:token', async (req, res) => {
 app.put('/api/auth/password', verifyToken, async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
-    if (!currentPassword || !newPassword) return res.status(400).json({ error: 'Missing fields' });
+    if (!newPassword) return res.status(400).json({ error: 'New password is required' });
 
-    const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/;
+    const passwordRegex = /^(?=.*[A-Za-z])(?=.*d).{8,}$/;
     if (!passwordRegex.test(newPassword)) {
       return res.status(400).json({ error: 'Password must be at least 8 characters long and contain at least 1 letter and 1 number' });
     }
 
-    let userPass = null;
-    let userIndex = -1;
-    let users = [];
-
-        const user = await User.findById(req.user._id);
+    const user = await User.findById(req.user._id);
     if (!user) return res.status(404).json({ error: 'User not found' });
-    userPass = user.password;
-  
 
-    const validPass = await bcrypt.compare(currentPassword, userPass);
-    if (!validPass) return res.status(400).json({ error: 'Invalid current password' });
+    if (user.password) {
+      if (!currentPassword) {
+        return res.status(400).json({ error: 'Current password is required' });
+      }
+      const validPass = await bcrypt.compare(currentPassword, user.password);
+      if (!validPass) return res.status(400).json({ error: 'Invalid current password' });
+    }
 
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(newPassword, salt);
 
-        await User.findByIdAndUpdate(req.user._id, { password: hashedPassword });
-  
+    user.password = hashedPassword;
+    await user.save();
 
-    res.json({ message: 'Password updated successfully' });
+    res.json({ message: 'Password updated successfully', hasPassword: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
