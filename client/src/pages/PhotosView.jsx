@@ -33,6 +33,22 @@ const BATCH_SIZE = 40;
 // --- Module-Level Session Cache (Lives across component unmounts) ---
 let photosSessionCache = null;
 
+// Exported standalone fetch helper
+export const fetchPhotos = async () => {
+  const token = localStorage.getItem('token');
+  if (!token) return [];
+
+  try {
+    const res = await axios.get(`${API_BASE_URL}/api/files/photos`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return Array.isArray(res.data) ? res.data : (res.data?.photos || res.data?.files || []);
+  } catch (err) {
+    console.error('Error loading photos:', err);
+    return [];
+  }
+};
+
 // Exported cache helper
 export const updatePhotosCacheWithNewFile = (file) => {
   if (!file) return;
@@ -184,7 +200,7 @@ export default function PhotosView({ token: propToken }) {
       const res = await axios.get(`${API_BASE_URL}/api/files/photos`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      const freshData = res.data?.files || (Array.isArray(res.data) ? res.data : []);
+      const freshData = Array.isArray(res.data) ? res.data : (res.data?.photos || res.data?.files || []);
 
       // Compare length or IDs to prevent unnecessary re-renders
       const hasChanged =

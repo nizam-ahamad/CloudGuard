@@ -132,7 +132,7 @@ const User = require('./models/User');
 async function recalculateStorage(userId) {
     try {
     const result = await FileModel.aggregate([
-      { $match: { userId: userId, securityStatus: { $in: ['Safe', 'unscanned_too_large'] } } },
+      { $match: { $or: [{ userId: userId }, { userId: String(userId) }, { user: userId }], isTrash: false, securityStatus: { $ne: 'threat_purged' } } },
       { $group: { _id: null, totalSize: { $sum: "$size" } } }
     ]);
     const totalSize = result.length > 0 ? result[0].totalSize : 0;
@@ -231,8 +231,13 @@ async function getGlobalStorageUsed() {
   return 0;
 }
 
-// Auth Routes (including Google OAuth)
+// Auth & Files Modular Routes
 app.use('/api/auth', require('./routes/auth'));
+app.use('/api/files', require('./routes/files'));
+app.use('/api/photos', verifyToken, (req, res, next) => {
+  req.url = '/photos' + (req.url === '/' ? '' : req.url);
+  return require('./routes/files')(req, res, next);
+});
 
 app.post('/api/auth/register', async (req, res) => {
   try {
@@ -579,7 +584,13 @@ app.put('/api/auth/password', verifyToken, async (req, res) => {
 
 app.delete('/api/auth/account', verifyToken, async (req, res) => {
   try {
-    const userId = req.user._id;
+    const userId = req.user?.id || req.user?._id;
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized: User identifier missing.' });
+    }
+    const userMatch = mongoose.Types.ObjectId.isValid(userId)
+      ? { $in: [String(userId), new mongoose.Types.ObjectId(userId)] }
+      : String(userId);
 
     // 1. Delete physical files from S3
     try {
@@ -610,13 +621,19 @@ app.delete('/api/auth/account', verifyToken, async (req, res) => {
 });
 
 // Storage Stats Endpoint
-app.get('/api/storage-stats', verifyToken, async (req, res) => {
+app.get(['/api/storage-stats', '/api/users/storage-stats'], verifyToken, async (req, res) => {
   try {
     let usedBytes = 0;
-    const userId = req.user._id;
+    const userId = req.user?.id || req.user?._id;
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized: User identifier missing.' });
+    }
+    const userMatch = mongoose.Types.ObjectId.isValid(userId)
+      ? { $in: [String(userId), new mongoose.Types.ObjectId(userId)] }
+      : String(userId);
 
         const result = await FileModel.aggregate([
-      { $match: { userId: userId, securityStatus: { $in: ['Safe', 'unscanned_too_large'] } } },
+      { $match: { $or: [{ userId: userId }, { userId: String(userId) }, { user: userId }], isTrash: false, securityStatus: { $ne: 'threat_purged' } } },
       { $group: { _id: null, totalSize: { $sum: "$size" } } }
     ]);
     if (result.length > 0) {
@@ -1363,12 +1380,13 @@ app.get('/api/files', verifyToken, async (req, res) => {
   try {
     const isRecent = req.query.recent === 'true';
     const searchQuery = req.query.search || '';
-    const folderId = req.query.folderId || null;
-    const userId = req.user._id;
+    const targetFolderId = req.query.folderId || req.query.folder || null;
+    const userId = req.user._id || req.user.id;
 
     let query = {
       userId: userId,
-      securityStatus: { $in: ['Safe', 'unscanned_too_large'] }
+      isTrash: false,
+      securityStatus: { $ne: 'threat_purged' }
     };
     
     if (searchQuery) {
@@ -1377,32 +1395,38 @@ app.get('/api/files', verifyToken, async (req, res) => {
         { originalName: { $regex: searchQuery, $options: 'i' } }
       ];
     } else if (!isRecent) {
-      query.$or = [{ folderId: folderId }, { folder: folderId }];
+      if (!targetFolderId || targetFolderId === 'null' || targetFolderId === 'undefined') {
+        query.$or = [{ folderId: null }, { folder: null }];
+      } else {
+        query.$or = [{ folderId: targetFolderId }, { folder: targetFolderId }];
+      }
     }
 
     let dbFilesQuery = FileModel.find(query);
     if (isRecent) {
       dbFilesQuery = dbFilesQuery.sort({ uploadedAt: -1 }).limit(50);
+    } else {
+      dbFilesQuery = dbFilesQuery.sort({ uploadedAt: -1, createdAt: -1 });
     }
     
-    const dbFiles = await dbFilesQuery.select('_id name originalName diskName folderId size securityStatus mimetype mimeType uploadedAt createdAt').lean();
+    const dbFiles = await dbFilesQuery.select('_id name originalName diskName folder folderId size securityStatus isMalicious mimetype mimeType uploadedAt createdAt').lean();
     
     const mappedFiles = dbFiles.map(file => ({
+      ...file,
       id: file.diskName || file.name,
       _id: file._id.toString(),
       name: file.originalName || file.name,
       diskName: file.diskName || file.name,
       folderId: file.folderId ? file.folderId.toString() : (file.folder ? file.folder.toString() : null),
       isFolder: false,
-      date: new Date(file.uploadedAt || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-      mtimeMs: new Date(file.uploadedAt || Date.now()).getTime(),
+      date: new Date(file.uploadedAt || file.createdAt || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+      mtimeMs: new Date(file.uploadedAt || file.createdAt || Date.now()).getTime(),
       size: file.size,
-      status: file.securityStatus || 'Safe',
-      type: (file.originalName || file.name).split('.').pop()
+      status: (file.securityStatus === 'clean' || file.securityStatus === 'Safe') ? 'Safe' : (file.securityStatus || 'Safe'),
+      type: (file.originalName || file.name || '').split('.').pop()
     }));
 
-    mappedFiles.sort((a, b) => b.mtimeMs - a.mtimeMs);
-    return res.json(mappedFiles);
+    return res.status(200).json(mappedFiles);
   } catch (error) {
     console.error('Error fetching files:', error);
     res.status(500).json({ error: 'Failed to fetch files' });
@@ -1428,7 +1452,13 @@ app.get('/api/files/photos', verifyToken, async (req, res) => {
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
   try {
-    const userId = req.user._id;
+    const userId = req.user?.id || req.user?._id;
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized: User identifier missing.' });
+    }
+    const userMatch = mongoose.Types.ObjectId.isValid(userId)
+      ? { $in: [String(userId), new mongoose.Types.ObjectId(userId)] }
+      : String(userId);
     const userKey = String(userId);
 
     // 1. Fast In-Memory Cache Check (< 1ms latency)
@@ -1452,14 +1482,13 @@ app.get('/api/files/photos', verifyToken, async (req, res) => {
           $and: [
             {
               $or: [
-                { userId: userId },
-                { userId: String(userId) },
-                { user: userId }
+                { userId: userMatch },
+                { user: userMatch }
               ]
             },
             { isTrash: { $ne: true } },
             { isDeleted: { $ne: true } },
-            { securityStatus: { $in: ['Safe', 'unscanned_too_large'] } },
+            { securityStatus: { $ne: 'threat_purged' } },
             {
               $or: [
                 { mimetype: { $regex: /^(image|video)\//i } },
@@ -1651,7 +1680,13 @@ app.patch('/api/files/bulk-move', verifyToken, async (req, res) => {
 const handleMoveBatch = async (req, res) => {
   try {
     let { folderIds = [], fileIds = [], targetFolderId = null } = req.body;
-    const userId = req.user._id;
+    const userId = req.user?.id || req.user?._id;
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized: User identifier missing.' });
+    }
+    const userMatch = mongoose.Types.ObjectId.isValid(userId)
+      ? { $in: [String(userId), new mongoose.Types.ObjectId(userId)] }
+      : String(userId);
 
     if (!targetFolderId || targetFolderId === "null" || targetFolderId === "" || targetFolderId === "root") {
       targetFolderId = null;
@@ -1754,7 +1789,7 @@ app.patch('/api/folders/move-batch', verifyToken, handleMoveBatch);
 // Access File Endpoint (Presigned URL)
 app.get('/api/files/:id/access', verifyToken, async (req, res) => {
   try {
-    let query = { _id: req.params.id, securityStatus: { $in: ['Safe', 'unscanned_too_large'] } };
+    let query = { _id: req.params.id, securityStatus: { $ne: 'threat_purged' } };
     if (!req.user.isAdmin) {
       query.userId = req.user._id;
     }
@@ -1958,8 +1993,6 @@ const handleBulkDelete = async (req, res) => {
 app.post('/api/files/bulk-delete', verifyToken, handleBulkDelete);
 app.post('/api/files/batch-delete', verifyToken, handleBulkDelete);
 
-// Mount modular files router (including POST /api/files/presigned-url)
-app.use('/api/files', require('./routes/files'));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, '0.0.0.0', () => {

@@ -2,6 +2,33 @@ import React from 'react';
 import axios from 'axios';
 
 /**
+ * Native Web Crypto API SHA-256 calculation
+ */
+export async function computeSHA256(file) {
+  try {
+    if (!file) return null;
+    // For files under 50MB, hash the full buffer
+    if (file.size <= 50 * 1024 * 1024) {
+      const buffer = await file.arrayBuffer();
+      const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+      return Array.from(new Uint8Array(hashBuffer))
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
+    }
+    // For large files (>50MB), hash the initial 10MB slice for rapid fingerprinting
+    const slice = file.slice(0, 10 * 1024 * 1024);
+    const buffer = await slice.arrayBuffer();
+    const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+    return Array.from(new Uint8Array(hashBuffer))
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('');
+  } catch (e) {
+    console.warn('Could not compute client-side hash:', e);
+    return null;
+  }
+}
+
+/**
  * Clean Dark-Themed Skeleton Loader Component for Folder and File Navigation
  */
 export const FolderNavigationSkeleton = () => (
@@ -74,9 +101,11 @@ export const processQueueItem = async ({
 
     if (onStatusChange) onStatusChange('analyzing');
 
+    const computedHash = item.fileHash || await computeSHA256(file);
+
     const finalizeRes = await axios.post(`${apiBaseUrl}/api/files/finalize-upload`, {
       fileId: currentFileId,
-      sha256: item.fileHash || undefined
+      sha256: computedHash || undefined
     }, {
       signal: abortSignal
     });

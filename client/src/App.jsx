@@ -15,6 +15,7 @@ import AuthPage from './pages/AuthPage';
 import PrivacyPolicy from './pages/PrivacyPolicy';
 import TermsOfService from './pages/TermsOfService';
 import PhotosView, { invalidatePhotosCache } from './pages/PhotosView';
+import { computeSHA256 } from './pages/Dashboard';
 import { 
   downloadSingleFileWithProgress, 
   downloadBatchZipWithProgress 
@@ -173,19 +174,29 @@ function App() {
   };
 
   const fetchStorageStats = useCallback(async () => {
+    const token = localStorage.getItem('token');
+    if (!token) return; // Do not send request if unauthenticated
+
     try {
-      const res = await axios.get(`${API_BASE_URL}/api/storage-stats`);
+      const res = await axios.get(`${API_BASE_URL}/api/storage-stats`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
       setStorageStats(res.data);
     } catch (err) {
-      if (err.response && err.response.status === 401) {
-        localStorage.clear();
-        sessionStorage.clear();
-        window.location.href = '/';
-        return;
+      // If 401, silently ignore or clear state without spamming console
+      if (err.response?.status !== 401) {
+        console.error('Failed to load storage stats:', err);
       }
-      console.error('Error fetching storage stats:', err);
     }
   }, []);
+
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    // Only fetch storage stats if the user is actively logged in
+    if (token) {
+      fetchStorageStats();
+    }
+  }, [fetchStorageStats]);
 
 
   const handleResendOtp = async () => {
@@ -759,7 +770,15 @@ function App() {
       url += params.toString();
       
       const response = await axios.get(url, { headers: { Authorization: `Bearer ${token}` } });
-      setFiles(response.data);
+
+      // Handle both raw arrays and { files: [...] } wrapper objects safely
+      if (Array.isArray(response.data)) {
+        setFiles(response.data);
+      } else if (response.data && Array.isArray(response.data.files)) {
+        setFiles(response.data.files);
+      } else {
+        setFiles([]);
+      }
     } catch (error) {
       if (error.response && error.response.status === 401) {
         localStorage.clear();
@@ -959,10 +978,13 @@ function App() {
         // 3. Status update to analyzing
         setUploadQueue(prev => prev.map(item => item.id === id ? { ...item, status: 'analyzing' } : item));
 
+        // Compute client-side SHA-256 using Web Crypto API
+        const computedSha256 = nextItem.fileHash || await computeSHA256(file);
+
         // 4. Finalize & graceful scan execution (auto-purged on threat)
         const finalizeRes = await axios.post(`${API_BASE_URL}/api/files/finalize-upload`, {
           fileId: currentFileId,
-          sha256: nextItem.fileHash || undefined
+          sha256: computedSha256 || undefined
         }, {
           signal: abortControllerRef.current.signal
         });
@@ -1011,7 +1033,7 @@ function App() {
       });
 
       if (securityThreat) {
-        addToast('error', `${name}: Threat intercepted & auto-deleted.`);
+        addToast('error', `Threat detected: ${name} was automatically deleted.`);
       } else if (finalStatus === 'completed') {
         addToast('success', `Uploaded: ${name}`);
         invalidatePhotosCache();
@@ -1037,15 +1059,6 @@ function App() {
     processNext();
   }, [uploadQueue, fetchFiles, fetchStorageStats, currentFolderId, addToast]);
 
-  // Relaxed 10s storage stats polling, disabled during uploads or active queue
-  useEffect(() => {
-    if (!token) return;
-    const interval = setInterval(() => {
-      if (uploadQueue.length > 0 || isUploading) return;
-      fetchStorageStats();
-    }, 10000);
-    return () => clearInterval(interval);
-  }, [token, uploadQueue.length, isUploading, fetchStorageStats]);
 
   const handleFileUpload = async (filesToUpload) => {
     if (!filesToUpload || filesToUpload.length === 0) return;

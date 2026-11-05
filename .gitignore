@@ -20,3 +20,6 @@ server/storage/
 .env
 .env.local
 .env.development
+
+# Extras
+malware_history.txt
