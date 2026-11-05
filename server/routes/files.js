@@ -1,43 +1,142 @@
 const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
-const { GetObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
-const FileModel = require('../models/File');
-const FolderModel = require('../models/Folder');
+const User = require('../models/User');
+const File = require('../models/File');
+const Folder = require('../models/Folder');
+
+// Ensure S3Client is configured with credentials and region
+const s3Client = new S3Client({
+  region: process.env.AWS_REGION || 'eu-north-1',
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  },
+});
+
+// Auth Middleware for modular files route
+const authMiddleware = (req, res, next) => {
+  if (req.user) return next();
+  const token = req.headers.authorization?.split(' ')[1] || req.query.token;
+  if (!token) return res.status(401).json({ error: 'Access denied. Please log in.' });
+  try {
+    const jwt = require('jsonwebtoken');
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'cloudguard-super-secret-jwt-key-2024');
+    req.user = decoded;
+    next();
+  } catch (err) {
+    return res.status(401).json({ error: 'Invalid or expired token.' });
+  }
+};
 
 /**
- * GET /api/files - Streamlined files and folders query with projection & .lean()
+ * POST /api/files/presigned-url
+ * Issues direct browser-to-S3 upload ticket with quota enforcement
  */
-router.get('/', async (req, res) => {
+router.post('/presigned-url', authMiddleware, async (req, res) => {
   try {
-    const userId = req.user?._id || req.user?.id;
-    const folderId = req.query.folderId || req.query.folder || null;
+    const { fileName, filename, fileSize, size, mimeType, contentType, folderId, folder } = req.body;
+    const targetFileName = fileName || filename;
+    const targetFileSize = fileSize !== undefined ? Number(fileSize) : (size !== undefined ? Number(size) : 0);
+    const targetMimeType = mimeType || contentType || 'application/octet-stream';
+    const targetFolderId = folderId || folder || null;
+    const userId = req.user.id || req.user._id;
 
+    if (!targetFileName || !targetFileSize) {
+      return res.status(400).json({ error: 'Filename and file size are required' });
+    }
+
+    // 1. Enforce Storage Quota
+    const user = await User.findById(userId).select('storageUsed storageLimit').lean();
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const currentUsed = user.storageUsed || 0;
+    const limit = user.storageLimit || 5368709120; // 5 GB fallback default
+    if (currentUsed + targetFileSize > limit) {
+      return res.status(403).json({ error: 'Storage quota exceeded. Please upgrade your plan.' });
+    }
+
+    // 2. Format S3 Key & Pre-create Database Document
+    const sanitized = targetFileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const s3Key = `uploads/${userId}/${Date.now()}-${sanitized}`;
+
+    const newFile = await File.create({
+      name: targetFileName,
+      originalName: targetFileName,
+      sanitizedName: sanitized,
+      diskName: sanitized,
+      size: targetFileSize,
+      mimeType: targetMimeType,
+      mimetype: targetMimeType,
+      s3Key,
+      userId,
+      user: userId,
+      folder: targetFolderId,
+      folderId: targetFolderId,
+      isTrash: false,
+      isDeleted: false,
+      isMalicious: false,
+      status: 'pending_scan',
+      securityStatus: 'pending_scan',
+      uploadedAt: new Date(),
+      createdAt: new Date(),
+    });
+
+    // 3. Generate Presigned PUT URL
+    const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
+    const command = new PutObjectCommand({
+      Bucket: bucket,
+      Key: s3Key,
+      ContentType: targetMimeType,
+    });
+
+    const presignedUrl = await getSignedUrl(s3Client, command, { expiresIn: 900 });
+
+    res.json({
+      presignedUrl,
+      signedUrl: presignedUrl,
+      fileId: newFile._id,
+      s3Key,
+      fileKey: s3Key,
+    });
+  } catch (err) {
+    console.error('Error generating presigned URL:', err);
+    res.status(500).json({ error: 'Failed to initialize direct upload ticket' });
+  }
+});
+
+/**
+ * GET /api/files - High-performance lean read query
+ */
+router.get('/', authMiddleware, async (req, res) => {
+  try {
+    const currentFolderId = req.query.folder || req.query.folderId || null;
+    const userId = req.user.id || req.user._id;
+
+    // Run parallel queries resolved directly by compound indexes
     const [files, folders] = await Promise.all([
-      FileModel.find({
-        $or: [{ userId }, { user: userId }],
-        folderId: folderId || null,
-        isTrash: { $ne: true },
-        isDeleted: { $ne: true }
+      File.find({ 
+        userId, 
+        $or: [{ folder: currentFolderId }, { folderId: currentFolderId }], 
+        isTrash: false 
       })
-        .select('name size type updatedAt securityStatus mimeType folder folderId user createdAt uploadedAt')
-        .sort({ createdAt: -1 })
+        .select('name originalName size mimeType s3Key securityStatus uploadedAt folder folderId')
+        .sort({ uploadedAt: -1 })
         .lean(),
-      FolderModel.find({
-        $or: [{ userId }, { user: userId }],
-        parentId: folderId || null,
-        isTrash: { $ne: true }
-      })
-        .select('name parentFolder parentId updatedAt user createdAt')
+      Folder.find({ userId, parentId: currentFolderId, isTrash: false })
+        .select('name parentId createdAt')
         .sort({ name: 1 })
         .lean(),
     ]);
 
-    return res.json({ files, folders });
+    res.json({ files, folders });
   } catch (err) {
-    console.error('Error fetching files and folders:', err);
-    return res.status(500).json({ error: 'Failed to fetch files and folders' });
+    console.error('Error fetching files:', err);
+    res.status(500).json({ error: 'Failed to retrieve folder contents' });
   }
 });
 
@@ -54,7 +153,7 @@ router.get('/photos', async (req, res) => {
     const userId = req.user?._id || req.user?.id;
 
     // Field projection: minimal fields required by frontend grid
-    const mediaFiles = await FileModel.find({
+    const mediaFiles = await File.find({
       $and: [
         {
           $or: [
@@ -65,7 +164,7 @@ router.get('/photos', async (req, res) => {
         },
         { isTrash: { $ne: true } },
         { isDeleted: { $ne: true } },
-        { securityStatus: { $in: ['Safe', 'unscanned_too_large'] } },
+        { securityStatus: { $in: ['Safe', 'unscanned_too_large', 'clean'] } },
         {
           $or: [
             { mimetype: { $regex: /^(image|video)\//i } },
@@ -81,8 +180,8 @@ router.get('/photos', async (req, res) => {
     .sort({ uploadedAt: -1, createdAt: -1 })
     .lean();
 
-    const bucket = process.env.AWS_S3_BUCKET_NAME || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET;
-    const s3Client = req.s3 || global.s3;
+    const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
+    const s3 = s3Client;
 
     const filesWithUrls = await Promise.all(mediaFiles.map(async (file) => {
       let targetKey = file.s3Key;
@@ -94,13 +193,13 @@ router.get('/photos', async (req, res) => {
       }
 
       let presignedUrl = '';
-      if (targetKey && bucket && s3Client) {
+      if (targetKey && bucket && s3) {
         try {
           const command = new GetObjectCommand({
             Bucket: bucket,
             Key: targetKey
           });
-          presignedUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
+          presignedUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
         } catch (err) {
           console.error('Error signing URL for media asset:', err.message);
         }
@@ -136,7 +235,7 @@ router.get('/photos', async (req, res) => {
 router.get('/:id/download-url', async (req, res) => {
   try {
     const userId = req.user?._id || req.user?.id;
-    const file = await FileModel.findOne({
+    const file = await File.findOne({
       _id: req.params.id,
       $or: [
         { userId: userId },
@@ -157,7 +256,7 @@ router.get('/:id/download-url', async (req, res) => {
     if (!targetKey) return res.status(400).json({ error: 'S3 Key missing' });
 
     const fileName = file.originalName || file.name || 'download';
-    const bucket = process.env.AWS_S3_BUCKET_NAME || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET;
+    const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
 
     const command = new GetObjectCommand({
       Bucket: bucket,
@@ -165,7 +264,6 @@ router.get('/:id/download-url', async (req, res) => {
       ResponseContentDisposition: `attachment; filename="${encodeURIComponent(fileName)}"; filename*=UTF-8''${encodeURIComponent(fileName)}`,
     });
 
-    const s3Client = req.s3 || global.s3;
     const downloadUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
     return res.json({ downloadUrl, name: fileName, size: file.size || 0 });
   } catch (err) {
@@ -187,8 +285,6 @@ const handleFolderRenameInFiles = async (req, res) => {
       return res.status(400).json({ error: 'Folder name cannot be empty' });
     }
 
-    const mongoose = require('mongoose');
-    const Folder = mongoose.models.Folder || mongoose.model('Folder');
     const userId = req.user?._id || req.user?.id;
 
     // 1. Find the target folder

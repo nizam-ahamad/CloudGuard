@@ -104,7 +104,9 @@ let isDbConnected = false;
 const mongoURI = process.env.MONGO_URI || 'mongodb://localhost:27017/cloudguard';
 console.log("[DB] MONGO_URI loaded:", !!process.env.MONGO_URI);
 mongoose.connect(mongoURI, {
-  serverSelectionTimeoutMS: 10000,
+  maxPoolSize: 20,
+  minPoolSize: 5,
+  serverSelectionTimeoutMS: 5000,
   connectTimeoutMS: 10000
 })
   .then(async () => {
@@ -1380,7 +1382,7 @@ app.get('/api/files', verifyToken, async (req, res) => {
         { originalName: { $regex: searchQuery, $options: 'i' } }
       ];
     } else if (!isRecent) {
-      query.folderId = folderId;
+      query.$or = [{ folderId: folderId }, { folder: folderId }];
     }
 
     let dbFilesQuery = FileModel.find(query);
@@ -1395,7 +1397,7 @@ app.get('/api/files', verifyToken, async (req, res) => {
       _id: file._id.toString(),
       name: file.originalName || file.name,
       diskName: file.diskName || file.name,
-      folderId: file.folderId ? file.folderId.toString() : null,
+      folderId: file.folderId ? file.folderId.toString() : (file.folder ? file.folder.toString() : null),
       isFolder: false,
       date: new Date(file.uploadedAt || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
       mtimeMs: new Date(file.uploadedAt || Date.now()).getTime(),
@@ -1960,6 +1962,9 @@ const handleBulkDelete = async (req, res) => {
 };
 app.post('/api/files/bulk-delete', verifyToken, handleBulkDelete);
 app.post('/api/files/batch-delete', verifyToken, handleBulkDelete);
+
+// Mount modular files router (including POST /api/files/presigned-url)
+app.use('/api/files', require('./routes/files'));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, '0.0.0.0', () => {
