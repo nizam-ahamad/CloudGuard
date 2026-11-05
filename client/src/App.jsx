@@ -911,25 +911,34 @@ function App() {
       let currentFileId = null;
 
       try {
-        const s3Axios = axios.create();
-        const presignRes = await axios.post(`${API_BASE_URL}/api/presign`, {
-          filename: name,
-          contentType: file.type || 'application/octet-stream',
+        // 1. Request presigned direct S3 upload ticket with quota enforcement
+        const presignRes = await axios.post(`${API_BASE_URL}/api/files/presigned-url`, {
+          fileName: name,
+          fileSize: size,
+          mimeType: file.type || 'application/octet-stream',
           folderId: currentFolderId
         });
-        const { signedUrl, fileKey, fileId } = presignRes.data;
+        const presignedUrl = presignRes.data.presignedUrl || presignRes.data.signedUrl;
+        const fileId = presignRes.data.fileId;
         currentFileId = fileId;
-        
-        await s3Axios.put(signedUrl, file, {
-          headers: { 
-            'Content-Type': file.type || 'application/octet-stream',
-            'x-amz-server-side-encryption': 'AES256',
-            'Authorization': undefined
+
+        // 2. Direct S3 Upload with native progress tracking (without server proxying)
+        const s3Axios = axios.create();
+        delete s3Axios.defaults.headers.common['Authorization'];
+        await s3Axios.put(presignedUrl, file, {
+          headers: {
+            'Content-Type': file.type || 'application/octet-stream'
           },
+          transformRequest: [(data, headers) => {
+            if (headers) {
+              delete headers.Authorization;
+              delete headers.authorization;
+            }
+            return data;
+          }],
           signal: abortControllerRef.current.signal,
           onUploadProgress: (progressEvent) => {
             const percentCompleted = Math.round((progressEvent.loaded * 100) / size);
-            
             const now = Date.now();
             const timeElapsed = now - prevUploadRef.current.time;
             if (timeElapsed >= 500) {
@@ -938,60 +947,57 @@ function App() {
               prevUploadRef.current = { time: now, loaded: progressEvent.loaded, speed: speedBps };
             }
 
-            setUploadQueue(prev => prev.map(item => item.id === id ? { 
-              ...item, 
-              progress: percentCompleted, 
-              loadedBytes: progressEvent.loaded, 
-              speed: prevUploadRef.current.speed 
+            setUploadQueue(prev => prev.map(item => item.id === id ? {
+              ...item,
+              progress: percentCompleted,
+              loadedBytes: progressEvent.loaded,
+              speed: prevUploadRef.current.speed
             } : item));
           }
         });
 
+        // 3. Status update to analyzing
         setUploadQueue(prev => prev.map(item => item.id === id ? { ...item, status: 'analyzing' } : item));
-        
-        const uploadRes = await axios.post(`${API_BASE_URL}/api/upload`, {
-          fileKey,
-          originalName: name,
-          fileSize: size,
-          folderId: currentFolderId,
-          relativePaths: file.webkitRelativePath || file.customPath || ''
+
+        // 4. Finalize & graceful scan execution (auto-purged on threat)
+        const finalizeRes = await axios.post(`${API_BASE_URL}/api/files/finalize-upload`, {
+          fileId: currentFileId,
+          sha256: nextItem.fileHash || undefined
         }, {
-          signal: abortControllerRef.current.signal,
-          timeout: 0
+          signal: abortControllerRef.current.signal
         });
 
-        const { blockedFiles, error, uploadedFiles } = uploadRes.data;
-        if ((blockedFiles && blockedFiles.length > 0) || error === 'File blocked: Malicious content detected') {
+        if (finalizeRes.data && finalizeRes.data.isMalicious) {
           finalStatus = 'threat_detected';
           securityThreat = true;
-        } else if (Array.isArray(uploadedFiles) && uploadedFiles.length > 0) {
+        } else if (finalizeRes.data && finalizeRes.data.file) {
+          finalStatus = 'completed';
+          const uploadedFile = finalizeRes.data.file;
           setFiles(prevFiles => {
             const safePrevFiles = Array.isArray(prevFiles) ? prevFiles : [];
-            const newFiles = uploadedFiles.filter(uf => uf && !safePrevFiles.some(pf => pf?._id === uf?._id));
-            return [...newFiles, ...safePrevFiles];
+            if (safePrevFiles.some(pf => pf?._id === uploadedFile?._id)) return safePrevFiles;
+            return [uploadedFile, ...safePrevFiles];
           });
           invalidatePhotosCache();
-          uploadedFiles.forEach(newFile => {
-            window.dispatchEvent(
-              new CustomEvent('cloudguard:media-uploaded', {
-                detail: newFile
-              })
-            );
-          });
+          window.dispatchEvent(
+            new CustomEvent('cloudguard:media-uploaded', {
+              detail: uploadedFile
+            })
+          );
         }
       } catch (err) {
         if (axios.isCancel(err) || err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED') {
           finalStatus = 'failed';
           errorMsg = 'Canceled';
           if (currentFileId) {
-             try { await axios.delete(`${API_BASE_URL}/api/files/${currentFileId}`); } catch(e){}
+            try { await axios.delete(`${API_BASE_URL}/api/files/${currentFileId}`); } catch(e){}
           }
-        } else if (err.response?.data?.error === 'File blocked: Malicious content detected') {
+        } else if (err.response?.data?.isMalicious || err.response?.data?.error === 'File blocked: Malicious content detected') {
           finalStatus = 'threat_detected';
           securityThreat = true;
-          errorMsg = 'Malware blocked';
+          errorMsg = 'Security threat intercepted';
         } else {
-          finalStatus = err.response?.status === 406 ? 'threat_detected' : 'failed';
+          finalStatus = 'failed';
           errorMsg = err.response?.data?.error || 'Upload failed';
         }
       }
@@ -999,30 +1005,47 @@ function App() {
       setUploadQueue(prev => {
         const currentItem = prev.find(i => i.id === id);
         if (currentItem && currentItem.status === 'failed' && currentItem.error === 'Canceled') {
-           return prev; 
+          return prev;
         }
         return prev.map(item => item.id === id ? { ...item, status: finalStatus, error: errorMsg } : item);
       });
-      
+
       if (securityThreat) {
-         addToast('error', `Security Alert: Malware detected! ${name}`);
+        addToast('error', `${name}: Threat intercepted & auto-deleted.`);
       } else if (finalStatus === 'completed') {
-         addToast('success', `Uploaded: ${name}`);
-         invalidatePhotosCache();
+        addToast('success', `Uploaded: ${name}`);
+        invalidatePhotosCache();
       } else if (finalStatus === 'failed' && errorMsg !== 'Canceled') {
-         addToast('error', errorMsg || `Upload failed for ${name}`);
+        addToast('error', errorMsg || `Upload failed for ${name}`);
       }
 
-      try {
-        await fetchFiles();
-        await fetchStorageStats();
-      } catch (err) {
-        console.error("Failed to fetch updates:", err);
+      // Single Batch Refresh: Only call fetchFiles() and fetchStorageStats() once when the ENTIRE queue finishes
+      const remainingQueued = uploadQueue.filter(
+        item => item.id !== id && ['queued', 'uploading', 'analyzing'].includes(item.status)
+      ).length;
+
+      if (remainingQueued === 0) {
+        try {
+          await fetchFiles();
+          await fetchStorageStats();
+        } catch (err) {
+          console.error("Failed to fetch updates:", err);
+        }
       }
     };
 
     processNext();
-  }, [uploadQueue, fetchFiles, fetchStorageStats]);
+  }, [uploadQueue, fetchFiles, fetchStorageStats, currentFolderId, addToast]);
+
+  // Relaxed 10s storage stats polling, disabled during uploads or active queue
+  useEffect(() => {
+    if (!token) return;
+    const interval = setInterval(() => {
+      if (uploadQueue.length > 0 || isUploading) return;
+      fetchStorageStats();
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [token, uploadQueue.length, isUploading, fetchStorageStats]);
 
   const handleFileUpload = async (filesToUpload) => {
     if (!filesToUpload || filesToUpload.length === 0) return;

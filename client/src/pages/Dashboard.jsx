@@ -1,4 +1,5 @@
 import React from 'react';
+import axios from 'axios';
 
 /**
  * Clean Dark-Themed Skeleton Loader Component for Folder and File Navigation
@@ -28,5 +29,65 @@ export const FolderNavigationSkeleton = () => (
   </div>
 );
 
-export default FolderNavigationSkeleton;
+/**
+ * Direct S3 Presigned Upload & Finalize Pipeline Helper
+ */
+export const processQueueItem = async ({
+  item,
+  folderId,
+  apiBaseUrl,
+  abortSignal,
+  onProgress,
+  onStatusChange,
+}) => {
+  const { file, name, size } = item;
+  let currentFileId = null;
 
+  try {
+    const s3Axios = axios.create();
+    delete s3Axios.defaults.headers.common['Authorization'];
+
+    const presignRes = await axios.post(`${apiBaseUrl}/api/files/presigned-url`, {
+      fileName: name,
+      fileSize: size,
+      mimeType: file.type || 'application/octet-stream',
+      folderId: folderId || null
+    });
+
+    const presignedUrl = presignRes.data.presignedUrl || presignRes.data.signedUrl;
+    currentFileId = presignRes.data.fileId;
+
+    await s3Axios.put(presignedUrl, file, {
+      headers: {
+        'Content-Type': file.type || 'application/octet-stream'
+      },
+      transformRequest: [(data, headers) => {
+        if (headers) {
+          delete headers.Authorization;
+          delete headers.authorization;
+        }
+        return data;
+      }],
+      signal: abortSignal,
+      onUploadProgress: onProgress
+    });
+
+    if (onStatusChange) onStatusChange('analyzing');
+
+    const finalizeRes = await axios.post(`${apiBaseUrl}/api/files/finalize-upload`, {
+      fileId: currentFileId,
+      sha256: item.fileHash || undefined
+    }, {
+      signal: abortSignal
+    });
+
+    return finalizeRes.data;
+  } catch (err) {
+    if (axios.isCancel(err) && currentFileId) {
+      try { await axios.delete(`${apiBaseUrl}/api/files/${currentFileId}`); } catch (e) {}
+    }
+    throw err;
+  }
+};
+
+export default FolderNavigationSkeleton;
