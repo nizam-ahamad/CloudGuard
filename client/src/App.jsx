@@ -43,12 +43,14 @@ function App() {
   const navigate = useNavigate();
   const [isLoading, setIsLoading] = useState(true);
 
-  // Automatically exit Profile Settings whenever the route changes (e.g. clicking Photos or Recent)
+  // Automatically synchronize viewMode with route and ?view=settings query param
   useEffect(() => {
-    if (viewMode === 'settings') {
+    if (searchParams.get('view') === 'settings') {
+      setViewMode('settings');
+    } else if (viewMode === 'settings') {
       setViewMode('all');
     }
-  }, [location.pathname]);
+  }, [location.pathname, searchParams]);
 
   useEffect(() => {
     if (document.fonts && document.fonts.ready) {
@@ -282,6 +284,7 @@ function App() {
   const [activeFolderMenuId, setActiveFolderMenuId] = useState(null);
 
   const [searchParams, setSearchParams] = useSearchParams();
+  const isSettingsOpen = (viewMode === 'settings' || searchParams.get('view') === 'settings') && location.pathname === '/dashboard';
   const folderParam = searchParams.get('folder');
   const [currentFolderId, setCurrentFolderId] = useState(folderParam || null);
   const [breadcrumbs, setBreadcrumbs] = useState([{ id: null, name: 'Home' }]);
@@ -619,6 +622,11 @@ function App() {
     setCurrentFolderId(folderId);
     setSearchParams(folderId ? { folder: folderId } : {});
     setBreadcrumbs(prev => prev.slice(0, index + 1));
+  };
+
+  const handleCloseSettings = () => {
+    setViewMode('all');
+    setSearchParams({});
   };
   const handlePasswordUpdate = async (e) => {
     e.preventDefault();
@@ -1467,11 +1475,16 @@ function App() {
         {/* Footer Navigation */}
         <div className="flex flex-col gap-2 mt-auto border-t border-outline-variant pt-4 mx-4">
           <button 
-            onClick={() => { setViewMode('settings'); setIsSidebarOpen(false); }}
-            className={`group relative w-full flex items-center h-12 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${viewMode === 'settings' ? 'bg-surface-container-low dark:bg-[#282a2c] dark:text-[#c4c7c5]' : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'}`}
+            type="button"
+            onClick={() => { 
+              setViewMode('settings'); 
+              setIsSidebarOpen(false); 
+              navigate('/dashboard?view=settings');
+            }}
+            className={`group relative w-full flex items-center h-12 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${isSettingsOpen ? 'bg-surface-container-low dark:bg-[#282a2c] text-neutral-900 dark:text-white font-semibold' : 'text-neutral-500 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800/60 hover:text-neutral-900 dark:hover:text-white'}`}
           >
             <div className="min-w-[3rem] flex justify-center items-center">
-              <span className="material-symbols-outlined shrink-0" data-weight={viewMode === 'settings' ? "fill" : ""}>settings</span>
+              <span className="material-symbols-outlined shrink-0" data-weight={isSettingsOpen ? "fill" : ""}>settings</span>
             </div>
             <span className={`font-semibold font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-32 opacity-100'}`}>Settings</span>
             {isCollapsed && (
@@ -1573,7 +1586,12 @@ function App() {
                 <p className="text-xs text-on-surface-variant dark:text-[#c4c7c5] truncate">{user?.email || 'user@example.com'}</p>
               </div>
               <button 
-                onClick={() => { setViewMode('settings'); setShowProfileMenu(false); }}
+                type="button"
+                onClick={() => { 
+                  setShowProfileMenu(false); 
+                  setViewMode('settings'); 
+                  navigate('/dashboard?view=settings');
+                }}
                 className="w-full text-left px-4 py-3 text-on-surface dark:text-[#e3e3e3] hover:bg-surface-container-high dark:hover:bg-zinc-800/70 text-sm flex items-center gap-2 transition-colors cursor-pointer"
               >
                 <span className="material-symbols-outlined text-[18px]">person</span> Profile Settings
@@ -1595,7 +1613,7 @@ function App() {
         onClick={() => { setShowProfileMenu(false); setIsSidebarOpen(false); setActiveMenuId(null); setActiveFolderMenuId(null); }} 
         className={`pt-24 pb-28 px-margin-mobile md:px-margin-desktop max-w-container-max mx-auto w-full min-h-screen bg-white dark:bg-[#131314] transition-all duration-300 ease-in-out ${isCollapsed ? 'md:ml-20' : 'md:ml-64'}`}
       >
-        {viewMode === 'settings' && location.pathname !== '/dashboard/photos' ? (
+        {isSettingsOpen ? (
           <div className="max-w-3xl mx-auto space-y-6">
             <h2 className="font-headline-md text-headline-md font-bold text-on-surface dark:text-[#e3e3e3] mb-8">Profile Settings</h2>
             

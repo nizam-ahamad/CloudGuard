@@ -1,5 +1,6 @@
 import React from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
+import { Settings } from 'lucide-react';
 
 const navItems = [
   {
@@ -17,17 +18,29 @@ const navItems = [
     name: 'Recent',
     path: '/dashboard/recent',
     iconSymbol: 'history'
-  },
-  {
-    name: 'Settings',
-    path: '/dashboard/settings',
-    iconSymbol: 'settings'
   }
 ];
 
 export default function Sidebar({ isCollapsed = false, onClose, setShowSettings }) {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
+
+  const isSettingsActive = 
+    location.pathname === '/dashboard' && searchParams.get('view') === 'settings';
+
+  const handleOpenSettings = () => {
+    if (typeof setShowSettings === 'function') {
+      setShowSettings(true);
+    }
+    if (typeof onClose === 'function') {
+      onClose();
+    }
+    navigate('/dashboard?view=settings');
+  };
+
   return (
-    <aside className="w-full">
+    <aside className="w-full flex flex-col h-full">
       <nav className="flex flex-col space-y-1">
         {navItems.map((item) => (
           <NavLink
@@ -73,6 +86,35 @@ export default function Sidebar({ isCollapsed = false, onClose, setShowSettings 
           </NavLink>
         ))}
       </nav>
+
+      {/* Bottom Settings Button in Sidebar */}
+      <div className="mt-auto pt-4 border-t border-outline-variant">
+        <button
+          type="button"
+          onClick={handleOpenSettings}
+          className={`group relative flex items-center w-full h-12 rounded-full font-medium transition-colors cursor-pointer ${
+            isSettingsActive
+              ? 'bg-surface-container-low dark:bg-[#282a2c] text-neutral-900 dark:text-white font-semibold'
+              : 'text-neutral-500 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800/60 hover:text-neutral-900 dark:hover:text-white'
+          }`}
+        >
+          <div className="min-w-[3rem] flex justify-center items-center">
+            <span className="material-symbols-outlined shrink-0" data-weight={isSettingsActive ? 'fill' : ''}>settings</span>
+          </div>
+          <span
+            className={`font-semibold font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ${
+              isCollapsed ? 'w-0 opacity-0' : 'w-32 opacity-100'
+            }`}
+          >
+            Settings
+          </span>
+          {isCollapsed && (
+            <div className="absolute left-full ml-4 px-3 py-1 bg-[#1e1f20] border border-zinc-800 text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+              Settings
+            </div>
+          )}
+        </button>
+      </div>
     </aside>
   );
 }
