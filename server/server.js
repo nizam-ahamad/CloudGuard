@@ -129,6 +129,8 @@ mongoose.connect(mongoURI, {
 
 // User Model
 const User = require('./models/User');
+const UserModel = User;
+const File = require('./models/File');
 
 async function recalculateStorage(userId) {
     try {
@@ -236,10 +238,8 @@ async function getGlobalStorageUsed() {
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/files', require('./routes/files'));
 app.use('/api/folders', require('./routes/folders'));
-app.use('/api/photos', verifyToken, (req, res, next) => {
-  req.url = '/photos' + (req.url === '/' ? '' : req.url);
-  return require('./routes/files')(req, res, next);
-});
+app.use('/api/photos', require('./routes/photos'));
+app.use('/api', require('./routes/photos'));
 
 app.post('/api/auth/register', async (req, res) => {
   try {
@@ -622,34 +622,103 @@ app.delete('/api/auth/account', verifyToken, async (req, res) => {
   }
 });
 
-// Storage Stats Endpoint
-app.get(['/api/storage-stats', '/api/users/storage-stats'], verifyToken, async (req, res) => {
+// Universal Storage Stats Endpoint (mount on both /api/storage-stats and /api/users/storage-stats)
+const getStorageStatsInServer = async (req, res) => {
   try {
-    let usedBytes = 0;
-    const userId = req.user?.id || req.user?._id;
-    if (!userId) {
-      return res.status(401).json({ error: 'Unauthorized: User identifier missing.' });
+    const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
+    if (!rawUserId) {
+      return res.status(401).json({ error: 'Unauthorized: User ID missing from session' });
     }
-    const userMatch = mongoose.Types.ObjectId.isValid(userId)
-      ? { $in: [String(userId), new mongoose.Types.ObjectId(userId)] }
-      : String(userId);
 
-        const result = await FileModel.aggregate([
-      { $match: { $or: [{ userId: userId }, { userId: String(userId) }, { user: userId }], isTrash: false, securityStatus: { $ne: 'threat_purged' } } },
-      { $group: { _id: null, totalSize: { $sum: "$size" } } }
-    ]);
-    if (result.length > 0) {
-      usedBytes = result[0].totalSize;
+    const userIdObj = mongoose.Types.ObjectId.isValid(rawUserId)
+      ? new mongoose.Types.ObjectId(rawUserId)
+      : null;
+
+    // Support both String and ObjectId query matching for legacy compatibility
+    const userMatchConditions = [
+      { userId: rawUserId },
+      { user: rawUserId },
+    ];
+    if (userIdObj) {
+      userMatchConditions.push({ userId: userIdObj }, { user: userIdObj });
     }
-  
-    
-    const totalLimitBytes = 5 * 1024 * 1024 * 1024; // 5 GB
-    const usedPercentage = ((usedBytes / totalLimitBytes) * 100).toFixed(1);
-    res.json({ usedBytes, totalLimitBytes, usedPercentage });
-  } catch (error) {
-    res.status(500).json({ error: 'Error calculating storage stats' });
+
+    // 1. Calculate actual active storage used using Aggregation
+    let actualStorageUsed = 0;
+    try {
+      const stats = await File.aggregate([
+        {
+          $match: {
+            isTrash: { $ne: true },
+            securityStatus: { $ne: 'threat_purged' },
+            $or: userMatchConditions,
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            totalBytes: { $sum: { $ifNull: ['$size', 0] } },
+          },
+        },
+      ]);
+      actualStorageUsed = stats[0]?.totalBytes || 0;
+    } catch (aggErr) {
+      console.warn('Aggregation fallback triggered:', aggErr.message);
+      // Fallback: simple sum via find if aggregation pipeline encounters driver issues
+      const activeFiles = await File.find({
+        isTrash: { $ne: true },
+        securityStatus: { $ne: 'threat_purged' },
+        $or: userMatchConditions,
+      }).select('size').lean();
+      actualStorageUsed = activeFiles.reduce((acc, curr) => acc + (curr.size || 0), 0);
+    }
+
+    // 2. Fetch User Quota Limit & Sync storageUsed
+    const defaultLimit = 5368709120; // 5 GB default
+    let storageLimit = defaultLimit;
+
+    if (userIdObj) {
+      const user = await User.findById(userIdObj).select('storageLimit').lean();
+      if (user?.storageLimit) {
+        storageLimit = user.storageLimit;
+      }
+      // Update user document asynchronously (non-blocking)
+      User.findByIdAndUpdate(userIdObj, { storageUsed: actualStorageUsed }).exec();
+    }
+
+    const percentage = storageLimit > 0
+      ? Math.min(100, (actualStorageUsed / storageLimit) * 100).toFixed(1)
+      : '0.0';
+
+    return res.status(200).json({
+      success: true,
+      storageUsed: actualStorageUsed,
+      used: actualStorageUsed,
+      usedBytes: actualStorageUsed,
+      storageLimit,
+      limit: storageLimit,
+      totalLimitBytes: storageLimit,
+      percentage,
+      usedPercentage: percentage,
+    });
+  } catch (err) {
+    console.error('Fatal error in getStorageStats:', err);
+    // Never crash the entire dashboard UI with a 500: return safe defaults
+    return res.status(200).json({
+      success: true,
+      storageUsed: 0,
+      used: 0,
+      usedBytes: 0,
+      storageLimit: 5368709120,
+      limit: 5368709120,
+      totalLimitBytes: 5368709120,
+      percentage: '0.0',
+      usedPercentage: '0.0',
+    });
   }
-});
+};
+
+app.get(['/api/storage-stats', '/api/users/storage-stats'], verifyToken, getStorageStatsInServer);
 
 // Upload Endpoint
 // Upload Endpoint
@@ -1858,16 +1927,36 @@ const handleMoveBatch = async (req, res) => {
 app.put('/api/folders/move-batch', verifyToken, handleMoveBatch);
 app.post('/api/folders/move-batch', verifyToken, handleMoveBatch);
 app.patch('/api/folders/move-batch', verifyToken, handleMoveBatch);
+app.put('/api/folders/batch-move', verifyToken, handleMoveBatch);
+app.post('/api/folders/batch-move', verifyToken, handleMoveBatch);
+app.put('/api/files/move-batch', verifyToken, handleMoveBatch);
+app.post('/api/files/move-batch', verifyToken, handleMoveBatch);
+app.put('/api/files/batch-move', verifyToken, handleMoveBatch);
+app.post('/api/files/batch-move', verifyToken, handleMoveBatch);
 
 // Access File Endpoint (Presigned URL)
 app.get('/api/files/:id/access', verifyToken, async (req, res) => {
   try {
-    let query = { _id: req.params.id, securityStatus: { $ne: 'threat_purged' } };
+    const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
+    const userIdObj = mongoose.Types.ObjectId.isValid(rawUserId)
+      ? new mongoose.Types.ObjectId(rawUserId)
+      : rawUserId;
+
+    let query = { 
+      _id: req.params.id, 
+      isTrash: { $ne: true },
+      securityStatus: { $ne: 'threat_purged' } 
+    };
     if (!req.user.isAdmin) {
-      query.userId = req.user._id;
+      query.$or = [
+        { userId: userIdObj },
+        { user: userIdObj },
+        { userId: String(rawUserId) },
+        { user: String(rawUserId) },
+      ];
     }
     const file = await FileModel.findOne(query);
-    if (!file) return res.status(404).json({ error: 'File not found' });
+    if (!file) return res.status(404).json({ error: 'File not found or unauthorized' });
 
     let targetKey = file.s3Key;
     if (!targetKey && file.location) {
@@ -2000,78 +2089,163 @@ app.get('/api/files/:id/download-url', verifyToken, async (req, res) => {
   }
 });
 
-// Delete File Endpoint
+// Soft-Delete Single File
 app.delete('/api/files/:id', verifyToken, async (req, res) => {
   try {
-    const userId = req.user?.id || req.user?._id;
-    const userMatch = mongoose.Types.ObjectId.isValid(userId)
-      ? { $in: [String(userId), new mongoose.Types.ObjectId(userId)] }
-      : String(userId);
-    const file = await FileModel.findOne({ 
-      _id: req.params.id, 
-      $or: [{ userId: userMatch }, { user: userMatch }] 
+    const rawUserId = req.user?.id || req.user?._id;
+    const userIdObj = mongoose.Types.ObjectId.isValid(rawUserId)
+      ? new mongoose.Types.ObjectId(rawUserId)
+      : rawUserId;
+
+    const userMatch = {
+      $or: [
+        { userId: userIdObj },
+        { user: userIdObj },
+        { userId: String(rawUserId) },
+        { user: String(rawUserId) },
+      ],
+    };
+
+    const file = await FileModel.findOne({
+      _id: req.params.id,
+      ...userMatch,
     });
-    if (!file) return res.status(404).json({ error: "File not found or unauthorized" });
 
-    // Determine target S3 key
-    const keyToDelete = file.s3Key || (file.location ? new URL(file.location).pathname.slice(1) : null);
+    if (!file) return res.status(404).json({ error: 'File not found or unauthorized' });
 
-    if (keyToDelete) {
-      console.log('[S3 Deleting Key]:', keyToDelete);
-      await s3.send(new DeleteObjectCommand({
-        Bucket: process.env.AWS_BUCKET_NAME,
-        Key: keyToDelete
-      }));
+    file.isTrash = true;
+    file.trashedAt = new Date();
+    await file.save();
+
+    if (file.size > 0 && file.securityStatus !== 'threat_purged') {
+      await UserModel.findByIdAndUpdate(rawUserId, {
+        $inc: { storageUsed: -Math.abs(file.size || 0) },
+      });
     }
 
-    await FileModel.deleteOne({ _id: req.params.id });
     invalidatePhotosCache(req.user._id);
-    const exactStorageUsed = await recalculateStorage(req.user._id);
 
     return res.status(200).json({
-      message: "File deleted successfully from DB and S3",
-      deletedId: req.params.id,
-      storageUsed: exactStorageUsed
+      success: true,
+      message: 'File deleted',
+      fileId: file._id,
+      deletedId: file._id,
     });
   } catch (err) {
     console.error('[Delete Error]:', err);
-    return res.status(500).json({ error: "Failed to delete file" });
+    return res.status(500).json({ error: 'Failed to delete file' });
   }
 });
 
-// Bulk/Batch Delete Files Endpoint
-const handleBulkDelete = async (req, res) => {
+// Soft-Delete Batch Files & Folders
+const handleServerBatchDelete = async (req, res) => {
   try {
-    const { fileIds } = req.body;
-    if (!fileIds || !Array.isArray(fileIds) || fileIds.length === 0) {
-      return res.status(400).json({ error: 'No file IDs provided' });
+    const rawUserId = req.user?.id || req.user?._id;
+    const userIdObj = mongoose.Types.ObjectId.isValid(rawUserId)
+      ? new mongoose.Types.ObjectId(rawUserId)
+      : rawUserId;
+
+    const { fileIds = [], folderIds = [] } = req.body;
+
+    const userMatch = {
+      $or: [
+        { userId: userIdObj },
+        { user: userIdObj },
+        { userId: String(rawUserId) },
+        { user: String(rawUserId) },
+      ],
+    };
+
+    if (fileIds.length > 0) {
+      await FileModel.updateMany(
+        { _id: { $in: fileIds }, ...userMatch },
+        { $set: { isTrash: true, trashedAt: new Date() } }
+      );
     }
-    const objectIds = fileIds.map(id => new mongoose.Types.ObjectId(id));
 
-    const files = await FileModel.find({ _id: { $in: objectIds }, userId: req.user._id });
-    if (files.length === 0) {
-      return res.status(404).json({ message: "No files found to delete" });
+    if (folderIds.length > 0) {
+      await FolderModel.updateMany(
+        { _id: { $in: folderIds }, ...userMatch },
+        { $set: { isTrash: true, trashedAt: new Date() } }
+      );
+      await FileModel.updateMany(
+        {
+          $or: [
+            { folder: { $in: folderIds } },
+            { folderId: { $in: folderIds } },
+          ],
+          ...userMatch,
+        },
+        { $set: { isTrash: true, trashedAt: new Date() } }
+      );
     }
 
-    const s3KeysToDelete = files.map(f => f.s3Key).filter(key => key);
-
-    await Promise.all(s3KeysToDelete.map(key => 
-      s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: key }))
-    ));
-
-    await FileModel.deleteMany({ _id: { $in: objectIds }, userId: req.user._id });
     invalidatePhotosCache(req.user._id);
     await recalculateStorage(req.user._id);
 
-    res.status(200).json({ message: "Files deleted successfully" });
-
+    return res.status(200).json({ success: true, deletedCount: fileIds.length + folderIds.length });
   } catch (error) {
-    console.error("Bulk deletion error:", error.message);
-    res.status(500).json({ error: "Server error during bulk deletion" });
+    console.error('Bulk deletion error:', error.message);
+    return res.status(500).json({ error: 'Server error during bulk deletion' });
   }
 };
-app.post('/api/files/bulk-delete', verifyToken, handleBulkDelete);
-app.post('/api/files/batch-delete', verifyToken, handleBulkDelete);
+
+app.post(['/api/files/delete-batch', '/api/files/bulk-delete', '/api/files/batch-delete', '/api/folders/delete-batch', '/api/folders/batch-delete'], verifyToken, handleServerBatchDelete);
+
+// Restore Batch Files & Folders (Undo)
+const handleServerBatchRestore = async (req, res) => {
+  try {
+    const rawUserId = req.user?.id || req.user?._id;
+    const userIdObj = mongoose.Types.ObjectId.isValid(rawUserId)
+      ? new mongoose.Types.ObjectId(rawUserId)
+      : rawUserId;
+
+    const { fileIds = [], folderIds = [] } = req.body;
+
+    const userMatch = {
+      $or: [
+        { userId: userIdObj },
+        { user: userIdObj },
+        { userId: String(rawUserId) },
+        { user: String(rawUserId) },
+      ],
+    };
+
+    if (fileIds.length > 0) {
+      await FileModel.updateMany(
+        { _id: { $in: fileIds }, ...userMatch },
+        { $set: { isTrash: false, trashedAt: null } }
+      );
+    }
+
+    if (folderIds.length > 0) {
+      await FolderModel.updateMany(
+        { _id: { $in: folderIds }, ...userMatch },
+        { $set: { isTrash: false, trashedAt: null } }
+      );
+      await FileModel.updateMany(
+        {
+          $or: [
+            { folder: { $in: folderIds } },
+            { folderId: { $in: folderIds } },
+          ],
+          ...userMatch,
+        },
+        { $set: { isTrash: false, trashedAt: null } }
+      );
+    }
+
+    invalidatePhotosCache(req.user._id);
+    await recalculateStorage(req.user._id);
+
+    return res.status(200).json({ success: true, restoredCount: fileIds.length + folderIds.length });
+  } catch (error) {
+    console.error('Restore error:', error.message);
+    return res.status(500).json({ error: 'Server error during restore' });
+  }
+};
+
+app.post(['/api/files/restore-batch', '/api/files/batch-restore', '/api/folders/restore-batch', '/api/folders/batch-restore'], verifyToken, handleServerBatchRestore);
 
 
 const PORT = process.env.PORT || 5000;

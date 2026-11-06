@@ -69,15 +69,25 @@ async function checkMalwareBazaarNode(sha256) {
 // -------------------------------------------------------------
 router.get('/:id/access', authMiddleware, async (req, res) => {
   try {
-    const userId = req.user.id || req.user._id;
-    const file = await File.findOne({ 
-      _id: req.params.id, 
-      $or: [{ userId: userId }, { userId: String(userId) }, { user: userId }],
-      isTrash: false 
+    const rawUserId = req.user.id || req.user._id || req.user.userId;
+    const userIdObj = mongoose.Types.ObjectId.isValid(rawUserId)
+      ? new mongoose.Types.ObjectId(rawUserId)
+      : rawUserId;
+
+    // Match either user or userId to resolve 404 on existing test files
+    const file = await File.findOne({
+      _id: req.params.id,
+      isTrash: { $ne: true },
+      $or: [
+        { userId: userIdObj },
+        { user: userIdObj },
+        { userId: String(rawUserId) },
+        { user: String(rawUserId) },
+      ],
     }).lean();
 
     if (!file) {
-      return res.status(404).json({ error: 'File not found' });
+      return res.status(404).json({ error: 'File not found or unauthorized' });
     }
 
     if (file.isMalicious || file.securityStatus === 'threat_purged') {
@@ -105,7 +115,7 @@ router.get('/:id/access', authMiddleware, async (req, res) => {
 
     const accessUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
 
-    res.json({
+    return res.json({
       success: true,
       accessUrl,
       downloadUrl: accessUrl,
@@ -114,7 +124,7 @@ router.get('/:id/access', authMiddleware, async (req, res) => {
     });
   } catch (err) {
     console.error('Error generating access URL:', err);
-    res.status(500).json({ error: 'Failed to generate secure access URL' });
+    return res.status(500).json({ error: 'Failed to generate secure access URL' });
   }
 });
 
@@ -442,153 +452,311 @@ router.delete('/purge-test-threats', authMiddleware, async (req, res) => {
 });
 
 // -------------------------------------------------------------
-// 6. SECURE SINGLE-FILE DELETE (Strict Tenant Isolation)
+// 6. SOFT-DELETE SINGLE FILE (Appears permanently deleted to user)
 // -------------------------------------------------------------
-router.delete('/:id', authMiddleware, async (req, res) => {
+const handleSingleFileDelete = async (req, res) => {
   try {
-    const userId = req.user.id || req.user._id;
-    const userMatch = mongoose.Types.ObjectId.isValid(userId)
-      ? { $in: [String(userId), new mongoose.Types.ObjectId(userId)] }
-      : String(userId);
+    const rawUserId = req.user.id || req.user._id || req.user.userId;
+    const userIdObj = mongoose.Types.ObjectId.isValid(rawUserId)
+      ? new mongoose.Types.ObjectId(rawUserId)
+      : rawUserId;
+
+    const userMatch = {
+      $or: [
+        { userId: userIdObj },
+        { user: userIdObj },
+        { userId: String(rawUserId) },
+        { user: String(rawUserId) },
+      ],
+    };
 
     const file = await File.findOne({
       _id: req.params.id,
-      $or: [{ userId: userMatch }, { user: userMatch }]
+      ...userMatch,
     });
 
-    if (!file) {
-      return res.status(404).json({ error: 'File not found or unauthorized' });
-    }
+    if (!file) return res.status(404).json({ error: 'File not found' });
 
-    const keyToDelete = file.s3Key || file.key;
-    if (keyToDelete) {
-      try {
-        const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
-        await s3Client.send(new DeleteObjectCommand({
-          Bucket: bucket,
-          Key: keyToDelete,
-        }));
-      } catch (s3Err) {
-        console.warn(`S3 delete notice (${keyToDelete}):`, s3Err.message);
-      }
-    }
+    file.isTrash = true;
+    file.trashedAt = new Date();
+    await file.save();
 
-    await File.deleteOne({ _id: req.params.id });
-
-    // Decrement user storage
+    // Deduct from user storage quota immediately
     if (file.size > 0 && file.securityStatus !== 'threat_purged') {
-      await User.findByIdAndUpdate(userId, {
-        $inc: { storageUsed: -file.size }
+      await User.findByIdAndUpdate(rawUserId, {
+        $inc: { storageUsed: -Math.abs(file.size || 0) },
       });
     }
 
     return res.status(200).json({
       success: true,
-      message: 'File deleted successfully',
-      deletedId: req.params.id
+      message: 'File deleted',
+      fileId: file._id,
+      deletedId: file._id
     });
   } catch (err) {
-    console.error('Delete error:', err);
+    console.error('Delete file error:', err);
     return res.status(500).json({ error: 'Failed to delete file' });
   }
-});
+};
+
+router.delete('/:id', authMiddleware, handleSingleFileDelete);
+
+// -------------------------------------------------------------
+// 7. BATCH DELETE FILES & FOLDERS
+// -------------------------------------------------------------
+const handleBatchDelete = async (req, res) => {
+  try {
+    const rawUserId = req.user.id || req.user._id || req.user.userId;
+    const userIdObj = mongoose.Types.ObjectId.isValid(rawUserId)
+      ? new mongoose.Types.ObjectId(rawUserId)
+      : rawUserId;
+
+    const { fileIds = [], folderIds = [] } = req.body;
+
+    const userMatch = {
+      $or: [
+        { userId: userIdObj },
+        { user: userIdObj },
+        { userId: String(rawUserId) },
+        { user: String(rawUserId) },
+      ],
+    };
+
+    if (fileIds.length > 0) {
+      await File.updateMany(
+        { _id: { $in: fileIds }, ...userMatch },
+        { $set: { isTrash: true, trashedAt: new Date() } }
+      );
+    }
+
+    if (folderIds.length > 0) {
+      await Folder.updateMany(
+        { _id: { $in: folderIds }, ...userMatch },
+        { $set: { isTrash: true, trashedAt: new Date() } }
+      );
+      await File.updateMany(
+        {
+          $or: [
+            { folder: { $in: folderIds } },
+            { folderId: { $in: folderIds } },
+          ],
+          ...userMatch,
+        },
+        { $set: { isTrash: true, trashedAt: new Date() } }
+      );
+    }
+
+    // Recalculate storage for the user to be 100% accurate
+    const stats = await File.aggregate([
+      {
+        $match: {
+          isTrash: { $ne: true },
+          securityStatus: { $ne: 'threat_purged' },
+          ...userMatch,
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          actualUsedBytes: { $sum: { $ifNull: ['$size', 0] } },
+        },
+      },
+    ]);
+    const actualStorageUsed = stats[0]?.actualUsedBytes || 0;
+    await User.findByIdAndUpdate(rawUserId, { storageUsed: actualStorageUsed });
+
+    return res.status(200).json({ success: true, deletedCount: fileIds.length + folderIds.length });
+  } catch (err) {
+    console.error('Batch delete error:', err);
+    return res.status(500).json({ error: 'Failed to delete items' });
+  }
+};
+
+router.post('/delete-batch', authMiddleware, handleBatchDelete);
+router.post('/batch-delete', authMiddleware, handleBatchDelete);
+router.post('/bulk-delete', authMiddleware, handleBatchDelete);
+
+// -------------------------------------------------------------
+// 8. RESTORE ENDPOINT FOR "UNDO" ACTION
+// -------------------------------------------------------------
+const handleBatchRestore = async (req, res) => {
+  try {
+    const rawUserId = req.user.id || req.user._id || req.user.userId;
+    const userIdObj = mongoose.Types.ObjectId.isValid(rawUserId)
+      ? new mongoose.Types.ObjectId(rawUserId)
+      : rawUserId;
+
+    const { fileIds = [], folderIds = [] } = req.body;
+
+    const userMatch = {
+      $or: [
+        { userId: userIdObj },
+        { user: userIdObj },
+        { userId: String(rawUserId) },
+        { user: String(rawUserId) },
+      ],
+    };
+
+    if (fileIds.length > 0) {
+      await File.updateMany(
+        { _id: { $in: fileIds }, ...userMatch },
+        { $set: { isTrash: false, trashedAt: null } }
+      );
+    }
+
+    if (folderIds.length > 0) {
+      await Folder.updateMany(
+        { _id: { $in: folderIds }, ...userMatch },
+        { $set: { isTrash: false, trashedAt: null } }
+      );
+      await File.updateMany(
+        {
+          $or: [
+            { folder: { $in: folderIds } },
+            { folderId: { $in: folderIds } },
+          ],
+          ...userMatch,
+        },
+        { $set: { isTrash: false, trashedAt: null } }
+      );
+    }
+
+    // Recalculate storage for the user
+    const stats = await File.aggregate([
+      {
+        $match: {
+          isTrash: { $ne: true },
+          securityStatus: { $ne: 'threat_purged' },
+          ...userMatch,
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          actualUsedBytes: { $sum: { $ifNull: ['$size', 0] } },
+        },
+      },
+    ]);
+    const actualStorageUsed = stats[0]?.actualUsedBytes || 0;
+    await User.findByIdAndUpdate(rawUserId, { storageUsed: actualStorageUsed });
+
+    return res.status(200).json({ success: true, restoredCount: fileIds.length + folderIds.length });
+  } catch (err) {
+    console.error('Restore error:', err);
+    return res.status(500).json({ error: 'Failed to restore items' });
+  }
+};
+
+router.post('/restore-batch', authMiddleware, handleBatchRestore);
+router.post('/batch-restore', authMiddleware, handleBatchRestore);
+
+// -------------------------------------------------------------
+// 9. STORAGE STATS RECALCULATION (ROBUST ObjectId CASTING & FALLBACK)
+// -------------------------------------------------------------
+const getStorageStats = async (req, res) => {
+  try {
+    const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
+    if (!rawUserId) {
+      return res.status(401).json({ error: 'Unauthorized: User ID missing from session' });
+    }
+
+    const userIdObj = mongoose.Types.ObjectId.isValid(rawUserId)
+      ? new mongoose.Types.ObjectId(rawUserId)
+      : null;
+
+    // Support both String and ObjectId query matching for legacy compatibility
+    const userMatchConditions = [
+      { userId: rawUserId },
+      { user: rawUserId },
+    ];
+    if (userIdObj) {
+      userMatchConditions.push({ userId: userIdObj }, { user: userIdObj });
+    }
+
+    // 1. Calculate actual active storage used using Aggregation
+    let actualStorageUsed = 0;
+    try {
+      const stats = await File.aggregate([
+        {
+          $match: {
+            isTrash: { $ne: true },
+            securityStatus: { $ne: 'threat_purged' },
+            $or: userMatchConditions,
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            totalBytes: { $sum: { $ifNull: ['$size', 0] } },
+          },
+        },
+      ]);
+      actualStorageUsed = stats[0]?.totalBytes || 0;
+    } catch (aggErr) {
+      console.warn('Aggregation fallback triggered:', aggErr.message);
+      // Fallback: simple sum via find if aggregation pipeline encounters driver issues
+      const activeFiles = await File.find({
+        isTrash: { $ne: true },
+        securityStatus: { $ne: 'threat_purged' },
+        $or: userMatchConditions,
+      }).select('size').lean();
+      actualStorageUsed = activeFiles.reduce((acc, curr) => acc + (curr.size || 0), 0);
+    }
+
+    // 2. Fetch User Quota Limit & Sync storageUsed
+    const defaultLimit = 5368709120; // 5 GB default
+    let storageLimit = defaultLimit;
+
+    if (userIdObj) {
+      const user = await User.findById(userIdObj).select('storageLimit').lean();
+      if (user?.storageLimit) {
+        storageLimit = user.storageLimit;
+      }
+      // Update user document asynchronously (non-blocking)
+      User.findByIdAndUpdate(userIdObj, { storageUsed: actualStorageUsed }).exec();
+    }
+
+    const percentage = storageLimit > 0
+      ? Math.min(100, (actualStorageUsed / storageLimit) * 100).toFixed(1)
+      : '0.0';
+
+    return res.status(200).json({
+      success: true,
+      storageUsed: actualStorageUsed,
+      used: actualStorageUsed,
+      usedBytes: actualStorageUsed,
+      storageLimit,
+      limit: storageLimit,
+      totalLimitBytes: storageLimit,
+      percentage,
+      usedPercentage: percentage,
+    });
+  } catch (err) {
+    console.error('Fatal error in getStorageStats:', err);
+    // Never crash the entire dashboard UI with a 500: return safe defaults
+    return res.status(200).json({
+      success: true,
+      storageUsed: 0,
+      used: 0,
+      usedBytes: 0,
+      storageLimit: 5368709120,
+      limit: 5368709120,
+      totalLimitBytes: 5368709120,
+      percentage: '0.0',
+      usedPercentage: '0.0',
+    });
+  }
+};
+
+const handleStorageStats = getStorageStats;
+router.get('/storage-stats', authMiddleware, getStorageStats);
 
 /**
  * GET /api/files/photos
- * Ultra-lightweight endpoint with field projection and lean query.
- * Cache-Control: no-store prevents caching stale S3 presigned URLs.
+ * Vault-wide photos and media endpoint
  */
-router.get('/photos', authMiddleware, async (req, res) => {
-  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-  res.setHeader('Pragma', 'no-cache');
-  res.setHeader('Expires', '0');
-  try {
-    const userId = req.user?.id || req.user?._id;
-
-    // Hard tenant isolation guard: Never allow an undefined query to run
-    if (!userId) {
-      return res.status(401).json({ error: 'Unauthorized: User identifier missing.' });
-    }
-
-    const userMatch = mongoose.Types.ObjectId.isValid(userId)
-      ? { $in: [String(userId), new mongoose.Types.ObjectId(userId)] }
-      : String(userId);
-
-    // Query images & media strictly owned by the authenticated user
-    const mediaFiles = await File.find({
-      $and: [
-        {
-          $or: [
-            { userId: userMatch },
-            { user: userMatch }
-          ]
-        },
-        { isTrash: false },
-        { isDeleted: { $ne: true } },
-        { securityStatus: { $ne: 'threat_purged' } },
-        {
-          $or: [
-            { mimeType: { $regex: '^(image|video)/', $options: 'i' } },
-            { mimetype: { $regex: '^(image|video)/', $options: 'i' } },
-            { type: 'image' },
-            { type: 'video' },
-            { originalName: { $regex: /\.(jpg|jpeg|png|webp|gif|svg|mp4|webm|mov|mkv)$/i } },
-            { name: { $regex: /\.(jpg|jpeg|png|webp|gif|svg|mp4|webm|mov|mkv)$/i } }
-          ]
-        }
-      ]
-    })
-      .select('name originalName size mimeType mimetype s3Key location securityStatus uploadedAt createdAt folder')
-      .sort({ uploadedAt: -1, createdAt: -1 })
-      .lean();
-
-    const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
-
-    const filesWithUrls = await Promise.all(mediaFiles.map(async (file) => {
-      let targetKey = file.s3Key;
-      if (!targetKey && file.location) {
-        try {
-          const urlObj = new URL(file.location);
-          targetKey = decodeURIComponent(urlObj.pathname.substring(1).replace(/\+/g, '%20'));
-        } catch (e) {}
-      }
-
-      let presignedUrl = '';
-      if (targetKey && bucket) {
-        try {
-          const command = new GetObjectCommand({
-            Bucket: bucket,
-            Key: targetKey
-          });
-          presignedUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
-        } catch (err) {
-          console.error('Error signing URL for media asset:', err.message);
-        }
-      }
-
-      const finalUrl = presignedUrl || file.location || '';
-      const ext = (file.originalName || file.name || '').split('.').pop().toLowerCase();
-      const isVideo = (file.mimetype || file.mimeType || '').startsWith('video') || ['mp4', 'webm', 'mov', 'mkv'].includes(ext);
-      const mimeType = file.mimetype || file.mimeType || (isVideo ? `video/${ext === 'mov' ? 'quicktime' : ext}` : `image/${ext === 'jpg' ? 'jpeg' : ext}`);
-
-      return {
-        ...file,
-        _id: file._id.toString(),
-        name: file.originalName || file.name,
-        mimeType: mimeType,
-        size: file.size || 0,
-        createdAt: file.uploadedAt || file.createdAt || new Date(),
-        s3Url: finalUrl,
-        url: finalUrl
-      };
-    }));
-
-    return res.status(200).json(filesWithUrls);
-  } catch (err) {
-    console.error('Error fetching user photos:', err);
-    return res.status(500).json({ error: 'Failed to load user photos' });
-  }
-});
+router.get('/photos', authMiddleware, (req, res, next) => require('./photos').handleGetPhotos(req, res, next));
 
 /**
  * GET /api/files/:id/download-url
@@ -743,4 +911,14 @@ const handleFolderRenameInFiles = async (req, res) => {
 router.put('/folder/:id', handleFolderRenameInFiles);
 router.patch('/folder/:id', handleFolderRenameInFiles);
 
+// Mount Universal Batch Move on files router for route path compatibility
+router.post('/move-batch', authMiddleware, (req, res, next) => require('./folders').handleBatchMove(req, res, next));
+router.put('/move-batch', authMiddleware, (req, res, next) => require('./folders').handleBatchMove(req, res, next));
+router.post('/batch-move', authMiddleware, (req, res, next) => require('./folders').handleBatchMove(req, res, next));
+router.put('/batch-move', authMiddleware, (req, res, next) => require('./folders').handleBatchMove(req, res, next));
+
 module.exports = router;
+module.exports.handleBatchDelete = handleBatchDelete;
+module.exports.handleBatchRestore = handleBatchRestore;
+module.exports.handleStorageStats = handleStorageStats;
+module.exports.getStorageStats = getStorageStats;

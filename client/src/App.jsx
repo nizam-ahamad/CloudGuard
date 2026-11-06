@@ -178,12 +178,18 @@ function App() {
   };
 
   const formatBytes = (bytes, decimals = 1) => {
-    if (bytes === 0) return '0 Bytes';
+    const numericBytes = Number(bytes);
+    if (!numericBytes || isNaN(numericBytes) || numericBytes <= 0) {
+      return '0 B';
+    }
+
     const k = 1024;
     const dm = decimals < 0 ? 0 : decimals;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(numericBytes) / Math.log(k));
+    const safeIndex = Math.min(i, sizes.length - 1);
+
+    return `${parseFloat((numericBytes / Math.pow(k, safeIndex)).toFixed(dm))} ${sizes[safeIndex]}`;
   };
 
   const formatSize = (bytes) => {
@@ -210,13 +216,7 @@ function App() {
     }
   }, []);
 
-  useEffect(() => {
-    const token = localStorage.getItem('token');
-    // Only fetch storage stats if the user is actively logged in
-    if (token) {
-      fetchStorageStats();
-    }
-  }, []); // Runs once on mount
+// Storage stats fetched in coordinated batch below
 
 
   const handleResendOtp = async () => {
@@ -320,6 +320,9 @@ function App() {
   const abortControllerRef = useRef(null);
   const activeFolderIdRef = useRef(null);
   const lastFetchedFolderIdRef = useRef(undefined);
+  const filesInFlightRef = useRef(false);
+  const activeFetchingFolderRef = useRef(undefined);
+  const isRefreshingRef = useRef(false);
   const [isFilesLoading, setIsFilesLoading] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -421,22 +424,7 @@ function App() {
     }
   };
 
-  const confirmFolderDelete = async () => {
-    if (!folderToDelete) return;
-    setIsDeletingFolder(true);
-    try {
-      await axios.delete(`${API_BASE_URL}/api/folders/${folderToDelete._id}`, { headers: { Authorization: `Bearer ${token}` } });
-      setFolderToDelete(null);
-      addToast('success', 'Folder deleted successfully');
-      fetchFolders(currentFolderId);
-      fetchFiles();
-      fetchStorageStats();
-    } catch (err) {
-      addToast('error', 'Failed to delete folder');
-    } finally {
-      setIsDeletingFolder(false);
-    }
-  };
+// confirmFolderDelete replaced by handleConfirmPermanentDelete below
 
   const toggleFolderSelect = (folderId, e) => {
     e?.stopPropagation();
@@ -551,76 +539,11 @@ function App() {
     }
   };
 
-  const handleMoveConfirm = async (targetFolderId) => {
-    try {
-      setIsMoveLoading(true);
-      const items = itemsToMove.length > 0 ? itemsToMove : (Array.isArray(fileToMove) ? fileToMove : (fileToMove ? [fileToMove] : []));
-      if (!items || items.length === 0) return;
-
-      const destinationId = (!targetFolderId || targetFolderId === 'null' || targetFolderId === 'root') ? null : targetFolderId;
-
-      const authToken = token || localStorage.getItem('token') || sessionStorage.getItem('token');
-
-      // Single item move
-      if (items.length === 1) {
-        const item = items[0];
-        const isFolder = item.isFolder || item.type === 'folder' || item.parentId !== undefined || (!item.s3Key && !item.mimeType && !item.size);
-        const itemId = item._id || item.id;
-
-        if (isFolder) {
-          if (String(itemId) === String(destinationId)) {
-            addToast('error', 'Cannot move a folder into itself');
-            setIsMoveLoading(false);
-            return;
-          }
-          await axios.put(
-            `${API_BASE_URL}/api/folders/${itemId}/move`,
-            { parentId: destinationId, targetFolderId: destinationId },
-            { headers: { Authorization: `Bearer ${authToken}` } }
-          );
-        } else {
-          await axios.put(
-            `${API_BASE_URL}/api/files/${itemId}/move`,
-            { folderId: destinationId, targetFolderId: destinationId },
-            { headers: { Authorization: `Bearer ${authToken}` } }
-          );
-        }
-      } else {
-        // Multi-item batch move
-        const folderIdsToMove = [];
-        const fileIdsToMove = [];
-
-        items.forEach(item => {
-          if (!item) return;
-          const isF = item.isFolder || item.type === 'folder' || item.parentId !== undefined || (!item.s3Key && !item.mimeType && !item.size);
-          const id = String(item._id || item.id || item);
-          if (isF) folderIdsToMove.push(id);
-          else fileIdsToMove.push(id);
-        });
-
-        await axios.put(`${API_BASE_URL}/api/folders/move-batch`, {
-          folderIds: folderIdsToMove,
-          fileIds: fileIdsToMove,
-          targetFolderId: destinationId
-        }, { headers: { Authorization: `Bearer ${authToken}` } });
-      }
-
-      setShowMoveModal(false);
-      setItemsToMove([]);
-      setFileToMove(null);
-      clearSelection();
-      addToast('success', 'Item(s) moved successfully');
-      await fetchFiles(currentFolderId);
-      await fetchFolders(currentFolderId);
-    } catch (err) {
-      console.error('Move error:', err);
-      addToast('error', err.response?.data?.error || err.response?.data?.message || 'Failed to move item(s)');
-    } finally {
-      setIsMoveLoading(false);
-    }
-  };
-
   const fetchFolders = useCallback(async (targetFolderId) => {
+    const pathname = window.location.pathname;
+    if (pathname !== '/dashboard' && pathname !== '/dashboard/') {
+      return;
+    }
     try {
       const parentId = targetFolderId !== undefined ? (targetFolderId || null) : (searchParams.get('folder') || null);
       const url = parentId 
@@ -848,6 +771,18 @@ function App() {
     const targetId = folderId !== undefined
       ? (folderId || null)
       : (searchParams.get('folder') || null);
+
+    // ROUTE GUARD: Never fetch files if user is in Photos, Trash, or Settings
+    const currentPath = window.location.pathname;
+    if (currentPath !== '/dashboard' && currentPath !== '/dashboard/') {
+      return;
+    }
+
+    // DUPLICATE GUARD: Do not abort if the exact same folder is already fetching
+    if (filesInFlightRef.current && activeFetchingFolderRef.current === targetId) {
+      return;
+    }
+
     activeFolderIdRef.current = targetId;
 
     // 1. Abort any previous in-flight file requests
@@ -855,6 +790,9 @@ function App() {
       abortControllerRef.current.abort();
     }
     abortControllerRef.current = new AbortController();
+
+    filesInFlightRef.current = true;
+    activeFetchingFolderRef.current = targetId;
 
     try {
       setIsFilesLoading(true);
@@ -898,6 +836,7 @@ function App() {
       }
       console.error('Error fetching files:', err);
     } finally {
+      filesInFlightRef.current = false;
       // Only turn off skeleton if we are still on the requested folder
       if (activeFolderIdRef.current === targetId) {
         setIsFilesLoading(false);
@@ -922,6 +861,225 @@ function App() {
     }
   }, [fetchFiles, fetchFolders]);
 
+  const refreshCurrentView = useCallback(() => {
+    if (isRefreshingRef.current) return;
+    isRefreshingRef.current = true;
+
+    const activeId = currentFolderId || null;
+    fetchFolders(activeId);
+    fetchFiles(activeId);
+
+    setTimeout(() => {
+      isRefreshingRef.current = false;
+    }, 300);
+  }, [currentFolderId, fetchFolders, fetchFiles]);
+
+  // Helper to build Google Drive style move messages
+  const getMoveSuccessMessage = (items, destinationName) => {
+    const dest = destinationName || 'Home';
+    if (!items || items.length === 0) return `Moved to ${dest}`;
+    if (items.length === 1) {
+      const name = items[0].name || items[0].fileName || 'Item';
+      return `"${name}" moved to ${dest}`;
+    }
+    return `${items.length} items moved to ${dest}`;
+  };
+
+  // Universal CloudGuard Native Toast Formatter (Full-Width, Non-clamping, Safe Mobile View)
+  const showPillToast = ({
+    message,
+    actionText = null,
+    onAction = null,
+    duration = 6000,
+  }) => {
+    toast.custom(
+      (t) => (
+        <div
+          className="${
+            t.visible ? 'animate-enter' : 'animate-leave'
+          } pointer-events-auto flex items-center justify-between gap-2.5 sm:gap-3.5 bg-[#18181b]/95 text-zinc-200 px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-full shadow-2xl border border-zinc-800/90 backdrop-blur-md transition-all w-auto max-w-[92vw] sm:max-w-lg md:max-w-xl mx-auto z-[99999]"
+        >
+          {/* Status Dot */}
+          <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0 shadow-[0_0_8px_rgba(52,211,153,0.7)]" />
+
+          {/* Message Text: Full visibility with clean break-word handling for mobile */}
+          <span className="text-xs sm:text-sm font-medium text-zinc-200 leading-snug break-words line-clamp-2 sm:line-clamp-none flex-1">
+            {message}
+          </span>
+
+          {/* Optional Action (Undo) */}
+          {actionText && onAction && (
+            <button
+              onClick={() => {
+                toast.dismiss(t.id);
+                onAction();
+              }}
+              className="text-xs sm:text-sm font-semibold text-emerald-400 hover:text-emerald-300 underline underline-offset-2 shrink-0 cursor-pointer transition-colors px-1 py-0.5"
+            >
+              {actionText}
+            </button>
+          )}
+
+          {/* Dismiss Button */}
+          <button
+            onClick={() => toast.dismiss(t.id)}
+            className="text-zinc-500 hover:text-zinc-300 text-xs sm:text-sm shrink-0 leading-none cursor-pointer p-1"
+            aria-label="Close notification"
+          >
+            ✕
+          </button>
+        </div>
+      ),
+      {
+        duration,
+        position: 'bottom-center',
+      }
+    );
+  };
+
+  // Undo Move Function
+  const handleUndoMove = async (movedItems, sourceFolderId) => {
+    try {
+      const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+
+      const folderIds = movedItems
+        .filter((i) => i.type === 'folder' || i.isFolder || i.parentId !== undefined)
+        .map((i) => i._id || i.id || i);
+      const fileIds = movedItems
+        .filter((i) => i.type !== 'folder' && !i.isFolder && i.parentId === undefined)
+        .map((i) => i._id || i.id || i);
+
+      // 1. AWAIT completion of backend reverse move FIRST
+      await axios.post(
+        `${API_BASE_URL}/api/folders/move-batch`,
+        {
+          destinationId: sourceFolderId || null,
+          targetFolderId: sourceFolderId || null,
+          parentId: sourceFolderId || null,
+          folderIds,
+          fileIds,
+          items: movedItems,
+        },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      // 2. Clear selections & invalidate caching ref
+      setSelectedFolderIds([]);
+      setSelectedFileIds([]);
+      lastFetchedFolderIdRef.current = undefined;
+
+      // 3. Determine current directory from URL
+      const params = new URLSearchParams(window.location.search);
+      const activeFolder = params.get('folder') || null;
+
+      // 4. Synchronously flush files state to avoid lingering artifacts
+      setFiles([]);
+
+      // 5. Sequential atomic reload
+      await fetchFolders(activeFolder);
+      await fetchFiles(activeFolder);
+      fetchStorageStats();
+
+      showPillToast({ message: 'Move undone', duration: 3000 });
+    } catch (err) {
+      console.error('Failed to undo move:', err);
+      toast.error('Could not undo move');
+    }
+  };
+
+  const handleMoveConfirm = async (targetFolderId, customItems, destinationFolderObj) => {
+    try {
+      setIsMoveLoading(true);
+      const items = (customItems && customItems.length > 0)
+        ? customItems
+        : (itemsToMove.length > 0 ? itemsToMove : (Array.isArray(fileToMove) ? fileToMove : (fileToMove ? [fileToMove] : [])));
+      if (!items || items.length === 0) return;
+
+      const destinationId = (!targetFolderId || targetFolderId === 'null' || targetFolderId === 'root' || targetFolderId === 'undefined') ? null : targetFolderId;
+      const destinationName = destinationFolderObj?.name || (destinationId ? (moveFolders.find(f => String(f._id) === String(destinationId))?.name || 'Folder') : 'Home');
+      const sourceFolderId = currentFolderId || null;
+
+      const authToken = token || localStorage.getItem('token') || sessionStorage.getItem('token');
+
+      // Separate into folder and file IDs
+      const folderIds = [];
+      const fileIds = [];
+
+      items.forEach((item) => {
+        if (!item) return;
+        const isF = item.isFolder || item.type === 'folder' || item.parentId !== undefined || (!item.s3Key && !item.mimeType && !item.size);
+        const id = String(item._id || item.id || item);
+        if (isF) folderIds.push(id);
+        else fileIds.push(id);
+      });
+
+      // 1. Execute Move API call
+      if (items.length === 1) {
+        const item = items[0];
+        const isFolder = item.isFolder || item.type === 'folder' || item.parentId !== undefined || (!item.s3Key && !item.mimeType && !item.size);
+        const itemId = item._id || item.id;
+
+        if (isFolder) {
+          if (String(itemId) === String(destinationId)) {
+            addToast('error', 'Cannot move a folder into itself');
+            setIsMoveLoading(false);
+            return;
+          }
+          await axios.put(
+            `${API_BASE_URL}/api/folders/${itemId}/move`,
+            { parentId: destinationId, targetFolderId: destinationId, destinationId },
+            { headers: { Authorization: `Bearer ${authToken}` } }
+          );
+        } else {
+          await axios.put(
+            `${API_BASE_URL}/api/files/${itemId}/move`,
+            { folderId: destinationId, targetFolderId: destinationId, destinationId },
+            { headers: { Authorization: `Bearer ${authToken}` } }
+          );
+        }
+      } else {
+        const payload = {
+          destinationId,
+          targetFolderId: destinationId,
+          parentId: destinationId,
+          folderIds,
+          fileIds,
+          items,
+        };
+
+        await axios.post(`${API_BASE_URL}/api/folders/move-batch`, payload, {
+          headers: { Authorization: `Bearer ${authToken}` },
+        });
+      }
+
+      // 2. Close modal & clear selection FIRST to prevent double-render re-fetches
+      setShowMoveModal(false);
+      setItemsToMove([]);
+      setFileToMove(null);
+      clearSelection();
+
+      // 3. Trigger a single coordinated view refresh
+      refreshCurrentView();
+
+      // 4. Render Google Drive Toast with Undo in Native CloudGuard Pill Style
+      const toastMessage = getMoveSuccessMessage(items, destinationName);
+
+      showPillToast({
+        message: toastMessage,
+        actionText: 'Undo',
+        onAction: () => handleUndoMove(items, sourceFolderId),
+        duration: 6000,
+      });
+    } catch (err) {
+      console.error('Batch move error:', err);
+      addToast('error', err.response?.data?.error || err.response?.data?.message || 'Failed to move items');
+    } finally {
+      setIsMoveLoading(false);
+    }
+  };
+
+  const handleExecuteBatchMove = handleMoveConfirm;
+
   useEffect(() => {
     if (token) {
       axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
@@ -930,10 +1088,18 @@ function App() {
     }
   }, [token]);
 
-  // Stabilize navigation effect: ONLY depend on the search query parameter string
+  // Stabilize dashboard fetch effect
+  const isInitialMount = useRef(true);
+
   useEffect(() => {
     const token = localStorage.getItem('token') || sessionStorage.getItem('token');
-    if (!token) return; // Do not attempt requests if user is not logged in
+    if (!token) return;
+
+    // STRICT ROUTE GUARD: Never fetch dashboard files/folders if user is in Photos, Trash, or Settings
+    const currentPath = window.location.pathname;
+    if (currentPath !== '/dashboard' && currentPath !== '/dashboard/') {
+      return;
+    }
 
     const params = new URLSearchParams(window.location.search);
     const activeFolderId = params.get('folder') || null;
@@ -944,90 +1110,149 @@ function App() {
     }
     lastFetchedFolderIdRef.current = activeFolderId;
 
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      fetchStorageStats();
+    }
+
     fetchFolders(activeFolderId);
     fetchFiles(activeFolderId);
-  }, [window.location.search]);
+  }, [location.pathname, location.search, window.location.pathname, window.location.search]);
 
   // Separate trigger for view mode or search query changes
   useEffect(() => {
     const token = localStorage.getItem('token') || sessionStorage.getItem('token');
     if (!token) return;
+
+    const currentPath = window.location.pathname;
+    if (currentPath !== '/dashboard' && currentPath !== '/dashboard/') {
+      return;
+    }
+
     const params = new URLSearchParams(window.location.search);
     const activeFolderId = params.get('folder') || null;
     fetchFiles(activeFolderId);
-  }, [viewMode, searchQuery]);
+  }, [viewMode, searchQuery, location.pathname]);
 
   const toggleSort = () => {
     const newOrder = sortOrder === 'newest' ? 'oldest' : 'newest';
     setSortOrder(newOrder);
   };
 
-  const confirmDelete = async () => {
-    if (!fileToDelete) return;
-    setIsDeleting(true);
+  // Dynamic delete success message helper
+  const getDeleteSuccessMessage = (items) => {
+    if (!items || items.length === 0) return 'Permanently deleted item';
+    if (items.length === 1) {
+      const name = items[0].name || items[0].fileName || 'Item';
+      return `Permanently deleted "${name}"`;
+    }
+    return `Permanently deleted ${items.length} items`;
+  };
+
+  // Undo Delete Handler (Atomic State Update)
+  const handleUndoDelete = async (deletedItems) => {
     try {
-      const deleteId = fileToDelete._id || fileToDelete.diskName;
-      const response = await axios.delete(`${API_BASE_URL}/api/files/${encodeURIComponent(deleteId)}`);
-      if (response.status === 200) {
-        setFiles(prev => prev.filter(f => f._id !== fileToDelete._id && f.diskName !== fileToDelete.diskName));
-        setSelectedFiles(prev => prev.filter(id => id !== fileToDelete._id));
-        invalidatePhotosCache();
-        await fetchStorageStats();
-        setFileToDelete(null);
-        addToast('success', 'File deleted successfully.');
-      }
-    } catch (error) {
-      if (error.response && error.response.status === 401) {
-        localStorage.clear();
-        sessionStorage.clear();
-        window.location.href = '/';
-        return;
-      }
-      console.error('Error deleting file:', error);
-      addToast('error', 'Error deleting file.');
-    } finally {
-      setIsDeleting(false);
+      const authToken = token || localStorage.getItem('token') || sessionStorage.getItem('token');
+      const folderIds = deletedItems.filter(i => i.isFolder || i.type === 'folder' || i.parentId !== undefined).map(i => String(i._id || i.id || i));
+      const fileIds = deletedItems.filter(i => !i.isFolder && i.type !== 'folder' && i.parentId === undefined).map(i => String(i._id || i.id || i));
+
+      // 1. AWAIT completion of backend reverse restore FIRST
+      await axios.post(
+        `${API_BASE_URL}/api/files/restore-batch`,
+        { fileIds, folderIds },
+        { headers: { Authorization: `Bearer ${authToken}` } }
+      );
+
+      // 2. Clear selections & invalidate caching ref
+      setSelectedFolderIds([]);
+      setSelectedFileIds([]);
+      lastFetchedFolderIdRef.current = undefined;
+
+      // 3. Determine current directory from URL
+      const params = new URLSearchParams(window.location.search);
+      const activeFolder = params.get('folder') || null;
+
+      // 4. Synchronously flush files state to avoid lingering artifacts
+      setFiles([]);
+
+      // 5. Sequential atomic reload
+      await fetchFolders(activeFolder);
+      await fetchFiles(activeFolder);
+      fetchStorageStats();
+
+      showPillToast({ message: 'Deletion undone', duration: 3000 });
+    } catch (err) {
+      console.error('Failed to undo delete:', err);
+      toast.error('Could not undo deletion');
     }
   };
 
-  const handleBulkDelete = async () => {
-    if (selectedFileIds.length === 0 && selectedFolderIds.length === 0) return;
-    setIsBulkDeleting(true);
+  // Confirm Permanent Delete Execution
+  const handleConfirmPermanentDelete = async (customItems) => {
+    let itemsToPurge = [];
+    if (customItems && Array.isArray(customItems) && customItems.length > 0) {
+      itemsToPurge = customItems;
+    } else if (fileToDelete) {
+      itemsToPurge = [fileToDelete];
+    } else if (folderToDelete) {
+      itemsToPurge = [{ ...folderToDelete, isFolder: true }];
+    } else if (showBulkDeleteModal) {
+      const selectedFoldersList = folders
+        .filter(f => selectedFolderIds.includes(String(f._id)))
+        .map(f => ({ ...f, isFolder: true }));
+      const selectedFilesList = files
+        .filter(f => selectedFileIds.includes(String(f._id)));
+      itemsToPurge = [...selectedFoldersList, ...selectedFilesList];
+    }
+
+    if (itemsToPurge.length === 0) return;
+
+    // Optimistically close modals
+    setFileToDelete(null);
+    setFolderToDelete(null);
+    setShowBulkDeleteModal(false);
+
     try {
-      if (selectedFileIds.length > 0) {
-        await axios.post(`${API_BASE_URL}/api/files/bulk-delete`, { fileIds: selectedFileIds }, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-      }
-      if (selectedFolderIds.length > 0) {
-        await Promise.all(
-          selectedFolderIds.map(fId =>
-            axios.delete(`${API_BASE_URL}/api/folders/${fId}`, {
-              headers: { Authorization: `Bearer ${token}` }
-            })
-          )
-        );
-      }
-      addToast('success', 'Selected item(s) deleted successfully.');
-      invalidatePhotosCache();
+      const authToken = token || localStorage.getItem('token') || sessionStorage.getItem('token');
+      const folderIds = itemsToPurge.filter(i => i.isFolder || i.type === 'folder' || i.parentId !== undefined).map(i => String(i._id || i.id || i));
+      const fileIds = itemsToPurge.filter(i => !i.isFolder && i.type !== 'folder' && i.parentId === undefined).map(i => String(i._id || i.id || i));
+
+      // 1. Execute batch delete
+      await axios.post(
+        `${API_BASE_URL}/api/files/delete-batch`,
+        { fileIds, folderIds },
+        { headers: { Authorization: `Bearer ${authToken}` } }
+      );
+
+      // 2. Clear selections & refresh view
       clearSelection();
-      setShowBulkDeleteModal(false);
-      await fetchFiles();
-      await fetchFolders(currentFolderId);
-      await fetchStorageStats();
-    } catch (error) {
-      if (error.response && error.response.status === 401) {
-        localStorage.clear();
-        sessionStorage.clear();
-        window.location.href = '/';
-        return;
-      }
-      console.error('Error bulk deleting:', error);
-      addToast('error', error.response?.data?.error || 'Error deleting selected item(s).');
-    } finally {
-      setIsBulkDeleting(false);
+      invalidatePhotosCache();
+      const params = new URLSearchParams(window.location.search);
+      const activeFolder = params.get('folder') || currentFolderId || null;
+      fetchFolders(activeFolder);
+      fetchFiles(activeFolder);
+      fetchStorageStats();
+
+      // 3. Render Native CloudGuard Pill Toast with Undo
+      const toastMessage = itemsToPurge.length === 1
+        ? `Permanently deleted "${itemsToPurge[0].name || itemsToPurge[0].fileName || 'Item'}"`
+        : `Permanently deleted ${itemsToPurge.length} items`;
+
+      showPillToast({
+        message: toastMessage,
+        actionText: 'Undo',
+        onAction: () => handleUndoDelete(itemsToPurge),
+        duration: 7000,
+      });
+    } catch (err) {
+      console.error('Delete execution error:', err);
+      toast.error('Failed to delete item');
     }
   };
+
+  const confirmFolderDelete = () => handleConfirmPermanentDelete(folderToDelete ? [{ ...folderToDelete, isFolder: true }] : null);
+  const confirmDelete = () => handleConfirmPermanentDelete(fileToDelete ? [fileToDelete] : null);
+  const handleBulkDelete = () => handleConfirmPermanentDelete();
 
   const addToast = (type, message) => {
     toast.show(message, type);
@@ -2776,9 +3001,10 @@ function App() {
         }
         description={
           showBulkDeleteModal
-            ? `Are you sure you want to permanently delete the ${selectedFolderIds.length + selectedFileIds.length} selected item${selectedFolderIds.length + selectedFileIds.length === 1 ? '' : 's'}?`
-            : `Are you sure you want to permanently delete "${fileToDelete?.name}"? It will be moved to Trash.`
+            ? `Are you sure you want to permanently delete the ${selectedFolderIds.length + selectedFileIds.length} selected item${selectedFolderIds.length + selectedFileIds.length === 1 ? '' : 's'}? This action will immediately remove the data from your storage.`
+            : `Are you sure you want to permanently delete "${fileToDelete?.name}"? This action will immediately remove the data from your storage.`
         }
+        confirmText="Permanently delete"
         count={showBulkDeleteModal ? (selectedFolderIds.length + selectedFileIds.length) : 1}
         isDeleting={isDeleting || isBulkDeleting}
       />

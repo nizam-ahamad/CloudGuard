@@ -164,9 +164,9 @@ function MoveModalContent({
   const handleExecuteMove = () => {
     if (isMoveDisabled) return;
     if (onMove) {
-      onMove(activeFolderId, itemsToMove);
+      onMove(activeFolderId, itemsToMove, currentFolder);
     } else if (onSuccess) {
-      onSuccess(activeFolderId, itemsToMove);
+      onSuccess(activeFolderId, itemsToMove, currentFolder);
     }
   };
 
@@ -248,7 +248,7 @@ function MoveModalContent({
         </div>
 
         {/* Folder List Area */}
-        <div className="min-h-[220px] max-h-[300px] overflow-y-auto divide-y divide-neutral-800/50 bg-[#121212]">
+        <div className="min-h-[220px] max-h-[60vh] overflow-y-auto overscroll-contain divide-y divide-neutral-800/50 bg-[#121212]">
           {currentSubfolders.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-[220px] text-center p-6 text-neutral-500">
               <FolderOpen size={36} className="text-neutral-600 mb-2 stroke-[1.5]" />

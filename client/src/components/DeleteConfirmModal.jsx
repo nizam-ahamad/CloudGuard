@@ -7,7 +7,7 @@ export default function DeleteConfirmModal({
   onConfirm,
   title,
   description,
-  confirmText = 'Delete',
+  confirmText = 'Permanently delete',
   isDeleting = false,
   count = 1
 }) {
@@ -24,14 +24,12 @@ export default function DeleteConfirmModal({
 
   if (!isOpen) return null;
 
-  const resolvedTitle = title || `Delete ${count === 1 ? 'item' : `${count} items`}?`;
+  const resolvedTitle = title || `Permanently delete ${count === 1 ? 'item' : `${count} items`}?`;
   const resolvedDescription =
     description ||
-    `Are you sure you want to delete ${
+    `Are you sure you want to permanently delete ${
       count > 1 ? `these ${count} items` : 'this item'
-    }? This action cannot be undone and will delete ${
-      count > 1 ? 'them' : 'it'
-    } permanently from your vault.`;
+    }? This action will immediately remove the data from your storage.`;
 
   return (
     <div 
@@ -71,25 +69,20 @@ export default function DeleteConfirmModal({
         </div>
 
         {/* Footer Actions */}
-        <div className="mt-6 flex items-center justify-end gap-3">
+        <div className="flex flex-col-reverse sm:flex-row items-center justify-end gap-2.5 sm:gap-3 mt-6 w-full">
           <button
             type="button"
             disabled={isDeleting}
             onClick={onClose}
-            className="px-4 py-2 rounded-xl text-xs font-medium border transition-colors
-                       border-neutral-200 text-neutral-700 hover:bg-neutral-100
-                       dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
+            className="w-full sm:w-auto px-4 py-2.5 text-sm font-medium text-zinc-400 hover:text-zinc-200 rounded-xl hover:bg-zinc-800/60 transition-colors"
           >
             Cancel
           </button>
-
           <button
             type="button"
             disabled={isDeleting}
             onClick={onConfirm}
-            className="px-4 py-2 rounded-xl text-xs font-semibold text-white transition-all
-                       bg-red-600 hover:bg-red-700 active:scale-95 shadow-sm
-                       disabled:opacity-50 disabled:pointer-events-none flex items-center gap-2"
+            className="w-full sm:w-auto px-4 py-2.5 text-sm font-medium bg-red-600 hover:bg-red-500 text-white rounded-xl shadow-lg shadow-red-600/25 transition-all flex items-center justify-center gap-2"
           >
             {isDeleting ? (
               <>

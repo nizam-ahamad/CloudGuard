@@ -2,20 +2,26 @@ import React, { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import { X, Folder, Calendar, HardDrive, Layers, Loader2 } from 'lucide-react';
 import { API_BASE_URL } from '../config';
+import { formatBytes } from '../utils/formatters';
 
 /**
- * Format bytes to readable string (B, KB, MB, GB, TB)
+ * Helper to display folder contents cleanly
  */
-export const formatBytes = (bytes) => {
-  if (bytes === '--' || bytes === undefined || bytes === null) return '0 B';
-  const num = Number(bytes);
-  if (isNaN(num) || num <= 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.min(Math.floor(Math.log(num) / Math.log(k)), sizes.length - 1);
-  if (i === 0) return `${num} B`;
-  return `${(num / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
+export const formatFolderContents = (files = 0, folders = 0) => {
+  if (files === 0 && folders === 0) return 'Empty folder';
+  
+  const parts = [];
+  if (files > 0) {
+    parts.push(`${files} ${files === 1 ? 'file' : 'files'}`);
+  }
+  if (folders > 0) {
+    parts.push(`${folders} ${folders === 1 ? 'folder' : 'folders'}`);
+  }
+  return parts.join(', ');
 };
+
+// Re-export shared robust formatBytes
+export { formatBytes } from "../utils/formatters";
 
 /**
  * Recursive helper to collect all descendant folder IDs locally
@@ -80,20 +86,28 @@ export default function FolderDetailsModal({
     });
   }, [files, targetId, descendantFolderIds]);
 
-  const statsData = apiStats || {};
+  const statsData = apiStats?.folder || apiStats?.data || apiStats || {};
 
   // Derive final count and bytes: use authoritative API stats if present, else strictly scoped local files
   const finalCount = statsData.totalFiles !== undefined 
     ? statsData.totalFiles 
     : (statsData.fileCount !== undefined ? statsData.fileCount : scopedLocalFiles.length);
 
-  const finalBytes = statsData.totalBytes !== undefined 
-    ? statsData.totalBytes 
-    : (statsData.totalSizeBytes !== undefined ? statsData.totalSizeBytes : scopedLocalFiles.reduce((acc, f) => acc + (Number(f.size) || 0), 0));
+  const subfolderCount = statsData.totalFolders !== undefined
+    ? statsData.totalFolders
+    : (statsData.folderCount !== undefined
+      ? statsData.folderCount
+      : (statsData.subfolderCount !== undefined 
+        ? statsData.subfolderCount 
+        : (statsData.totalSubfolders !== undefined ? statsData.totalSubfolders : descendantFolderIds.length)));
 
-  const subfolderCount = statsData.subfolderCount !== undefined 
-    ? statsData.subfolderCount 
-    : (statsData.totalSubfolders !== undefined ? statsData.totalSubfolders : descendantFolderIds.length);
+  const finalBytes = statsData.totalSize !== undefined
+    ? statsData.totalSize
+    : (statsData.size !== undefined
+      ? statsData.size
+      : (statsData.totalBytes !== undefined 
+        ? statsData.totalBytes 
+        : (statsData.totalSizeBytes !== undefined ? statsData.totalSizeBytes : scopedLocalFiles.reduce((acc, f) => acc + (Number(f.size) || 0), 0))));
 
   // Authoritatively fetch stats via API
   useEffect(() => {
@@ -113,8 +127,8 @@ export default function FolderDetailsModal({
         });
 
         if (isMounted) {
-          const data = res.data?.data || res.data || {};
-          if (data.totalFiles !== undefined || data.fileCount !== undefined || data.totalBytes !== undefined) {
+          const data = res.data?.folder || res.data?.data || res.data || {};
+          if (data.totalFiles !== undefined || data.fileCount !== undefined || data.totalBytes !== undefined || data.totalSize !== undefined) {
             setApiStats(data);
           }
         }
@@ -127,8 +141,8 @@ export default function FolderDetailsModal({
               headers: authToken ? { Authorization: `Bearer ${authToken}` } : {}
             });
             if (isMounted) {
-              const data = fallbackRes.data?.data || fallbackRes.data || {};
-              if (data.totalFiles !== undefined || data.fileCount !== undefined || data.totalBytes !== undefined) {
+              const data = fallbackRes.data?.folder || fallbackRes.data?.data || fallbackRes.data || {};
+              if (data.totalFiles !== undefined || data.fileCount !== undefined || data.totalBytes !== undefined || data.totalSize !== undefined) {
                 setApiStats(data);
               }
             }
@@ -217,33 +231,27 @@ export default function FolderDetailsModal({
             <>
               {/* Contains */}
               <div>
-                <span className="text-xs font-mono uppercase tracking-wider text-neutral-500 block mb-1">
+                <p className="text-xs uppercase tracking-wider text-zinc-500 font-semibold mb-1">
                   Contains
-                </span>
+                </p>
                 <div className="text-neutral-200 font-medium flex items-center gap-2">
                   <Layers size={14} className="text-neutral-400 flex-shrink-0" />
-                  <p>
-                    {subfolderCount > 0 && finalCount > 0 ? (
-                      `${finalCount} ${finalCount === 1 ? 'file' : 'files'}, ${subfolderCount} ${subfolderCount === 1 ? 'folder' : 'folders'}`
-                    ) : subfolderCount > 0 ? (
-                      `${subfolderCount} ${subfolderCount === 1 ? 'folder' : 'folders'}`
-                    ) : finalCount > 0 ? (
-                      `${finalCount} ${finalCount === 1 ? 'file' : 'files'}`
-                    ) : (
-                      'Empty folder'
-                    )}
+                  <p className="text-sm font-medium text-zinc-200">
+                    {formatFolderContents(finalCount, subfolderCount)}
                   </p>
                 </div>
               </div>
 
               {/* Size */}
               <div>
-                <span className="text-xs font-mono uppercase tracking-wider text-neutral-500 block mb-1">
+                <p className="text-xs uppercase tracking-wider text-zinc-500 font-semibold mb-1">
                   Size
-                </span>
+                </p>
                 <div className="text-neutral-200 font-medium flex items-center gap-2">
                   <HardDrive size={14} className="text-neutral-400 flex-shrink-0" />
-                  <p>{formatBytes(finalBytes)}</p>
+                  <p className="text-sm font-medium text-zinc-200">
+                    {formatBytes(finalBytes)}
+                  </p>
                 </div>
               </div>
             </>

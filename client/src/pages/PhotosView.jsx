@@ -1,807 +1,900 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import axios from 'axios';
-import { 
-  Check, 
-  Trash2, 
-  Download, 
-  X, 
-  Play, 
-  Image as ImageIcon, 
-  ChevronLeft, 
-  ChevronRight, 
-  AlertCircle, 
-  Loader2,
+import {
   LayoutGrid,
   List,
-  Minus,
-  Plus,
-  Film
+  Grid3X3,
+  Grid2X2,
+  ChevronLeft,
+  ChevronRight,
+  Play,
+  Image as ImageIcon,
+  Download,
+  Check,
+  X,
 } from 'lucide-react';
-import MediaCarouselModal from '../components/MediaCarouselModal';
-import DeleteConfirmModal from '../components/DeleteConfirmModal';
-import { API_BASE_URL } from '../config';
-import { 
-  downloadSingleFileWithProgress, 
-  downloadBatchZipWithProgress 
-} from '../utils/downloadHelper';
 import { useToast } from '../context/ToastContext';
 import { useDownload } from '../context/DownloadContext';
+import CentralizedFloatingBar from '../components/FloatingBar';
 
-const INITIAL_BATCH = 40;
-const BATCH_SIZE = 40;
+// --------------------------------------------------------------------------
+// MODULE-LEVEL CACHES: Persist across tab switching to prevent network refetching
+// --------------------------------------------------------------------------
+let globalPhotosCache = null;
+let lastPhotosFetchTimestamp = 0;
+const CACHE_TTL_MS = 60 * 1000; // 60 seconds fresh cache
+const globalThumbnailCache = new Map();
 
-// --- Module-Level Session Cache (Lives across component unmounts) ---
-let photosSessionCache = null;
-
-// Exported standalone fetch helper
-export const fetchPhotos = async () => {
-  const token = localStorage.getItem('token');
-  if (!token) return [];
-
-  try {
-    const res = await axios.get(`${API_BASE_URL}/api/files/photos`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    return Array.isArray(res.data) ? res.data : (res.data?.photos || res.data?.files || []);
-  } catch (err) {
-    console.error('Error loading photos:', err);
-    return [];
-  }
-};
-
-// Exported cache helper
-export const updatePhotosCacheWithNewFile = (file) => {
-  if (!file) return;
-  const isMedia =
-    file.mimeType?.startsWith('image/') ||
-    file.mimeType?.startsWith('video/') ||
-    file.mimetype?.startsWith('image/') ||
-    file.mimetype?.startsWith('video/') ||
-    /\.(jpg|jpeg|png|webp|gif|svg|mp4|webm|mov|mkv)$/i.test(file.name || file.originalName || '');
-
-  if (isMedia && photosSessionCache) {
-    const ext = (file.name || file.originalName || '').split('.').pop().toLowerCase();
-    const isVideo = (file.mimeType || file.mimetype || '').startsWith('video') || ['mp4', 'webm', 'mov', 'mkv'].includes(ext);
-    const mimeType = file.mimeType || file.mimetype || (isVideo ? `video/${ext === 'mov' ? 'quicktime' : ext}` : `image/${ext === 'jpg' ? 'jpeg' : ext}`);
-    const normalizedFile = {
-      ...file,
-      _id: String(file._id || file.id),
-      name: file.name || file.originalName,
-      mimeType: mimeType,
-      s3Url: file.s3Url || file.url || '',
-      url: file.url || file.s3Url || '',
-      createdAt: file.createdAt || file.uploadedAt || new Date().toISOString()
-    };
-    // Prepend to module cache so it's ready when the tab opens
-    photosSessionCache = [normalizedFile, ...photosSessionCache.filter((item) => String(item._id) !== String(normalizedFile._id))];
-  }
-};
-
-export const removePhotosFromCache = (fileIds) => {
-  if (!fileIds) return;
-  const idsToRemove = Array.isArray(fileIds) ? fileIds.map(String) : [String(fileIds)];
-  if (photosSessionCache) {
-    photosSessionCache = photosSessionCache.filter((item) => !idsToRemove.includes(String(item._id)));
-  }
-};
-
+// Compatibility cache exports so other components importing them don't break
 export const invalidatePhotosCache = () => {
-  photosSessionCache = null;
+  globalPhotosCache = null;
+  lastPhotosFetchTimestamp = 0;
+};
+export const fetchPhotos = async () => globalPhotosCache || [];
+export const updatePhotosCacheWithNewFile = (newFile) => {
+  if (globalPhotosCache && newFile) {
+    globalPhotosCache = [newFile, ...globalPhotosCache];
+  }
+};
+export const removePhotosFromCache = (fileId) => {
+  if (globalPhotosCache && fileId) {
+    globalPhotosCache = globalPhotosCache.filter((item) => item._id !== fileId);
+  }
 };
 
-// Global event listeners to keep session cache up to date even when PhotosView is unmounted
-if (typeof window !== 'undefined') {
-  const handleGlobalUpload = (event) => {
-    updatePhotosCacheWithNewFile(event.detail);
-  };
-  window.addEventListener('cloudguard:file-uploaded', handleGlobalUpload);
-  window.addEventListener('cloudguard:media-uploaded', handleGlobalUpload);
-  window.addEventListener('cloudguard:file-deleted', (event) => {
-    removePhotosFromCache(event.detail);
+// Helper to format file sizes
+const formatBytes = (bytes) => {
+  const n = Number(bytes);
+  if (!n || n <= 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(n) / Math.log(k));
+  const safeI = Math.min(Math.max(0, i), sizes.length - 1);
+  return `${(n / Math.pow(k, safeI)).toFixed(1)} ${sizes[safeI]}`;
+};
+
+// Date group header formatter (Google Photos style)
+const getDateHeader = (dateString) => {
+  if (!dateString) return 'Earlier';
+  const itemDate = new Date(dateString);
+  if (isNaN(itemDate.getTime())) return 'Earlier';
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+
+  if (itemDate.toDateString() === today.toDateString()) return 'Today';
+  if (itemDate.toDateString() === yesterday.toDateString()) return 'Yesterday';
+
+  return itemDate.toLocaleDateString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: itemDate.getFullYear() !== today.getFullYear() ? 'numeric' : undefined,
   });
+};
+
+// Helper to normalize media items for DownloadContext
+const prepareDownloadPayload = (item) => ({
+  ...item,
+  _id: item._id,
+  id: item._id,
+  name: item.originalName || item.name,
+  originalName: item.originalName || item.name,
+  url: item.url,
+  downloadUrl: item.url,
+  accessUrl: item.url,
+  s3Url: item.url,
+  size: item.size || 0,
+  mimeType: item.mimeType,
+  s3Key: item.s3Key,
+});
+
+// Lightweight Video Thumbnail (Canvas Snapshot - NO active <video> tag in DOM)
+function LightweightVideoThumbnail({ url, fileId, alt, className }) {
+  const [snapshotSrc, setSnapshotSrc] = useState(() => globalThumbnailCache.get(fileId || url) || null);
+
+  useEffect(() => {
+    const key = fileId || url;
+    if (snapshotSrc || !url) return;
+
+    if (globalThumbnailCache.has(key)) {
+      setSnapshotSrc(globalThumbnailCache.get(key));
+      return;
+    }
+
+    let isDestroyed = false;
+    const tempVideo = document.createElement('video');
+    tempVideo.src = `${url}#t=1.0`;
+    tempVideo.crossOrigin = 'anonymous';
+    tempVideo.muted = true;
+    tempVideo.playsInline = true;
+    tempVideo.preload = 'metadata';
+
+    const handleSeeked = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        // 480px width maintains crisp detail on mobile and desktop
+        canvas.width = 480;
+        canvas.height = 270;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(tempVideo, 0, 0, canvas.width, canvas.height);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+        globalThumbnailCache.set(key, dataUrl);
+        if (!isDestroyed) setSnapshotSrc(dataUrl);
+      } catch (err) {
+        // Fallback: silently ignore if canvas is cross-origin tainted
+      } finally {
+        tempVideo.src = '';
+        tempVideo.remove();
+      }
+    };
+
+    tempVideo.addEventListener('loadeddata', () => {
+      tempVideo.currentTime = 1.0;
+    }, { once: true });
+
+    tempVideo.addEventListener('seeked', handleSeeked, { once: true });
+    tempVideo.addEventListener('error', () => tempVideo.remove(), { once: true });
+
+    return () => {
+      isDestroyed = true;
+      tempVideo.src = '';
+      tempVideo.remove();
+    };
+  }, [url, fileId, snapshotSrc]);
+
+  if (snapshotSrc) {
+    return (
+      <img
+        src={snapshotSrc}
+        alt={alt}
+        loading="lazy"
+        decoding="async"
+        className={className}
+      />
+    );
+  }
+
+  // Pure CSS placeholder until frame captures (zero DOM video streaming)
+  return (
+    <div className={`flex flex-col items-center justify-center bg-zinc-950 text-zinc-600 ${className}`}>
+      <Play className="w-6 h-6 text-zinc-500 fill-zinc-500/20" />
+    </div>
+  );
 }
 
-const gridClassMap = {
-  sm: 'grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2.5',
-  md: 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3.5', // Default
-  lg: 'grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5',
-};
-
-const aspectMap = {
-  sm: 'aspect-square',
-  md: 'aspect-[4/3]',
-  lg: 'aspect-[16/10]',
-};
-
-const formatBytes = (bytes, decimals = 1) => {
-  if (!bytes || bytes === 0) return '0 B';
-  const k = 1024;
-  const dm = decimals < 0 ? 0 : decimals;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
-};
-
 export default function PhotosView({ token: propToken }) {
-  // Initialize state synchronously from session cache (No flash, no spinner if cached)
-  const [photos, setPhotos] = useState(() => photosSessionCache || []);
-  const [loading, setLoading] = useState(() => !photosSessionCache);
-  const [error, setError] = useState(null);
-  const [selectedCarouselIndex, setSelectedCarouselIndex] = useState(null);
-  const [selectedIds, setSelectedIds] = useState([]);
-  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
-  const [isDownloading, setIsDownloading] = useState(false);
-  const [downloadProgress, setDownloadProgress] = useState({ percent: 0, text: '' });
-  const abortDownloadRef = useRef(null);
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [visibleCount, setVisibleCount] = useState(INITIAL_BATCH);
-  const observerTarget = useRef(null);
   const toast = useToast();
-  const { startDownload } = useDownload();
+  const { startDownload, activeDownload } = useDownload();
+  const isDownloading = Boolean(activeDownload);
 
+  // Initialize instantly from cache if available
+  const [mediaList, setMediaList] = useState(() => globalPhotosCache || []);
+  const [loading, setLoading] = useState(() => !globalPhotosCache);
+  const [previewIndex, setPreviewIndex] = useState(null);
+
+  // Multi-select state
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+
+  // Layout view modes
   const [viewMode, setViewMode] = useState(() => {
-    return localStorage.getItem('cg_photos_view_mode') || 'grid'; // 'grid' | 'list'
+    try {
+      return localStorage.getItem('photos_view_mode') || 'grid';
+    } catch (e) {
+      return 'grid';
+    }
   });
 
   const [gridSize, setGridSize] = useState(() => {
-    return localStorage.getItem('cg_photos_grid_size') || 'md'; // 'sm' | 'md' | 'lg'
+    try {
+      return localStorage.getItem('photos_grid_size') || 'medium';
+    } catch (e) {
+      return 'medium';
+    }
   });
 
-  const handleViewModeChange = (mode) => {
-    setViewMode(mode);
-    localStorage.setItem('cg_photos_view_mode', mode);
-  };
+  // Mobile swipe tracking
+  const touchStartX = useRef(0);
+  const touchEndX = useRef(0);
 
-  const handleGridSizeChange = (size) => {
-    setGridSize(size);
-    localStorage.setItem('cg_photos_grid_size', size);
-  };
-
-  // Cycle through sizes: sm -> md -> lg
-  const cycleGridSize = (direction) => {
-    const sizes = ['sm', 'md', 'lg'];
-    const currentIndex = sizes.indexOf(gridSize);
-    if (direction === 'increase' && currentIndex < sizes.length - 1) {
-      handleGridSizeChange(sizes[currentIndex + 1]);
-    } else if (direction === 'decrease' && currentIndex > 0) {
-      handleGridSizeChange(sizes[currentIndex - 1]);
+  // Native CloudGuard Pill Toast
+  const showPillToast = useCallback(({ message, actionText = null, onAction = null, duration = 6000 }) => {
+    if (!toast?.custom) {
+      toast?.success?.(message);
+      return;
     }
-  };
+    toast.custom(
+      (t) => (
+        <div
+          className={`${
+            t.visible ? 'animate-enter' : 'animate-leave'
+          } pointer-events-auto flex items-center justify-between gap-3 bg-zinc-900/95 dark:bg-[#18181b]/95 text-zinc-100 px-4 py-2.5 rounded-full shadow-2xl border border-zinc-700/80 dark:border-zinc-800/90 backdrop-blur-md transition-all w-auto max-w-[92vw] sm:max-w-lg mx-auto z-[99999]`}
+        >
+          <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0 shadow-[0_0_8px_rgba(52,211,153,0.7)]" />
+          <span className="text-xs sm:text-sm font-medium leading-snug break-words line-clamp-2 sm:line-clamp-none flex-1">
+            {message}
+          </span>
+          {actionText && onAction && (
+            <button
+              type="button"
+              onClick={() => {
+                if (t.dismiss) t.dismiss();
+                else if (toast.dismiss) toast.dismiss(t.id);
+                onAction();
+              }}
+              className="text-xs sm:text-sm font-semibold text-emerald-400 hover:text-emerald-300 underline underline-offset-2 shrink-0 cursor-pointer transition-colors px-1 py-0.5"
+            >
+              {actionText}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              if (t.dismiss) t.dismiss();
+              else if (toast.dismiss) toast.dismiss(t.id);
+            }}
+            className="text-zinc-400 hover:text-zinc-200 text-xs sm:text-sm shrink-0 leading-none cursor-pointer p-1"
+          >
+            ✕
+          </button>
+        </div>
+      ),
+      { duration, position: 'bottom-center' }
+    );
+  }, [toast]);
 
-  const token = propToken || localStorage.getItem('token') || sessionStorage.getItem('token');
-  const isSelectionActive = Array.isArray(selectedIds) && selectedIds.length > 0;
-  const isAllSelected = photos.length > 0 && selectedIds.length === photos.length;
-
-  const handleToggleSelectAll = () => {
-    if (isAllSelected) {
-      setSelectedIds([]);
-    } else {
-      setSelectedIds(photos.map(p => p._id));
-    }
-  };
-
-  // SWR: Stale-While-Revalidate
-  const loadPhotos = useCallback(async (isInitial = false) => {
-    // 1. If memory cache exists, render it immediately without waiting
-    if (photosSessionCache) {
-      setPhotos(photosSessionCache);
-      setLoading(false);
-    } else if (isInitial) {
-      setLoading(true);
-    }
-
-    if (!token) {
+  const fetchMedia = useCallback(async (force = false) => {
+    const now = Date.now();
+    // Do NOT make any network call if cache is under 60 seconds old
+    if (!force && globalPhotosCache && (now - lastPhotosFetchTimestamp < CACHE_TTL_MS)) {
+      setMediaList(globalPhotosCache);
       setLoading(false);
       return;
     }
 
-    // 2. Silently revalidate with backend in background
+    if (!globalPhotosCache) {
+      setLoading(true);
+    }
+
     try {
-      const res = await axios.get(`${API_BASE_URL}/api/files/photos`, {
-        headers: { Authorization: `Bearer ${token}` }
+      const token = propToken || (typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null);
+      const res = await axios.get('/api/photos', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
-      const freshData = Array.isArray(res.data) ? res.data : (res.data?.photos || res.data?.files || []);
 
-      // Compare length or IDs to prevent unnecessary re-renders
-      const hasChanged =
-        !photosSessionCache ||
-        photosSessionCache.length !== freshData.length ||
-        freshData.some((f, i) => f._id !== photosSessionCache[i]?._id);
-
-      if (hasChanged) {
-        photosSessionCache = freshData;
-        setPhotos(freshData);
-      }
+      const items = res.data.photos || (Array.isArray(res.data) ? res.data : []);
+      globalPhotosCache = items;
+      lastPhotosFetchTimestamp = Date.now();
+      setMediaList(items);
     } catch (err) {
-      console.error('Background sync failed:', err);
-      if (!photosSessionCache || photosSessionCache.length === 0) {
-        setError(err.response?.data?.message || 'Failed to load media assets');
-      }
+      console.error('Failed to load photos:', err);
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [propToken]);
 
   useEffect(() => {
-    loadPhotos(true);
-  }, [loadPhotos]);
+    fetchMedia();
+  }, [fetchMedia]);
 
-  // 2. Listen for Live Uploads from Anywhere in the App
-  useEffect(() => {
-    const handleMediaUploaded = (event) => {
-      const newFile = event.detail;
-      if (!newFile) return;
-
-      const isMedia =
-        newFile.mimeType?.startsWith('image/') ||
-        newFile.mimeType?.startsWith('video/') ||
-        newFile.mimetype?.startsWith('image/') ||
-        newFile.mimetype?.startsWith('video/') ||
-        /\.(jpg|jpeg|png|webp|gif|svg|mp4|webm|mov|mkv)$/i.test(newFile.name || newFile.originalName || '');
-
-      if (isMedia) {
-        const ext = (newFile.name || newFile.originalName || '').split('.').pop().toLowerCase();
-        const isVideo = (newFile.mimeType || newFile.mimetype || '').startsWith('video') || ['mp4', 'webm', 'mov', 'mkv'].includes(ext);
-        const mimeType = newFile.mimeType || newFile.mimetype || (isVideo ? `video/${ext === 'mov' ? 'quicktime' : ext}` : `image/${ext === 'jpg' ? 'jpeg' : ext}`);
-        const normalizedFile = {
-          ...newFile,
-          _id: String(newFile._id || newFile.id),
-          name: newFile.name || newFile.originalName,
-          mimeType: mimeType,
-          s3Url: newFile.s3Url || newFile.url || '',
-          url: newFile.url || newFile.s3Url || '',
-          createdAt: newFile.createdAt || newFile.uploadedAt || new Date().toISOString()
-        };
-
-        setPhotos((prev) => {
-          // Prevent duplicate entries if already present
-          if (prev.some((item) => item._id === normalizedFile._id || String(item._id) === String(normalizedFile._id))) return prev;
-          const updated = [normalizedFile, ...prev];
-          photosSessionCache = updated; // Keep session cache in sync
-          return updated;
-        });
-      }
-    };
-
-    window.addEventListener('cloudguard:media-uploaded', handleMediaUploaded);
-    window.addEventListener('cloudguard:file-uploaded', handleMediaUploaded);
-    return () => {
-      window.removeEventListener('cloudguard:media-uploaded', handleMediaUploaded);
-      window.removeEventListener('cloudguard:file-uploaded', handleMediaUploaded);
-    };
-  }, []);
-
-  // 3. Listen for File Deletions from Anywhere in the App
-  useEffect(() => {
-    const handleFileDeleted = (event) => {
-      const fileIds = event.detail;
-      if (!fileIds) return;
-      const idsToRemove = Array.isArray(fileIds) ? fileIds.map(String) : [String(fileIds)];
-      setPhotos((prev) => {
-        const remaining = prev.filter((p) => !idsToRemove.includes(String(p._id)));
-        photosSessionCache = remaining;
-        return remaining;
-      });
-      setSelectedIds((prev) => prev.filter((id) => !idsToRemove.includes(String(id))));
-    };
-
-    window.addEventListener('cloudguard:file-deleted', handleFileDeleted);
-    return () => window.removeEventListener('cloudguard:file-deleted', handleFileDeleted);
-  }, []);
-
-  // Windowing: reset visible count when photos change
-  useEffect(() => {
-    setVisibleCount(INITIAL_BATCH);
-  }, [photos]);
-
-  // Infinite Scroll / Lazy Windowing Intersection Observer
-  useEffect(() => {
-    const target = observerTarget.current;
-    if (!target) return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0] && entries[0].isIntersecting) {
-          setVisibleCount((prev) => Math.min(prev + BATCH_SIZE, photos.length));
-        }
-      },
-      { rootMargin: '300px' }
-    );
-
-    observer.observe(target);
-    return () => observer.disconnect();
-  }, [photos.length]);
-
-  const visiblePhotos = photos.slice(0, visibleCount);
-
-  const toggleSelect = (id, e) => {
-    if (e && e.stopPropagation) e.stopPropagation();
-    const idStr = String(id);
-    setSelectedIds(prev => 
-      prev.includes(idStr) ? prev.filter(item => item !== idStr) : [...prev, idStr]
-    );
-  };
-
-  const clearSelection = () => setSelectedIds([]);
-
-  const handlePromptDelete = () => {
-    if (selectedIds.length === 0) return;
-    setIsDeleteModalOpen(true);
-  };
-
-  const handleConfirmBatchDelete = async () => {
-    const count = selectedIds.length;
+  const handleViewModeChange = (mode) => {
+    setViewMode(mode);
     try {
-      setIsDeleting(true);
-      await axios.post(`${API_BASE_URL}/api/files/bulk-delete`, {
-        fileIds: selectedIds
-      }, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      localStorage.setItem('photos_view_mode', mode);
+    } catch (e) {}
+  };
 
-      const remaining = photos.filter(p => !selectedIds.includes(String(p._id)));
-      photosSessionCache = remaining; // Keep memory cache in sync
-      setPhotos(remaining);
-      clearSelection();
-      setIsDeleteModalOpen(false);
+  const handleGridSizeChange = (size) => {
+    setGridSize(size);
+    try {
+      localStorage.setItem('photos_grid_size', size);
+    } catch (e) {}
+  };
 
-      window.dispatchEvent(
-        new CustomEvent('cloudguard:file-deleted', {
-          detail: selectedIds
-        })
-      );
+  // Group media by date
+  const groupedMedia = useMemo(() => {
+    const groups = {};
+    mediaList.forEach((item) => {
+      const dateKey = getDateHeader(item.createdAt || item.uploadedAt);
+      if (!groups[dateKey]) groups[dateKey] = [];
+      groups[dateKey].push(item);
+    });
+    return groups;
+  }, [mediaList]);
 
-      // Trigger success pop-up toast
-      toast.success(`${count} ${count === 1 ? 'item' : 'items'} deleted`);
-    } catch (err) {
-      console.error('Failed to delete media items:', err);
-      toast.error('Failed to delete items. Please try again.');
-    } finally {
-      setIsDeleting(false);
+  // Responsive grid classes
+  const gridColumnClass = useMemo(() => {
+    switch (gridSize) {
+      case 'small':
+        return 'grid-cols-4 sm:grid-cols-6 md:grid-cols-7 lg:grid-cols-8 gap-1.5 sm:gap-2';
+      case 'large':
+        return 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 gap-2.5 sm:gap-4';
+      case 'medium':
+      default:
+        return 'grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2 sm:gap-3';
+    }
+  }, [gridSize]);
+
+  // Selection handlers
+  const toggleSelectItem = (id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === mediaList.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(mediaList.map((m) => m._id)));
     }
   };
 
+  const deselectAll = () => {
+    setSelectedIds(new Set());
+  };
+
+  // 1. Centralized Batch Download (Triggers DownloadContext progress banner, zips <1.5GB, and saves to disk)
+  const handleBatchDownload = useCallback(() => {
+    const selectedItems = mediaList
+      .filter((m) => selectedIds.has(m._id))
+      .map(prepareDownloadPayload);
+
+    if (selectedItems.length === 0) return;
+
+    startDownload(selectedItems);
+  }, [mediaList, selectedIds, startDownload]);
+
+  // 2. Single Item Download (List View Row Button)
+  const handleSingleDownload = useCallback((item, e) => {
+    if (e) e.stopPropagation();
+    startDownload(prepareDownloadPayload(item));
+  }, [startDownload]);
+
+  // Carousel navigation
+  const currentPreviewItem = previewIndex !== null ? mediaList[previewIndex] : null;
+
+  // 3. Lightbox Preview Download (Top-Right Button)
+  const handlePreviewDownload = useCallback(() => {
+    if (!currentPreviewItem) return;
+    startDownload(prepareDownloadPayload(currentPreviewItem));
+  }, [currentPreviewItem, startDownload]);
+
+  // Undo Delete
+  const handleUndoDelete = async (itemsToRestore) => {
+    try {
+      const token = propToken || localStorage.getItem('token');
+      const fileIds = itemsToRestore.map((i) => i._id);
+
+      await axios.post(
+        '/api/files/restore-batch',
+        { fileIds, folderIds: [] },
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+      );
+
+      showPillToast({ message: 'Deletion undone', duration: 3000 });
+      fetchMedia(true);
+    } catch (err) {
+      console.error('Failed to undo delete:', err);
+      toast.error('Could not undo deletion');
+    }
+  };
+
+  // Confirm Permanent Deletion
+  const handleConfirmPermanentDelete = async () => {
+    const itemsToDelete = mediaList.filter((m) => selectedIds.has(m._id));
+    setIsDeleteModalOpen(false);
+    deselectAll();
+
+    try {
+      const token = propToken || localStorage.getItem('token');
+      const fileIds = itemsToDelete.map((m) => m._id);
+
+      await axios.post(
+        '/api/files/delete-batch',
+        { fileIds, folderIds: [] },
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+      );
+
+      const updated = mediaList.filter((m) => !fileIds.includes(m._id));
+      globalPhotosCache = updated;
+      setMediaList(updated);
+
+      const toastMessage =
+        itemsToDelete.length === 1
+          ? `Permanently deleted "${itemsToDelete[0].name}"`
+          : `Permanently deleted ${itemsToDelete.length} items`;
+
+      showPillToast({
+        message: toastMessage,
+        actionText: 'Undo',
+        onAction: () => handleUndoDelete(itemsToDelete),
+      });
+    } catch (err) {
+      console.error('Delete error:', err);
+      toast.error('Failed to delete selected items');
+      fetchMedia(true);
+    }
+  };
+
+  const navigatePrev = useCallback(() => {
+    if (previewIndex !== null && previewIndex > 0) {
+      setPreviewIndex(previewIndex - 1);
+    }
+  }, [previewIndex]);
+
+  const navigateNext = useCallback(() => {
+    if (previewIndex !== null && previewIndex < mediaList.length - 1) {
+      setPreviewIndex(previewIndex + 1);
+    }
+  }, [previewIndex, mediaList.length]);
+
   useEffect(() => {
+    if (previewIndex === null) return;
     const handleKeyDown = (e) => {
-      if (isDeleteModalOpen) {
-        if (e.key === 'Escape' && !isDeleting) {
-          setIsDeleteModalOpen(false);
-        } else if (e.key === 'Enter' && !isDeleting) {
-          e.preventDefault();
-          handleConfirmBatchDelete();
-        }
-        return;
-      }
-      if (e.key === 'Escape' && isSelectionActive && selectedCarouselIndex === null) {
-        clearSelection();
-      }
+      if (e.key === 'ArrowLeft') navigatePrev();
+      if (e.key === 'ArrowRight') navigateNext();
+      if (e.key === 'Escape') setPreviewIndex(null);
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isDeleteModalOpen, isDeleting, isSelectionActive, selectedCarouselIndex, selectedIds]);
+  }, [previewIndex, navigatePrev, navigateNext]);
 
-  const handleOpenCarousel = (index) => {
-    setSelectedCarouselIndex(index);
+  const handleTouchStart = (e) => {
+    touchStartX.current = e.changedTouches[0].screenX;
   };
 
-  const handleCloseCarousel = () => {
-    setSelectedCarouselIndex(null);
-  };
-
-  const handleCancelDownload = (e) => {
-    e?.stopPropagation();
-    if (abortDownloadRef.current) {
-      abortDownloadRef.current();
-      abortDownloadRef.current = null;
-    }
-    setIsDownloading(false);
-    setDownloadProgress({ percent: 0, text: '' });
-    toast.info('Download cancelled');
-  };
-
-  const handleBatchDownload = async () => {
-    if (selectedIds.length === 0) return;
-    const itemsToDownload = photos.filter((p) => selectedIds.includes(p._id));
-    if (!itemsToDownload || itemsToDownload.length === 0) return;
-
-    try {
-      setIsDownloading(true);
-
-      if (itemsToDownload.length === 1) {
-        const file = itemsToDownload[0];
-        const isLarge = (file.size || 0) >= 1 * 1024 * 1024 * 1024;
-
-        const result = await startDownload(file);
-
-        if (isLarge || result?.mode === 'stream') {
-          toast.info(`Download started in browser: ${file.name}`);
-        } else {
-          toast.success(`Downloaded: ${file.name}`);
-        }
-      } else {
-        const result = await startDownload(itemsToDownload);
-
-        if (result?.mode === 'stream') {
-          toast.info(`${itemsToDownload.length} downloads started in browser`);
-        } else {
-          toast.success(`Downloaded ${itemsToDownload.length} files as ZIP`);
-        }
-      }
-
-      setSelectedIds([]);
-    } catch (err) {
-      if (err.message !== 'DOWNLOAD_CANCELLED') {
-        console.error('Download failed:', err);
-        toast.error('Download failed. Check your network connection.');
-      }
-    } finally {
-      setIsDownloading(false);
-    }
+  const handleTouchEnd = (e) => {
+    touchEndX.current = e.changedTouches[0].screenX;
+    const diff = touchStartX.current - touchEndX.current;
+    if (diff > 50) navigateNext();
+    if (diff < -50) navigatePrev();
   };
 
   return (
-    <div className="w-full pb-28">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 select-none">
+    <div className="min-h-screen bg-zinc-50 dark:bg-[#09090b] text-zinc-900 dark:text-zinc-100 p-3 sm:p-6 lg:p-8 max-w-7xl mx-auto transition-colors duration-200">
+      {/* Top Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6 border-b border-zinc-200 dark:border-zinc-800/80 pb-4">
         <div>
-          <h1 className="text-2xl font-bold text-neutral-900 dark:text-white tracking-tight">
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
             Photos & Media
           </h1>
-          <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
-            {loading ? 'Loading media...' : `${photos.length} ${photos.length === 1 ? 'item' : 'items'}`}
+          <p className="text-xs sm:text-sm text-zinc-500 dark:text-zinc-400 mt-0.5">
+            {mediaList.length} {mediaList.length === 1 ? 'item' : 'items'} in your vault
           </p>
         </div>
 
-        {/* View & Density Controls */}
+        {/* View Controls */}
         <div className="flex items-center gap-2 self-start sm:self-auto">
-          {/* Grid Size Resizer (Only visible in Grid mode) */}
           {viewMode === 'grid' && (
-            <div className="flex items-center bg-neutral-100 dark:bg-neutral-800/80 p-0.5 rounded-lg border border-neutral-200 dark:border-neutral-700/60">
+            <div className="flex items-center bg-zinc-200/80 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-800 rounded-lg p-0.5">
               <button
-                onClick={() => cycleGridSize('decrease')}
-                disabled={gridSize === 'sm'}
-                className="p-1.5 rounded-md text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed hover:bg-white dark:hover:bg-neutral-700 transition-colors cursor-pointer"
-                title="Smaller tiles"
+                type="button"
+                onClick={() => handleGridSizeChange('small')}
+                title="Small (Dense)"
+                className={`p-1.5 rounded-md text-xs transition-colors cursor-pointer ${
+                  gridSize === 'small'
+                    ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm'
+                    : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200'
+                }`}
               >
-                <Minus className="w-3.5 h-3.5"/>
+                <Grid3X3 className="w-4 h-4" />
               </button>
-
-              <span className="text-[11px] font-semibold tracking-wider text-neutral-600 dark:text-neutral-300 px-2 uppercase">
-                {gridSize === 'sm' ? 'Small' : gridSize === 'md' ? 'Medium' : 'Large'}
-              </span>
-
               <button
-                onClick={() => cycleGridSize('increase')}
-                disabled={gridSize === 'lg'}
-                className="p-1.5 rounded-md text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed hover:bg-white dark:hover:bg-neutral-700 transition-colors cursor-pointer"
-                title="Larger tiles"
+                type="button"
+                onClick={() => handleGridSizeChange('medium')}
+                title="Medium (Default)"
+                className={`p-1.5 rounded-md text-xs transition-colors cursor-pointer ${
+                  gridSize === 'medium'
+                    ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm'
+                    : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200'
+                }`}
               >
-                <Plus className="w-3.5 h-3.5"/>
+                <LayoutGrid className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => handleGridSizeChange('large')}
+                title="Large (Spacious)"
+                className={`p-1.5 rounded-md text-xs transition-colors cursor-pointer ${
+                  gridSize === 'large'
+                    ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm'
+                    : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200'
+                }`}
+              >
+                <Grid2X2 className="w-4 h-4" />
               </button>
             </div>
           )}
 
-          {/* Grid / List Mode Segmented Toggle */}
-          <div className="flex items-center bg-neutral-100 dark:bg-neutral-800/80 p-0.5 rounded-lg border border-neutral-200 dark:border-neutral-700/60">
+          <div className="flex items-center bg-zinc-200/80 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-800 rounded-lg p-0.5">
             <button
+              type="button"
               onClick={() => handleViewModeChange('grid')}
-              className={`p-1.5 rounded-md transition-all cursor-pointer ${
+              title="Grid View"
+              className={`p-1.5 rounded-md text-xs transition-colors cursor-pointer ${
                 viewMode === 'grid'
-                  ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-white shadow-sm font-medium'
-                  : 'text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white'
+                  ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm'
+                  : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200'
               }`}
-              title="Grid view"
             >
-              <LayoutGrid className="w-4 h-4"/>
+              <LayoutGrid className="w-4 h-4" />
             </button>
-
             <button
+              type="button"
               onClick={() => handleViewModeChange('list')}
-              className={`p-1.5 rounded-md transition-all cursor-pointer ${
+              title="List View"
+              className={`p-1.5 rounded-md text-xs transition-colors cursor-pointer ${
                 viewMode === 'list'
-                  ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-white shadow-sm font-medium'
-                  : 'text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white'
+                  ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm'
+                  : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200'
               }`}
-              title="List view"
             >
-              <List className="w-4 h-4"/>
+              <List className="w-4 h-4" />
             </button>
           </div>
         </div>
       </div>
 
-      {/* Loading State */}
-      {loading && (
-        <div className="flex flex-col items-center justify-center py-20 text-neutral-400">
-          <Loader2 className="w-8 h-8 animate-spin mb-3 text-blue-500" />
-          <p className="text-sm">Loading your photos & videos...</p>
+      {/* Loading Skeleton */}
+      {loading ? (
+        <div className="space-y-6">
+          {[...Array(2)].map((_, gIdx) => (
+            <div key={gIdx} className="space-y-3">
+              <div className="h-5 w-28 bg-zinc-200 dark:bg-zinc-800/60 rounded animate-pulse" />
+              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2">
+                {[...Array(6)].map((_, i) => (
+                  <div
+                    key={i}
+                    className="aspect-square bg-zinc-200 dark:bg-zinc-900 rounded-xl animate-pulse border border-zinc-300 dark:border-zinc-800/40"
+                  />
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
-      )}
-
-      {/* Error State */}
-      {!loading && error && (
-        <div className="p-4 rounded-xl border border-red-200 bg-red-50 dark:border-red-900/40 dark:bg-red-950/20 text-red-600 dark:text-red-400 text-sm">
-          {error}
+      ) : mediaList.length === 0 ? (
+        <div className="text-center py-24 border border-dashed border-zinc-300 dark:border-zinc-800 rounded-2xl bg-white/50 dark:bg-zinc-900/30">
+          <ImageIcon className="w-12 h-12 text-zinc-400 dark:text-zinc-600 mx-auto mb-3" />
+          <p className="text-zinc-700 dark:text-zinc-300 font-medium text-sm">No photos or media in your account</p>
+          <p className="text-zinc-400 dark:text-zinc-500 text-xs mt-1">Uploaded images and videos will appear here</p>
         </div>
-      )}
-
-      {/* Empty State */}
-      {!loading && !error && photos.length === 0 && (
-        <div className="flex flex-col items-center justify-center py-20 px-4 text-center rounded-2xl border border-dashed border-neutral-300 dark:border-neutral-800 bg-neutral-50/50 dark:bg-neutral-900/20">
-          <div className="w-16 h-16 rounded-2xl bg-neutral-100 dark:bg-neutral-800 flex items-center justify-center text-neutral-400 dark:text-neutral-500 mb-4 shadow-sm">
-            <ImageIcon className="w-8 h-8" />
-          </div>
-          <h3 className="text-base font-semibold text-neutral-800 dark:text-neutral-200 mb-1">
-            No photos or videos in your vault yet
-          </h3>
-          <p className="text-sm text-neutral-500 dark:text-neutral-400 max-w-sm">
-            Uploaded pictures and video files across all your folders will automatically be organized and showcased here.
-          </p>
-        </div>
-      )}
-
-      {/* Responsive Media Grid / List */}
-      {!loading && photos.length > 0 && (
-        <>
-          {viewMode === 'list' ? (
-            <div className="bg-white dark:bg-neutral-900/60 rounded-xl border border-neutral-200 dark:border-neutral-800/80 overflow-hidden divide-y divide-neutral-100 dark:divide-neutral-800/60">
-              {/* Table Header */}
-              <div className="grid grid-cols-12 gap-4 px-4 py-2.5 text-xs font-semibold text-neutral-400 dark:text-neutral-500 bg-neutral-50 dark:bg-neutral-800/40 select-none">
-                <div className="col-span-6 sm:col-span-5 flex items-center gap-3">
-                  <span className="w-5 text-center">#</span>
-                  <span>Name</span>
-                </div>
-                <div className="col-span-3 sm:col-span-3 hidden sm:block">Date Added</div>
-                <div className="col-span-3 sm:col-span-2 text-right sm:text-left">Size</div>
-                <div className="col-span-3 sm:col-span-2 text-right">Type</div>
+      ) : viewMode === 'grid' ? (
+        /* GRID VIEW (Date-Grouped) */
+        <div className="space-y-8 pb-24">
+          {Object.entries(groupedMedia).map(([dateGroup, items]) => (
+            <section key={dateGroup} className="space-y-2.5">
+              <div className="sticky top-0 z-10 py-1.5 bg-zinc-50/90 dark:bg-[#09090b]/90 backdrop-blur-md flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800/60 transition-colors">
+                <h2 className="text-xs sm:text-sm font-semibold text-zinc-700 dark:text-zinc-300 tracking-wide">
+                  {dateGroup}
+                </h2>
+                <span className="text-[11px] font-medium text-zinc-400 dark:text-zinc-500">
+                  {items.length} {items.length === 1 ? 'item' : 'items'}
+                </span>
               </div>
 
-              {/* Table Rows */}
-              {visiblePhotos.map((file, index) => {
-                const isSelected = selectedIds.includes(String(file._id));
-                const isVideo = file.mimeType?.startsWith('video/') || /\.(mp4|webm|mov|mkv)$/i.test(file.name || '');
+              <div className={`grid ${gridColumnClass}`}>
+                {items.map((item) => {
+                  const globalIndex = mediaList.findIndex((m) => m._id === item._id);
+                  const isVideo = item.mediaType === 'video';
+                  const isSelected = selectedIds.has(item._id);
 
-                return (
-                  <div
-                    key={file._id}
-                    onClick={(e) => {
-                      if (!e.target.closest('button[data-select-trigger]')) {
-                        if (isSelectionActive) {
-                          toggleSelect(file._id, e);
-                        } else {
-                          handleOpenCarousel(index);
-                        }
-                      }
-                    }}
-                    className={`grid grid-cols-12 gap-4 px-4 py-2.5 items-center cursor-pointer transition-colors text-sm ${
-                      isSelected
-                        ? 'bg-blue-50/70 dark:bg-blue-950/20'
-                        : 'hover:bg-neutral-50 dark:hover:bg-neutral-800/50'
-                    }`}
-                  >
-                    {/* Checkbox + Mini Thumbnail + Name */}
-                    <div className="col-span-6 sm:col-span-5 flex items-center gap-3 min-w-0">
-                      <button
-                        data-select-trigger
+                  return (
+                    <div
+                      key={item._id}
+                      onClick={() => setPreviewIndex(globalIndex)}
+                      className={`group relative aspect-square bg-white dark:bg-zinc-900 rounded-lg sm:rounded-xl overflow-hidden border transition-all shadow-sm active:scale-95 touch-manipulation cursor-pointer ${
+                        isSelected
+                          ? 'ring-2 ring-emerald-500 border-emerald-500 dark:border-emerald-500'
+                          : 'border-zinc-200 dark:border-zinc-800/70 hover:border-zinc-400 dark:hover:border-zinc-600'
+                      }`}
+                    >
+                      {/* Checkbox Trigger */}
+                      <div
                         onClick={(e) => {
                           e.stopPropagation();
-                          toggleSelect(file._id, e);
+                          toggleSelectItem(item._id);
                         }}
-                        className={`w-5 h-5 rounded flex items-center justify-center border transition-colors shrink-0 cursor-pointer ${
+                        className={`absolute top-1.5 left-1.5 sm:top-2 sm:left-2 z-20 w-6 h-6 rounded-md flex items-center justify-center transition-all cursor-pointer ${
                           isSelected
-                            ? 'bg-blue-600 border-blue-600 text-white'
-                            : 'border-neutral-300 dark:border-neutral-700 hover:border-neutral-400'
+                            ? 'bg-emerald-500 text-white shadow-md'
+                            : 'bg-black/50 hover:bg-black/70 text-transparent hover:text-white/80 border border-white/60 opacity-80 sm:opacity-0 sm:group-hover:opacity-100'
                         }`}
+                        title={isSelected ? 'Deselect item' : 'Select item'}
                       >
-                        {isSelected && <Check className="w-3 h-3 stroke-[3]"/>}
-                      </button>
+                        <Check className={`w-3.5 h-3.5 stroke-[3] ${isSelected ? 'opacity-100' : 'opacity-0'}`} />
+                      </div>
 
-                      {/* Mini Thumbnail Preview */}
-                      <div className="w-10 h-10 rounded-lg overflow-hidden bg-neutral-100 dark:bg-neutral-800 shrink-0 relative flex items-center justify-center border border-neutral-200/60 dark:border-neutral-700/50">
-                        {isVideo ? (
-                          <>
-                            <video
-                              src={file.s3Url || file.url}
-                              preload="metadata"
-                              muted
-                              playsInline
-                              className="w-full h-full object-cover"
+                      {/* Lightweight Thumbnail (Pure Image Tags Only) */}
+                      {item.url ? (
+                        isVideo ? (
+                          <div className="w-full h-full relative bg-zinc-950 flex items-center justify-center">
+                            <LightweightVideoThumbnail
+                              url={item.url}
+                              fileId={item._id}
+                              alt={item.name}
+                              className="w-full h-full object-cover pointer-events-none"
                             />
-                            <div className="absolute inset-0 bg-black/25 flex items-center justify-center pointer-events-none">
-                              <Film className="w-3.5 h-3.5 text-white drop-shadow"/>
+                            <div className="absolute top-1.5 right-1.5 bg-black/75 backdrop-blur-md px-1.5 py-0.5 rounded flex items-center gap-1 text-[10px] font-medium text-white shadow-md">
+                              <Play className="w-2.5 h-2.5 fill-white" />
+                              <span className="hidden sm:inline">Video</span>
                             </div>
-                          </>
+                          </div>
                         ) : (
                           <img
-                            src={file.s3Url || file.url}
-                            alt={file.name}
+                            src={item.url}
+                            alt={item.name}
                             loading="lazy"
                             decoding="async"
-                            className="w-full h-full object-cover"
+                            sizes="(max-width: 640px) 33vw, (max-width: 1024px) 25vw, 16vw"
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                           />
-                        )}
-                      </div>
+                        )
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center bg-zinc-100 dark:bg-zinc-900 text-zinc-400">
+                          <ImageIcon className="w-6 h-6" />
+                        </div>
+                      )}
 
-                      <span className="font-medium text-neutral-800 dark:text-neutral-200 truncate">
-                        {file.name}
-                      </span>
-                    </div>
-
-                    {/* Date Added */}
-                    <div className="col-span-3 sm:col-span-3 hidden sm:block text-xs text-neutral-500 dark:text-neutral-400 truncate">
-                      {file.createdAt ? new Date(file.createdAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—'}
-                    </div>
-
-                    {/* File Size */}
-                    <div className="col-span-3 sm:col-span-2 text-right sm:text-left text-xs text-neutral-500 dark:text-neutral-400">
-                      {formatBytes(file.size)}
-                    </div>
-
-                    {/* Media Type */}
-                    <div className="col-span-3 sm:col-span-2 text-right text-xs uppercase font-semibold text-neutral-400 tracking-wider">
-                      {isVideo ? 'Video' : 'Image'}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <div className={`grid ${gridClassMap[gridSize] || gridClassMap.md}`}>
-              {visiblePhotos.map((item, index) => (
-                <div
-                  key={item._id}
-                  onClick={() => isSelectionActive ? toggleSelect(item._id) : handleOpenCarousel(index)}
-                  className={`group relative ${aspectMap[gridSize] || 'aspect-square'} rounded-xl overflow-hidden border cursor-pointer select-none transition-all duration-200 ${
-                    selectedIds.includes(String(item._id))
-                      ? 'ring-2 ring-blue-500 border-blue-500 shadow-md'
-                      : 'border-neutral-200 dark:border-neutral-800/80 hover:border-neutral-300 dark:hover:border-neutral-700'
-                  }`}
-                >
-                  {/* Checkmark Button (Top-Left) */}
-                  <div
-                    onClick={(e) => toggleSelect(item._id, e)}
-                    className={`absolute top-2.5 left-2.5 z-10 w-6 h-6 rounded-full flex items-center justify-center transition-all ${
-                      selectedIds.includes(String(item._id))
-                        ? 'bg-blue-600 text-white shadow-sm'
-                        : isSelectionActive
-                          ? 'bg-black/40 border border-white/60 text-transparent hover:border-white'
-                          : 'opacity-0 group-hover:opacity-100 bg-black/40 border border-white/60 text-transparent hover:border-white'
-                    }`}
-                  >
-                    <Check className={`w-3.5 h-3.5 stroke-[3] ${selectedIds.includes(String(item._id)) ? 'text-white' : 'text-transparent'}`} />
-                  </div>
-
-                  {/* Video or Image Preview */}
-                  {item.mimeType?.startsWith('video') ? (
-                    <div className="relative w-full h-full bg-neutral-950 flex items-center justify-center">
-                      <video
-                        src={item.s3Url || item.url}
-                        className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity pointer-events-none"
-                        preload="metadata"
-                        muted
-                        playsInline
-                      />
-                      {/* Video Play Badge */}
-                      <div className="absolute bottom-2 left-2 px-2 py-0.5 rounded-md bg-black/60 backdrop-blur-md flex items-center gap-1.5 text-[11px] font-medium text-white">
-                        <Play className="w-3 h-3 fill-white" />
-                        <span>Video</span>
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity hidden sm:flex items-end p-2 pointer-events-none">
+                        <span className="text-[11px] text-white truncate w-full font-medium">
+                          {item.originalName || item.name}
+                        </span>
                       </div>
                     </div>
-                  ) : (
-                    <img
-                      src={item.s3Url || item.url}
-                      alt={item.name}
-                      loading="lazy"
-                      decoding="async"
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                    />
-                  )}
+                  );
+                })}
+              </div>
+            </section>
+          ))}
+        </div>
+      ) : (
+        /* LIST VIEW */
+        <div className="space-y-6 pb-24">
+          {Object.entries(groupedMedia).map(([dateGroup, items]) => (
+            <section key={dateGroup} className="space-y-2">
+              <div className="sticky top-0 z-10 py-1.5 bg-zinc-50/90 dark:bg-[#09090b]/90 backdrop-blur-md flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800/60 transition-colors">
+                <h2 className="text-xs sm:text-sm font-semibold text-zinc-700 dark:text-zinc-300 tracking-wide">
+                  {dateGroup}
+                </h2>
+                <span className="text-[11px] font-medium text-zinc-400 dark:text-zinc-500">
+                  {items.length} {items.length === 1 ? 'item' : 'items'}
+                </span>
+              </div>
 
-                  {/* Hover Information Overlay */}
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity p-2.5 flex flex-col justify-end pointer-events-none">
-                    <p className="text-xs font-medium text-white truncate">{item.name}</p>
-                    <p className="text-[10px] text-neutral-300">
-                      {new Date(item.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+              <div className="bg-white dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-800/80 rounded-xl divide-y divide-zinc-200 dark:divide-zinc-800/60 overflow-hidden shadow-sm">
+                {items.map((item) => {
+                  const globalIndex = mediaList.findIndex((m) => m._id === item._id);
+                  const isVideo = item.mediaType === 'video';
+                  const isSelected = selectedIds.has(item._id);
 
-          {/* Infinite Scroll / Batch Windowing Sentinel */}
-          {visibleCount < photos.length && (
-            <div ref={observerTarget} className="w-full py-8 flex items-center justify-center text-xs text-neutral-400">
-              <Loader2 className="w-4 h-4 animate-spin mr-2 text-blue-500" />
-              <span>Loading more media ({visiblePhotos.length} of {photos.length})...</span>
-            </div>
-          )}
-        </>
-      )}
+                  return (
+                    <div
+                      key={item._id}
+                      onClick={() => setPreviewIndex(globalIndex)}
+                      className={`flex items-center justify-between p-3 cursor-pointer transition-colors ${
+                        isSelected
+                          ? 'bg-emerald-500/10 dark:bg-emerald-500/15'
+                          : 'hover:bg-zinc-100/70 dark:hover:bg-zinc-800/40'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleSelectItem(item._id);
+                          }}
+                          className={`w-5 h-5 rounded flex items-center justify-center transition-colors cursor-pointer shrink-0 border ${
+                            isSelected
+                              ? 'bg-emerald-500 border-emerald-500 text-white shadow-sm'
+                              : 'border-zinc-300 dark:border-zinc-700 hover:border-emerald-500 bg-white dark:bg-zinc-800'
+                          }`}
+                        >
+                          {isSelected && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                        </div>
 
-      {/* Floating Action Pill */}
-      {selectedIds.length > 0 && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 sm:py-2.5 rounded-full bg-neutral-900/90 dark:bg-neutral-800/90 backdrop-blur-md border border-neutral-700/60 shadow-2xl text-white select-none max-w-[95vw]">
-          
-          {/* 1. Selection Count (Status indicator on the left) */}
-          <span className="text-xs text-neutral-300 font-medium pl-1 whitespace-nowrap">
-            {selectedIds.length} <span className="hidden sm:inline">selected</span>
-          </span>
+                        {/* 40x40 Thumbnail */}
+                        <div className="w-10 h-10 rounded-lg bg-zinc-100 dark:bg-zinc-800 overflow-hidden shrink-0 flex items-center justify-center border border-zinc-200 dark:border-zinc-700/50 relative">
+                          {isVideo ? (
+                            <>
+                              <LightweightVideoThumbnail
+                                url={item.url}
+                                fileId={item._id}
+                                alt={item.name}
+                                className="w-full h-full object-cover pointer-events-none"
+                              />
+                              <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                                <Play className="w-3.5 h-3.5 fill-white text-white" />
+                              </div>
+                            </>
+                          ) : (
+                            <img
+                              src={item.url}
+                              alt=""
+                              className="w-full h-full object-cover"
+                              loading="lazy"
+                            />
+                          )}
+                        </div>
 
-          {/* Vertical Divider */}
-          <div className="h-4 w-[1px] bg-neutral-700 shrink-0" />
+                        <div className="min-w-0">
+                          <p className="text-xs sm:text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate">
+                            {item.originalName || item.name}
+                          </p>
+                          <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                            {formatBytes(item.size)} • {item.mediaType.toUpperCase()}
+                          </p>
+                        </div>
+                      </div>
 
-          {/* 2. Select All / Deselect All Action Button */}
-          <button
-            onClick={handleToggleSelectAll}
-            className="text-xs font-medium px-2 sm:px-2.5 py-1.5 rounded-md hover:bg-white/10 transition-colors cursor-pointer text-white whitespace-nowrap"
-          >
-            {isAllSelected ? (
-              <>
-                <span className="sm:hidden">Deselect</span>
-                <span className="hidden sm:inline">Deselect All</span>
-              </>
-            ) : (
-              <>
-                <span className="sm:hidden">All</span>
-                <span className="hidden sm:inline">Select All ({photos.length})</span>
-              </>
-            )}
-          </button>
-
-          {/* 3. Clean, Non-Expanding Download Button in Floating Pill */}
-          <button
-            onClick={handleBatchDownload}
-            disabled={isDownloading}
-            className="flex items-center gap-1.5 text-xs font-medium px-2.5 sm:px-3 py-1.5 rounded-md hover:bg-white/10 transition-colors cursor-pointer text-white disabled:opacity-60 disabled:cursor-wait whitespace-nowrap"
-            title={isDownloading ? 'Downloading...' : 'Download'}
-          >
-            <Download className={`w-3.5 h-3.5 text-blue-400 ${isDownloading ? 'animate-bounce' : ''}`} />
-            <span className="hidden sm:inline">{isDownloading ? 'Downloading...' : 'Download'}</span>
-          </button>
-
-          {/* 4. Delete Action Button */}
-          <button
-            onClick={() => setIsDeleteModalOpen(true)}
-            disabled={isDeleting}
-            className="flex items-center gap-1.5 text-xs font-medium px-2.5 sm:px-3 py-1.5 rounded-md bg-red-600/90 hover:bg-red-600 transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap"
-            title="Delete"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Delete</span>
-          </button>
-
-          {/* 5. Clear / Close Button */}
-          <button
-            onClick={() => setSelectedIds([])}
-            className="p-1 rounded-full hover:bg-white/10 text-neutral-400 hover:text-white transition-colors cursor-pointer ml-0.5 shrink-0"
-            title="Clear selection"
-          >
-            <X className="w-4 h-4" />
-          </button>
+                      {item.url && (
+                        <button
+                          type="button"
+                          onClick={(e) => handleSingleDownload(item, e)}
+                          className="p-2 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors shrink-0 cursor-pointer"
+                          title="Download"
+                        >
+                          <Download className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          ))}
         </div>
       )}
 
-      {/* Lightbox Carousel Modal */}
-      {selectedCarouselIndex !== null && (
-        <MediaCarouselModal
-          items={photos}
-          currentIndex={selectedCarouselIndex}
-          onClose={handleCloseCarousel}
+      {/* Centralized Floating Action Bar */}
+      {selectedIds.size > 0 && (
+        <CentralizedFloatingBar
+          selectedCount={selectedIds.size}
+          totalCount={mediaList.length}
+          isAllSelected={selectedIds.size === mediaList.length}
+          onToggleSelectAll={toggleSelectAll}
+          onDownload={handleBatchDownload}
+          onDelete={() => setIsDeleteModalOpen(true)}
+          onClear={deselectAll}
+          isDownloading={isDownloading}
         />
       )}
 
       {/* Delete Confirmation Modal */}
       {isDeleteModalOpen && (
-        <DeleteConfirmModal
-          isOpen={isDeleteModalOpen}
-          onClose={() => setIsDeleteModalOpen(false)}
-          onConfirm={handleConfirmBatchDelete}
-          count={selectedIds.length}
-          isDeleting={isDeleting}
-        />
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-white dark:bg-[#18181b] border border-zinc-200 dark:border-zinc-800 rounded-2xl p-6 max-w-md w-full shadow-2xl transition-colors">
+            <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+              Permanently delete {selectedIds.size > 1 ? `${selectedIds.size} items` : 'item'}?
+            </h3>
+            <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-2">
+              Are you sure you want to permanently delete{' '}
+              <span className="font-semibold text-zinc-900 dark:text-zinc-200">
+                {selectedIds.size} {selectedIds.size === 1 ? 'item' : 'items'}
+              </span>
+              ? This action will immediately remove the media from your storage.
+            </p>
+
+            <div className="flex flex-col-reverse sm:flex-row items-center justify-end gap-2.5 sm:gap-3 mt-6">
+              <button
+                type="button"
+                onClick={() => setIsDeleteModalOpen(false)}
+                className="w-full sm:w-auto px-4 py-2 text-sm font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-xl transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmPermanentDelete}
+                className="w-full sm:w-auto px-4 py-2 text-sm font-medium bg-red-600 hover:bg-red-500 text-white rounded-xl shadow-lg shadow-red-600/25 transition-all cursor-pointer"
+              >
+                Permanently delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Full Lightbox Carousel (Active <video> tag mounts ONLY here) */}
+      {currentPreviewItem && (
+        <div
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setPreviewIndex(null);
+          }}
+          className="fixed inset-0 z-50 bg-black/95 backdrop-blur-md flex items-center justify-center animate-enter select-none"
+          onTouchStart={handleTouchStart}
+          onTouchEnd={handleTouchEnd}
+        >
+          <div className="absolute top-3 inset-x-3 sm:inset-x-6 flex items-center justify-between text-zinc-300 z-20 pointer-events-auto">
+            <div className="flex items-center gap-3 min-w-0">
+              <span className="text-xs sm:text-sm font-medium truncate max-w-[180px] sm:max-w-md text-zinc-200">
+                {currentPreviewItem.originalName || currentPreviewItem.name}
+              </span>
+              <span className="text-xs text-zinc-500 hidden sm:inline">
+                ({previewIndex + 1} of {mediaList.length})
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {currentPreviewItem.url && (
+                <button
+                  type="button"
+                  onClick={handlePreviewDownload}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-zinc-800/80 hover:bg-zinc-700 text-xs font-semibold text-zinc-200 transition-colors cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Download</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setPreviewIndex(null)}
+                className="p-1.5 rounded-full bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 hover:text-white transition-colors cursor-pointer"
+                aria-label="Close"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+
+          {previewIndex > 0 && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                navigatePrev();
+              }}
+              className="absolute left-2 sm:left-6 z-20 p-2 sm:p-3 rounded-full bg-zinc-900/80 hover:bg-zinc-800 text-zinc-200 hover:text-white border border-zinc-700/60 shadow-xl transition-all cursor-pointer active:scale-95"
+              aria-label="Previous item"
+            >
+              <ChevronLeft className="w-5 h-5 sm:w-6 sm:h-6" />
+            </button>
+          )}
+
+          {previewIndex < mediaList.length - 1 && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                navigateNext();
+              }}
+              className="absolute right-2 sm:right-6 z-20 p-2 sm:p-3 rounded-full bg-zinc-900/80 hover:bg-zinc-800 text-zinc-200 hover:text-white border border-zinc-700/60 shadow-xl transition-all cursor-pointer active:scale-95"
+              aria-label="Next item"
+            >
+              <ChevronRight className="w-5 h-5 sm:w-6 sm:h-6" />
+            </button>
+          )}
+
+          <div className="max-w-5xl max-h-[82vh] w-full flex items-center justify-center p-2">
+            {currentPreviewItem.mediaType === 'video' ? (
+              <video
+                key={currentPreviewItem._id}
+                src={currentPreviewItem.url}
+                controls
+                autoPlay
+                playsInline
+                className="max-h-[80vh] w-auto max-w-full rounded-lg shadow-2xl bg-black"
+              />
+            ) : (
+              <img
+                key={currentPreviewItem._id}
+                src={currentPreviewItem.url}
+                alt={currentPreviewItem.name}
+                className="max-h-[80vh] max-w-full object-contain rounded-lg shadow-2xl"
+              />
+            )}
+          </div>
+
+          <div className="absolute bottom-3 text-center text-xs text-zinc-400 z-10 pointer-events-none">
+            {formatBytes(currentPreviewItem.size)} • {getDateHeader(currentPreviewItem.createdAt || currentPreviewItem.uploadedAt)} • {previewIndex + 1} of {mediaList.length}
+          </div>
+        </div>
       )}
     </div>
   );
 }
-  
