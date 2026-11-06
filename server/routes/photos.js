@@ -5,6 +5,7 @@ const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const File = require('../models/File');
 const authMiddleware = require('../middleware/auth');
+const { buildTenantQuery } = require('../utils/tenantQuery');
 
 const s3Client = new S3Client({
   region: process.env.AWS_REGION || 'eu-north-1',
@@ -24,35 +25,21 @@ const handleGetPhotos = async (req, res) => {
       return res.status(401).json({ error: 'Authentication required' });
     }
 
-    const userIdObj = mongoose.Types.ObjectId.isValid(rawUserId)
-      ? new mongoose.Types.ObjectId(rawUserId)
-      : null;
-
-    // Build user match criteria
-    const userMatchConditions = [
-      { userId: rawUserId },
-      { user: rawUserId },
-    ];
-    if (userIdObj) {
-      userMatchConditions.push({ userId: userIdObj }, { user: userIdObj });
-    }
-
-    // STRICT TENANT ISOLATION: Use $and so user filtering is never overwritten
-    const mediaFiles = await File.find({
+    const mediaFilter = {
       isTrash: { $ne: true },
       securityStatus: { $ne: 'threat_purged' },
-      $and: [
-        { $or: userMatchConditions },
-        {
-          $or: [
-            { mimeType: { $regex: MEDIA_MIME_REGEX } },
-            { mimetype: { $regex: MEDIA_MIME_REGEX } },
-            { name: { $regex: MEDIA_EXTENSIONS_REGEX } },
-            { originalName: { $regex: MEDIA_EXTENSIONS_REGEX } },
-          ],
-        },
+      $or: [
+        { mimeType: { $regex: MEDIA_MIME_REGEX } },
+        { mimetype: { $regex: MEDIA_MIME_REGEX } },
+        { name: { $regex: MEDIA_EXTENSIONS_REGEX } },
+        { originalName: { $regex: MEDIA_EXTENSIONS_REGEX } },
       ],
-    })
+    };
+
+    // Safe scoped query: impossible for tenant ID to be dropped or overwritten
+    const query = buildTenantQuery(rawUserId, mediaFilter);
+
+    const mediaFiles = await File.find(query)
       .select('name originalName size mimeType mimetype s3Key key location securityStatus uploadedAt createdAt folder')
       .sort({ createdAt: -1, uploadedAt: -1 })
       .lean();

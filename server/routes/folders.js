@@ -510,6 +510,98 @@ const handleFolderDetails = async (req, res) => {
   }
 };
 
+// GET /api/folders - Strictly exclude trashed folders
+router.get('/', authMiddleware, async (req, res) => {
+  try {
+    const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
+    const parent = req.query.parentId || req.query.folderId || null;
+
+    const parentId =
+      parent && parent !== 'null' && mongoose.Types.ObjectId.isValid(parent)
+        ? new mongoose.Types.ObjectId(parent)
+        : null;
+
+    const userMatch = {
+      $or: [
+        { userId: rawUserId },
+        { user: rawUserId },
+      ],
+    };
+
+    const filter = {
+      ...userMatch,
+      isTrash: { $ne: true },
+    };
+
+    if (req.query.all !== 'true') {
+      filter.parentId = parentId || null;
+    }
+
+    // STRICT: Only return folders that are NOT trashed
+    const folders = await Folder.find(filter)
+      .sort({ name: 1 })
+      .lean();
+
+    return res.status(200).json(folders);
+  } catch (err) {
+    console.error('Error fetching folders:', err);
+    return res.status(500).json({ error: 'Failed to fetch folders' });
+  }
+});
+
+// DELETE /api/folders/:id
+router.delete('/:id', authMiddleware, async (req, res) => {
+  try {
+    const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
+    const folderId = req.params.id;
+
+    // Strict validation: reject non-ObjectIds immediately
+    if (!folderId || !mongoose.Types.ObjectId.isValid(folderId)) {
+      return res.status(400).json({ error: 'Invalid folder ID' });
+    }
+
+    const folderObjectId = new mongoose.Types.ObjectId(folderId);
+    const userMatch = { $or: [{ userId: rawUserId }, { user: rawUserId }] };
+
+    // 1. Delete or trash the targeted folder
+    const folder = await Folder.findOne({ _id: folderObjectId, ...userMatch });
+    if (!folder) {
+      return res.status(404).json({ error: 'Folder not found' });
+    }
+
+    // Mark folder as trashed
+    folder.isTrash = true;
+    folder.trashedAt = new Date();
+    await folder.save();
+
+    // 2. Cascade ONLY to children of THIS SPECIFIC folder (guarded with valid ObjectId)
+    await File.updateMany(
+      {
+        $or: [{ folder: folderObjectId }, { folderId: folderObjectId }],
+        ...userMatch,
+      },
+      { $set: { isTrash: true, trashedAt: new Date() } }
+    );
+
+    await Folder.updateMany(
+      {
+        $or: [{ parentId: folderObjectId }, { parentFolder: folderObjectId }],
+        ...userMatch,
+      },
+      { $set: { isTrash: true, trashedAt: new Date() } }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: 'Folder and contents deleted successfully',
+      folderId: folder._id,
+    });
+  } catch (err) {
+    console.error('Delete folder error:', err);
+    return res.status(500).json({ error: 'Failed to delete folder' });
+  }
+});
+
 router.get('/:id/details', authMiddleware, handleFolderDetails);
 router.get('/:id/stats', authMiddleware, handleFolderDetails);
 

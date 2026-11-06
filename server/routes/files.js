@@ -507,40 +507,47 @@ router.delete('/:id', authMiddleware, handleSingleFileDelete);
 // -------------------------------------------------------------
 const handleBatchDelete = async (req, res) => {
   try {
-    const rawUserId = req.user.id || req.user._id || req.user.userId;
-    const userIdObj = mongoose.Types.ObjectId.isValid(rawUserId)
-      ? new mongoose.Types.ObjectId(rawUserId)
-      : rawUserId;
-
+    const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
     const { fileIds = [], folderIds = [] } = req.body;
 
-    const userMatch = {
-      $or: [
-        { userId: userIdObj },
-        { user: userIdObj },
-        { userId: String(rawUserId) },
-        { user: String(rawUserId) },
-      ],
-    };
+    const userMatch = { $or: [{ userId: rawUserId }, { user: rawUserId }] };
 
-    if (fileIds.length > 0) {
+    // CRITICAL GUARD: Only keep valid 24-character hexadecimal MongoDB ObjectIds
+    const validFileIds = (Array.isArray(fileIds) ? fileIds : [])
+      .filter((id) => id && mongoose.Types.ObjectId.isValid(String(id)))
+      .map((id) => new mongoose.Types.ObjectId(String(id)));
+
+    const validFolderIds = (Array.isArray(folderIds) ? folderIds : [])
+      .filter((id) => id && mongoose.Types.ObjectId.isValid(String(id)))
+      .map((id) => new mongoose.Types.ObjectId(String(id)));
+
+    // 1. Delete files ONLY if valid file IDs exist
+    if (validFileIds.length > 0) {
       await File.updateMany(
-        { _id: { $in: fileIds }, ...userMatch },
+        { _id: { $in: validFileIds }, ...userMatch },
         { $set: { isTrash: true, trashedAt: new Date() } }
       );
     }
 
-    if (folderIds.length > 0) {
+    // 2. Delete folders ONLY if valid folder IDs exist
+    if (validFolderIds.length > 0) {
       await Folder.updateMany(
-        { _id: { $in: folderIds }, ...userMatch },
+        { _id: { $in: validFolderIds }, ...userMatch },
         { $set: { isTrash: true, trashedAt: new Date() } }
       );
+
+      // Cascade to contents of THESE specific folders only
       await File.updateMany(
         {
-          $or: [
-            { folder: { $in: folderIds } },
-            { folderId: { $in: folderIds } },
-          ],
+          $or: [{ folder: { $in: validFolderIds } }, { folderId: { $in: validFolderIds } }],
+          ...userMatch,
+        },
+        { $set: { isTrash: true, trashedAt: new Date() } }
+      );
+
+      await Folder.updateMany(
+        {
+          $or: [{ parentId: { $in: validFolderIds } }, { parentFolder: { $in: validFolderIds } }],
           ...userMatch,
         },
         { $set: { isTrash: true, trashedAt: new Date() } }
@@ -566,7 +573,12 @@ const handleBatchDelete = async (req, res) => {
     const actualStorageUsed = stats[0]?.actualUsedBytes || 0;
     await User.findByIdAndUpdate(rawUserId, { storageUsed: actualStorageUsed });
 
-    return res.status(200).json({ success: true, deletedCount: fileIds.length + folderIds.length });
+    return res.status(200).json({
+      success: true,
+      deletedFiles: validFileIds.length,
+      deletedFolders: validFolderIds.length,
+      deletedCount: validFileIds.length + validFolderIds.length,
+    });
   } catch (err) {
     console.error('Batch delete error:', err);
     return res.status(500).json({ error: 'Failed to delete items' });
@@ -582,40 +594,43 @@ router.post('/bulk-delete', authMiddleware, handleBatchDelete);
 // -------------------------------------------------------------
 const handleBatchRestore = async (req, res) => {
   try {
-    const rawUserId = req.user.id || req.user._id || req.user.userId;
-    const userIdObj = mongoose.Types.ObjectId.isValid(rawUserId)
-      ? new mongoose.Types.ObjectId(rawUserId)
-      : rawUserId;
-
+    const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
     const { fileIds = [], folderIds = [] } = req.body;
 
-    const userMatch = {
-      $or: [
-        { userId: userIdObj },
-        { user: userIdObj },
-        { userId: String(rawUserId) },
-        { user: String(rawUserId) },
-      ],
-    };
+    const userMatch = { $or: [{ userId: rawUserId }, { user: rawUserId }] };
 
-    if (fileIds.length > 0) {
+    const validFileIds = (Array.isArray(fileIds) ? fileIds : [])
+      .filter((id) => id && mongoose.Types.ObjectId.isValid(String(id)))
+      .map((id) => new mongoose.Types.ObjectId(String(id)));
+
+    const validFolderIds = (Array.isArray(folderIds) ? folderIds : [])
+      .filter((id) => id && mongoose.Types.ObjectId.isValid(String(id)))
+      .map((id) => new mongoose.Types.ObjectId(String(id)));
+
+    if (validFileIds.length > 0) {
       await File.updateMany(
-        { _id: { $in: fileIds }, ...userMatch },
+        { _id: { $in: validFileIds }, ...userMatch },
         { $set: { isTrash: false, trashedAt: null } }
       );
     }
 
-    if (folderIds.length > 0) {
+    if (validFolderIds.length > 0) {
       await Folder.updateMany(
-        { _id: { $in: folderIds }, ...userMatch },
+        { _id: { $in: validFolderIds }, ...userMatch },
         { $set: { isTrash: false, trashedAt: null } }
       );
+
       await File.updateMany(
         {
-          $or: [
-            { folder: { $in: folderIds } },
-            { folderId: { $in: folderIds } },
-          ],
+          $or: [{ folder: { $in: validFolderIds } }, { folderId: { $in: validFolderIds } }],
+          ...userMatch,
+        },
+        { $set: { isTrash: false, trashedAt: null } }
+      );
+
+      await Folder.updateMany(
+        {
+          $or: [{ parentId: { $in: validFolderIds } }, { parentFolder: { $in: validFolderIds } }],
           ...userMatch,
         },
         { $set: { isTrash: false, trashedAt: null } }
@@ -641,7 +656,12 @@ const handleBatchRestore = async (req, res) => {
     const actualStorageUsed = stats[0]?.actualUsedBytes || 0;
     await User.findByIdAndUpdate(rawUserId, { storageUsed: actualStorageUsed });
 
-    return res.status(200).json({ success: true, restoredCount: fileIds.length + folderIds.length });
+    return res.status(200).json({
+      success: true,
+      restoredFiles: validFileIds.length,
+      restoredFolders: validFolderIds.length,
+      restoredCount: validFileIds.length + validFolderIds.length,
+    });
   } catch (err) {
     console.error('Restore error:', err);
     return res.status(500).json({ error: 'Failed to restore items' });

@@ -1,5 +1,8 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { formatBytes } from '../utils/formatters';
+
+let globalDashboardStorageCache = null;
 
 /**
  * Native Web Crypto API SHA-256 calculation
@@ -131,4 +134,77 @@ export const processQueueItem = async ({
   }
 };
 
-export default FolderNavigationSkeleton;
+// Storage Meter Widget Component
+export const StorageMeter = ({ storageStats: propStats, fetchStorageStats }) => {
+  const [storageStats, setStorageStats] = useState(() => propStats || globalDashboardStorageCache || null);
+
+  useEffect(() => {
+    if (propStats) {
+      globalDashboardStorageCache = propStats;
+      setStorageStats(propStats);
+    }
+  }, [propStats]);
+
+  useEffect(() => {
+    if (typeof fetchStorageStats === 'function') {
+      fetchStorageStats();
+    }
+  }, [fetchStorageStats]);
+
+  const percentage = storageStats?.percentage !== undefined
+    ? storageStats.percentage
+    : (storageStats?.usedPercentage !== undefined
+      ? storageStats.usedPercentage
+      : (storageStats
+        ? Math.min(100, Math.round(((storageStats.storageUsed || storageStats.usedBytes || storageStats.used || 0) / (storageStats.storageLimit || storageStats.totalLimitBytes || storageStats.limit || 5368709120)) * 100))
+        : '...'));
+
+  return (
+    <div className="flex items-center gap-3 bg-zinc-900/60 border border-zinc-800/80 rounded-2xl p-4">
+      <div className="relative w-12 h-12 flex items-center justify-center">
+        {/* Percentage meter ring */}
+        <span className="text-xs font-semibold text-zinc-200">
+          {storageStats ? `${percentage}%` : '...'}
+        </span>
+      </div>
+      <div>
+        <p className="text-xs font-medium uppercase tracking-wider text-zinc-400">
+          Storage Used
+        </p>
+        <p className="text-sm font-semibold text-zinc-100">
+          {storageStats
+            ? `${formatBytes(storageStats.storageUsed || storageStats.used || storageStats.usedBytes || 0)} / ${formatBytes(storageStats.storageLimit || storageStats.limit || storageStats.totalLimitBytes || 5368709120)}`
+            : 'Loading...'}
+        </p>
+      </div>
+    </div>
+  );
+};
+
+export const Dashboard = (props) => {
+  const [storageStats, setStorageStats] = useState(() => props.storageStats || globalDashboardStorageCache || null);
+
+  useEffect(() => {
+    // If storageStats is passed via props and updates in App.jsx, synchronize local state
+    if (props.storageStats) {
+      globalDashboardStorageCache = props.storageStats;
+      setStorageStats(props.storageStats);
+    }
+  }, [props.storageStats]);
+
+  useEffect(() => {
+    // Fallback mount trigger if Dashboard fetches independently
+    if (typeof props.fetchStorageStats === 'function') {
+      props.fetchStorageStats();
+    }
+  }, []);
+
+  return (
+    <div className="space-y-4">
+      <StorageMeter storageStats={storageStats} fetchStorageStats={props.fetchStorageStats} />
+      <FolderNavigationSkeleton />
+    </div>
+  );
+};
+
+export default Dashboard;

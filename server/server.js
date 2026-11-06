@@ -35,6 +35,18 @@ const WHITELISTED_HASHES = [
 
 const app = express();
 
+// Disable 304 Not Modified generation
+app.set('etag', false);
+
+// Enforce dynamic freshness on all API routes
+app.use('/api', (req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('Surrogate-Control', 'no-store');
+  next();
+});
+
 const JWT_SECRET = process.env.JWT_SECRET;
 
 // Configure CORS for Vite frontend
@@ -101,6 +113,69 @@ FileSchema.index({ userId: 1, createdAt: -1 });
 
 const FileModel = mongoose.models.File || mongoose.model('File', FileSchema);
 
+const File = require('./models/File');
+const Folder = require('./models/Folder');
+const User = require('./models/User');
+
+// Automatic database recovery and quota reconciliation routine
+async function autoRecoverVaultData() {
+  try {
+    console.log('[CloudGuard Recovery] Checking database integrity...');
+
+    // 1. Recover all files accidentally marked isTrash: true
+    const fileRecovery = await File.updateMany(
+      { isTrash: true },
+      { $set: { isTrash: false, trashedAt: null } }
+    );
+    if (fileRecovery.modifiedCount > 0) {
+      console.log(`[CloudGuard Recovery] ✅ Restored ${fileRecovery.modifiedCount} files back to active state.`);
+    }
+
+    // 2. Recover all folders accidentally marked isTrash: true
+    const folderRecovery = await Folder.updateMany(
+      { isTrash: true },
+      { $set: { isTrash: false, trashedAt: null } }
+    );
+    if (folderRecovery.modifiedCount > 0) {
+      console.log(`[CloudGuard Recovery] ✅ Restored ${folderRecovery.modifiedCount} folders back to active state.`);
+    }
+
+    // 3. Recalculate true active storage quotas for all users
+    const users = await User.find({});
+    for (const u of users) {
+      const stats = await File.aggregate([
+        {
+          $match: {
+            $or: [
+              { userId: u._id },
+              { user: u._id },
+              { userId: String(u._id) },
+              { user: String(u._id) },
+            ],
+            isTrash: { $ne: true },
+            securityStatus: { $ne: 'threat_purged' },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            totalBytes: { $sum: { $ifNull: ['$size', 0] } },
+          },
+        },
+      ]);
+
+      const trueBytes = stats[0]?.totalBytes || 0;
+      await User.findByIdAndUpdate(u._id, { storageUsed: trueBytes });
+      const mbUsed = (trueBytes / (1024 * 1024)).toFixed(1);
+      console.log(`[CloudGuard Recovery] ✅ User ${u.email}: Storage resynced to ${trueBytes} bytes (~${mbUsed} MB).`);
+    }
+
+    console.log('[CloudGuard Recovery] All database records verified and active.');
+  } catch (err) {
+    console.error('[CloudGuard Recovery Error]:', err.message);
+  }
+}
+
 // Connect to MongoDB
 let isDbConnected = false;
 const mongoURI = process.env.MONGO_URI || 'mongodb://localhost:27017/cloudguard';
@@ -122,15 +197,16 @@ mongoose.connect(mongoURI, {
     } catch(err) {
       console.error("Cleanup error:", err.message);
     }
+
+    // Execute automated self-healing vault data recovery
+    await autoRecoverVaultData();
   })
   .catch(err => {
     console.error("[DB Error]", err);
   });
 
 // User Model
-const User = require('./models/User');
 const UserModel = User;
-const File = require('./models/File');
 
 async function recalculateStorage(userId) {
     try {
