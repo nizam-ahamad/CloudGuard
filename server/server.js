@@ -1398,18 +1398,25 @@ app.get('/api/files', verifyToken, async (req, res) => {
     const isRecent = req.query.recent === 'true';
     const searchQuery = req.query.search || '';
     const targetFolderId = req.query.folderId || req.query.folder || null;
-    const userId = req.user._id || req.user.id;
+    const userId = req.user?.id || req.user?._id || req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
 
     let query = {
-      userId: userId,
-      isTrash: false,
+      $or: [{ userId: userId }, { user: userId }],
+      isTrash: { $ne: true },
       securityStatus: { $ne: 'threat_purged' }
     };
     
     if (searchQuery) {
-      query.$or = [
-        { name: { $regex: searchQuery, $options: 'i' } },
-        { originalName: { $regex: searchQuery, $options: 'i' } }
+      query.$and = [
+        {
+          $or: [
+            { name: { $regex: searchQuery, $options: 'i' } },
+            { originalName: { $regex: searchQuery, $options: 'i' } }
+          ]
+        }
       ];
     } else if (!isRecent) {
       if (!targetFolderId || targetFolderId === 'null' || targetFolderId === 'undefined') {
@@ -1421,7 +1428,11 @@ app.get('/api/files', verifyToken, async (req, res) => {
       } else {
         // SUBFOLDER:
         // Match files assigned to targetFolderId via either field
-        query.$or = [{ folderId: targetFolderId }, { folder: targetFolderId }];
+        query.$and = [
+          {
+            $or: [{ folderId: targetFolderId }, { folder: targetFolderId }]
+          }
+        ];
       }
     }
 

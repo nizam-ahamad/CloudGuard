@@ -25,6 +25,25 @@ import { Folder, FolderInput, X, MoreVertical, Pencil, Info, LayoutGrid, List, C
 
 import { API_BASE_URL } from "./config";
 
+// Global 401 Interceptor to Stop Request Spam & Redirect
+axios.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response && error.response.status === 401) {
+      const currentPath = window.location.pathname;
+      // Only redirect if currently on an authenticated dashboard route
+      if (currentPath.startsWith('/dashboard')) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        sessionStorage.removeItem('token');
+        sessionStorage.removeItem('user');
+        window.location.href = '/login?expired=true';
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
 class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
@@ -131,7 +150,8 @@ function App() {
       setIsForgotLoading(false);
     }
   };
-  const [storageStats, setStorageStats] = useState({ usedBytes: 0, totalLimitBytes: 1, usedPercentage: 0 });
+  const defaultStorageLimit = 5368709120; // 5 GB default
+  const [storageStats, setStorageStats] = useState({ usedBytes: 0, totalLimitBytes: defaultStorageLimit, storageLimit: defaultStorageLimit, usedPercentage: 0 });
   const [searchQuery, setSearchQuery] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -910,32 +930,32 @@ function App() {
     }
   }, [token]);
 
-  // Deduplicate folder fetch triggers on URL search changes
+  // Stabilize navigation effect: ONLY depend on the search query parameter string
   useEffect(() => {
-    const authToken = token || localStorage.getItem('token') || sessionStorage.getItem('token');
-    if (!authToken) return;
+    const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+    if (!token) return; // Do not attempt requests if user is not logged in
 
     const params = new URLSearchParams(window.location.search);
-    const folderIdFromUrl = params.get('folder') || null;
+    const activeFolderId = params.get('folder') || null;
 
-    // Prevent duplicate back-to-back triggers for the exact same folder
-    if (lastFetchedFolderIdRef.current === folderIdFromUrl) {
+    // Prevent duplicate execution for the same folder ID
+    if (lastFetchedFolderIdRef.current === activeFolderId) {
       return;
     }
-    lastFetchedFolderIdRef.current = folderIdFromUrl;
+    lastFetchedFolderIdRef.current = activeFolderId;
 
-    fetchFolders(folderIdFromUrl);
-    fetchFiles(folderIdFromUrl);
-  }, [window.location.search, token, fetchFolders, fetchFiles]);
+    fetchFolders(activeFolderId);
+    fetchFiles(activeFolderId);
+  }, [window.location.search]);
 
   // Separate trigger for view mode or search query changes
   useEffect(() => {
-    const authToken = token || localStorage.getItem('token') || sessionStorage.getItem('token');
-    if (!authToken) return;
+    const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+    if (!token) return;
     const params = new URLSearchParams(window.location.search);
-    const folderIdFromUrl = params.get('folder') || null;
-    fetchFiles(folderIdFromUrl);
-  }, [viewMode, searchQuery, token, fetchFiles]);
+    const activeFolderId = params.get('folder') || null;
+    fetchFiles(activeFolderId);
+  }, [viewMode, searchQuery]);
 
   const toggleSort = () => {
     const newOrder = sortOrder === 'newest' ? 'oldest' : 'newest';
@@ -1009,28 +1029,9 @@ function App() {
     }
   };
 
-  useEffect(() => {
-    if (token) fetchFiles();
-  }, [currentDirectory, token, fetchFiles]);
-
   const addToast = (type, message) => {
     toast.show(message, type);
   };
-
-  useEffect(() => {
-    const interceptor = axios.interceptors.response.use(
-      (response) => response,
-      (error) => {
-        if (error.response && error.response.status === 401) {
-          localStorage.clear();
-          sessionStorage.clear();
-          window.location.href = '/';
-        }
-        return Promise.reject(error);
-      }
-    );
-    return () => axios.interceptors.response.eject(interceptor);
-  }, []);
 
   useEffect(() => {
     const processNext = async () => {
@@ -1198,7 +1199,7 @@ function App() {
     if (!filesToUpload || filesToUpload.length === 0) return;
 
     const totalUploadSize = Array.from(filesToUpload).reduce((sum, file) => sum + file.size, 0);
-    const availableBytes = storageStats.totalLimitBytes - storageStats.usedBytes;
+    const availableBytes = (storageStats?.storageLimit || storageStats?.totalLimitBytes || defaultStorageLimit) - (storageStats?.storageUsed || storageStats?.usedBytes || 0);
     
     if (totalUploadSize > availableBytes) {
       addToast('error', "Upload Failed: Insufficient storage space.");
@@ -1923,13 +1924,13 @@ function App() {
             <div className="relative w-12 h-12">
               <svg className="w-full h-full transform -rotate-90" viewBox="0 0 36 36">
                 <path className="text-surface-dim" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" strokeWidth="3"></path>
-                <path className="text-secondary" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" strokeDasharray={`${Math.min(storageStats.usedPercentage, 100)}, 100`} strokeWidth="3"></path>
+                <path className="text-secondary" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" strokeDasharray={`${Math.min((storageStats?.storageUsed || storageStats?.usedBytes || 0) / (storageStats?.storageLimit || storageStats?.totalLimitBytes || defaultStorageLimit) * 100, 100)}, 100`} strokeWidth="3"></path>
               </svg>
-              <div className="absolute inset-0 flex items-center justify-center font-label-md text-[10px] font-bold text-on-surface dark:text-[#c4c7c5]">{Math.min(100, Math.round(storageStats.usedPercentage))}%</div>
+              <div className="absolute inset-0 flex items-center justify-center font-label-md text-[10px] font-bold text-on-surface dark:text-[#c4c7c5]">{Math.min(100, Math.round((storageStats?.storageUsed || storageStats?.usedBytes || 0) / (storageStats?.storageLimit || storageStats?.totalLimitBytes || defaultStorageLimit) * 100))}%</div>
             </div>
             <div>
               <p className="font-label-md text-label-md text-on-surface-variant dark:text-[#c4c7c5] uppercase tracking-wider">Storage Used</p>
-              <p className="font-body-md text-body-md font-medium dark:text-[#e3e3e3]">{formatBytes(storageStats.usedBytes)} / {formatBytes(storageStats.totalLimitBytes, 0)}</p>
+              <p className="font-body-md text-body-md font-medium dark:text-[#e3e3e3]">{formatBytes(storageStats?.storageUsed || storageStats?.usedBytes || storageStats?.used || 0)} / {formatBytes(storageStats?.storageLimit || storageStats?.totalLimitBytes || storageStats?.limit || defaultStorageLimit, 0)}</p>
             </div>
           </div>
         </div>

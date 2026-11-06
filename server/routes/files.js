@@ -123,21 +123,30 @@ router.get('/:id/access', authMiddleware, async (req, res) => {
 // -------------------------------------------------------------
 router.get('/', authMiddleware, async (req, res) => {
   try {
+    // 1. Guard against missing req.user
+    const userId = req.user?.id || req.user?._id || req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
     const targetFolderId = req.query.folderId || req.query.folder || null;
-    const userId = req.user.id || req.user._id;
     const isRecent = req.query.recent === 'true';
     const searchQuery = req.query.search || '';
 
     const query = {
-      userId,
-      isTrash: false,
+      $or: [{ userId: userId }, { user: userId }],
+      isTrash: { $ne: true },
       securityStatus: { $ne: 'threat_purged' },
     };
 
     if (searchQuery) {
-      query.$or = [
-        { name: { $regex: searchQuery, $options: 'i' } },
-        { originalName: { $regex: searchQuery, $options: 'i' } }
+      query.$and = [
+        {
+          $or: [
+            { name: { $regex: searchQuery, $options: 'i' } },
+            { originalName: { $regex: searchQuery, $options: 'i' } }
+          ],
+        },
       ];
     } else if (!isRecent) {
       if (!targetFolderId || targetFolderId === 'null' || targetFolderId === 'undefined') {
@@ -147,11 +156,14 @@ router.get('/', authMiddleware, async (req, res) => {
         query.folder = null;
         query.folderId = null;
       } else {
-        // SUBFOLDER:
-        // Match files assigned to targetFolderId via either field
-        query.$or = [
-          { folder: targetFolderId },
-          { folderId: targetFolderId },
+        // Subfolder: match targetFolderId via either pointer field
+        query.$and = [
+          {
+            $or: [
+              { folder: targetFolderId },
+              { folderId: targetFolderId },
+            ],
+          },
         ];
       }
     }
