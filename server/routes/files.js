@@ -141,9 +141,18 @@ router.get('/', authMiddleware, async (req, res) => {
       ];
     } else if (!isRecent) {
       if (!targetFolderId || targetFolderId === 'null' || targetFolderId === 'undefined') {
-        query.$or = [{ folder: null }, { folderId: null }];
+        // HOME (Root Directory):
+        // A file belongs to Home ONLY if it is not inside ANY folder.
+        // Both folder and folderId must be null/unset.
+        query.folder = null;
+        query.folderId = null;
       } else {
-        query.$or = [{ folder: targetFolderId }, { folderId: targetFolderId }];
+        // SUBFOLDER:
+        // Match files assigned to targetFolderId via either field
+        query.$or = [
+          { folder: targetFolderId },
+          { folderId: targetFolderId },
+        ];
       }
     }
 
@@ -184,37 +193,39 @@ router.get('/', authMiddleware, async (req, res) => {
 // -------------------------------------------------------------
 router.post('/presigned-url', authMiddleware, async (req, res) => {
   try {
-    const { fileName, filename, fileSize, size, mimeType, contentType, folderId, folder } = req.body;
-    const targetFileName = fileName || filename;
-    const targetFileSize = fileSize !== undefined ? Number(fileSize) : (size !== undefined ? Number(size) : 0);
-    const targetMimeType = mimeType || contentType || 'application/octet-stream';
+    // 1. Accept any standard property naming convention
+    const fileName = req.body.fileName || req.body.name || req.body.filename || req.body.originalName;
+    const fileSize = req.body.fileSize !== undefined ? req.body.fileSize : req.body.size;
+    const mimeType = req.body.mimeType || req.body.type || req.body.contentType || 'application/octet-stream';
+    const activeFolder = req.body.folderId || req.body.folder || null;
     const userId = req.user.id || req.user._id;
-    const activeFolder = folderId || folder || null;
 
-    if (!targetFileName || !targetFileSize) {
+    if (!fileName || fileSize === undefined || fileSize === null) {
       return res.status(400).json({ error: 'Filename and file size are required' });
     }
 
+    // 2. Storage Quota Enforcement
     const user = await User.findById(userId).select('storageUsed storageLimit').lean();
     if (!user) return res.status(404).json({ error: 'User not found' });
 
     const currentUsed = user.storageUsed || 0;
     const limit = user.storageLimit || 5368709120; // 5 GB fallback default
-    if (currentUsed + targetFileSize > limit) {
+    if (currentUsed + Number(fileSize) > limit) {
       return res.status(403).json({ error: 'Storage quota exceeded. Upgrade required.' });
     }
 
-    const sanitized = targetFileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const sanitized = String(fileName).replace(/[^a-zA-Z0-9._-]/g, '_');
     const s3Key = `uploads/${userId}/${Date.now()}-${sanitized}`;
 
+    // 3. Pre-create MongoDB record
     const newFile = await File.create({
-      name: targetFileName,
-      originalName: targetFileName,
+      name: fileName,
+      originalName: fileName,
       sanitizedName: sanitized,
       diskName: sanitized,
-      size: targetFileSize,
-      mimeType: targetMimeType,
-      mimetype: targetMimeType,
+      size: Number(fileSize),
+      mimeType,
+      mimetype: mimeType,
       s3Key,
       userId,
       user: userId,
@@ -232,12 +243,12 @@ router.post('/presigned-url', authMiddleware, async (req, res) => {
     const command = new PutObjectCommand({
       Bucket: bucket,
       Key: s3Key,
-      ContentType: targetMimeType,
+      ContentType: mimeType,
     });
 
     const presignedUrl = await getSignedUrl(s3Client, command, { expiresIn: 900 });
 
-    res.json({
+    return res.status(200).json({
       presignedUrl,
       signedUrl: presignedUrl,
       fileId: newFile._id,
@@ -246,7 +257,7 @@ router.post('/presigned-url', authMiddleware, async (req, res) => {
     });
   } catch (err) {
     console.error('Presigned URL error:', err);
-    res.status(500).json({ error: 'Failed to generate upload ticket' });
+    return res.status(500).json({ error: 'Failed to generate upload ticket' });
   }
 });
 
@@ -256,8 +267,19 @@ router.post('/presigned-url', authMiddleware, async (req, res) => {
 router.post('/finalize-upload', authMiddleware, async (req, res) => {
   try {
     const { fileId, sha256 } = req.body;
-    const file = await File.findById(fileId);
-    if (!file) return res.status(404).json({ error: 'File record not found' });
+    const userId = req.user.id || req.user._id;
+    const userMatch = mongoose.Types.ObjectId.isValid(userId)
+      ? { $in: [String(userId), new mongoose.Types.ObjectId(userId)] }
+      : String(userId);
+
+    const file = await File.findOne({
+      _id: fileId,
+      $or: [{ userId: userMatch }, { user: userMatch }]
+    });
+
+    if (!file) {
+      return res.status(404).json({ error: 'File not found or unauthorized' });
+    }
 
     let isMalicious = false;
     let threatReason = '';
@@ -407,6 +429,58 @@ router.delete('/purge-test-threats', authMiddleware, async (req, res) => {
   }
 });
 
+// -------------------------------------------------------------
+// 6. SECURE SINGLE-FILE DELETE (Strict Tenant Isolation)
+// -------------------------------------------------------------
+router.delete('/:id', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id || req.user._id;
+    const userMatch = mongoose.Types.ObjectId.isValid(userId)
+      ? { $in: [String(userId), new mongoose.Types.ObjectId(userId)] }
+      : String(userId);
+
+    const file = await File.findOne({
+      _id: req.params.id,
+      $or: [{ userId: userMatch }, { user: userMatch }]
+    });
+
+    if (!file) {
+      return res.status(404).json({ error: 'File not found or unauthorized' });
+    }
+
+    const keyToDelete = file.s3Key || file.key;
+    if (keyToDelete) {
+      try {
+        const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
+        await s3Client.send(new DeleteObjectCommand({
+          Bucket: bucket,
+          Key: keyToDelete,
+        }));
+      } catch (s3Err) {
+        console.warn(`S3 delete notice (${keyToDelete}):`, s3Err.message);
+      }
+    }
+
+    await File.deleteOne({ _id: req.params.id });
+
+    // Decrement user storage
+    if (file.size > 0 && file.securityStatus !== 'threat_purged') {
+      await User.findByIdAndUpdate(userId, {
+        $inc: { storageUsed: -file.size }
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'File deleted successfully',
+      deletedId: req.params.id
+    });
+  } catch (err) {
+    console.error('Delete error:', err);
+    return res.status(500).json({ error: 'Failed to delete file' });
+  }
+});
+
 /**
  * GET /api/files/photos
  * Ultra-lightweight endpoint with field projection and lean query.
@@ -548,23 +622,78 @@ router.get('/:id/download-url', authMiddleware, async (req, res) => {
   }
 });
 
+// -------------------------------------------------------------
+// 7. SECURE FILE MOVE ROUTE (PUT & PATCH /:id/move)
+// -------------------------------------------------------------
+const handleFileMove = async (req, res) => {
+  try {
+    const userId = req.user.id || req.user._id;
+    const userMatch = mongoose.Types.ObjectId.isValid(userId)
+      ? { $in: [String(userId), new mongoose.Types.ObjectId(userId)] }
+      : String(userId);
+
+    const { folderId, folder, parentId, targetFolderId } = req.body;
+    const rawTarget = folderId !== undefined ? folderId : (folder !== undefined ? folder : (parentId !== undefined ? parentId : targetFolderId));
+    const targetParentId = !rawTarget || rawTarget === 'null' || rawTarget === 'undefined' || rawTarget === 'root' ? null : rawTarget;
+
+    const file = await File.findOne({
+      _id: req.params.id,
+      $or: [{ userId: userMatch }, { user: userMatch }],
+      isTrash: false
+    });
+
+    if (!file) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+
+    file.folder = targetParentId;
+    file.folderId = targetParentId;
+    await file.save();
+
+    return res.status(200).json({ success: true, file });
+  } catch (err) {
+    console.error('Error moving file:', err);
+    return res.status(500).json({ error: 'Failed to move file' });
+  }
+};
+
+router.put('/:id/move', authMiddleware, handleFileMove);
+router.patch('/:id/move', authMiddleware, handleFileMove);
+
 /**
- * PUT /folder/:id & PATCH /folder/:id - Rename folder with duplicate name guard
+ * PUT /folder/:id & PATCH /folder/:id - Rename/Move folder with duplicate name guard
  */
 const handleFolderRenameInFiles = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, newName } = req.body;
+    const { name, newName, parentId, targetFolderId } = req.body;
     const trimmedName = (name || newName || '').trim();
+    const userId = req.user?._id || req.user?.id;
+    const userMatch = mongoose.Types.ObjectId.isValid(userId)
+      ? { $in: [String(userId), new mongoose.Types.ObjectId(userId)] }
+      : String(userId);
+
+    // If name is omitted but destination is provided, execute move
+    if (!trimmedName && (parentId !== undefined || targetFolderId !== undefined)) {
+      const dest = parentId !== undefined ? parentId : targetFolderId;
+      const targetParentId = dest === 'null' || dest === 'root' || !dest ? null : dest;
+      if (id === targetParentId) {
+        return res.status(400).json({ error: 'Cannot move a folder into itself' });
+      }
+      const targetFolder = await Folder.findOne({ _id: id, $or: [{ userId: userMatch }, { user: userMatch }] });
+      if (!targetFolder) return res.status(404).json({ error: 'Folder not found' });
+      targetFolder.parentId = targetParentId;
+      targetFolder.parentFolder = targetParentId;
+      await targetFolder.save();
+      return res.json({ success: true, folder: targetFolder });
+    }
 
     if (!trimmedName) {
       return res.status(400).json({ error: 'Folder name cannot be empty' });
     }
 
-    const userId = req.user?._id || req.user?.id;
-
     // 1. Find the target folder
-    const targetFolder = await Folder.findOne({ _id: id, userId });
+    const targetFolder = await Folder.findOne({ _id: id, $or: [{ userId: userMatch }, { user: userMatch }] });
     if (!targetFolder) {
       return res.status(404).json({ error: 'Folder not found' });
     }
@@ -579,7 +708,7 @@ const handleFolderRenameInFiles = async (req, res) => {
       _id: { $ne: id },
       parentId: targetFolder.parentId || null,
       name: trimmedName,
-      userId,
+      $or: [{ userId: userMatch }, { user: userMatch }],
     });
 
     if (existingDuplicate) {

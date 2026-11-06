@@ -196,7 +196,7 @@ function App() {
     if (token) {
       fetchStorageStats();
     }
-  }, [fetchStorageStats]);
+  }, []); // Runs once on mount
 
 
   const handleResendOtp = async () => {
@@ -298,6 +298,9 @@ function App() {
   const fileInputRef = useRef(null);
   const prevUploadRef = useRef({ time: 0, loaded: 0 });
   const abortControllerRef = useRef(null);
+  const activeFolderIdRef = useRef(null);
+  const lastFetchedFolderIdRef = useRef(undefined);
+  const [isFilesLoading, setIsFilesLoading] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
@@ -531,32 +534,55 @@ function App() {
   const handleMoveConfirm = async (targetFolderId) => {
     try {
       setIsMoveLoading(true);
-      const items = itemsToMove.length > 0 ? itemsToMove : (Array.isArray(fileToMove) ? fileToMove : [fileToMove]);
-      
-      const folderIdsToMove = [];
-      const fileIdsToMove = [];
+      const items = itemsToMove.length > 0 ? itemsToMove : (Array.isArray(fileToMove) ? fileToMove : (fileToMove ? [fileToMove] : []));
+      if (!items || items.length === 0) return;
 
-      items.forEach(item => {
-        if (!item) return;
-        if (typeof item === 'string') {
-          const isF = folders.some(f => String(f._id) === item);
-          if (isF) folderIdsToMove.push(item);
-          else fileIdsToMove.push(item);
-        } else if (item.isFolder || item.parentId !== undefined) {
-          folderIdsToMove.push(String(item._id || item.id));
+      const destinationId = (!targetFolderId || targetFolderId === 'null' || targetFolderId === 'root') ? null : targetFolderId;
+
+      const authToken = token || localStorage.getItem('token') || sessionStorage.getItem('token');
+
+      // Single item move
+      if (items.length === 1) {
+        const item = items[0];
+        const isFolder = item.isFolder || item.type === 'folder' || item.parentId !== undefined || (!item.s3Key && !item.mimeType && !item.size);
+        const itemId = item._id || item.id;
+
+        if (isFolder) {
+          if (String(itemId) === String(destinationId)) {
+            addToast('error', 'Cannot move a folder into itself');
+            setIsMoveLoading(false);
+            return;
+          }
+          await axios.put(
+            `${API_BASE_URL}/api/folders/${itemId}/move`,
+            { parentId: destinationId, targetFolderId: destinationId },
+            { headers: { Authorization: `Bearer ${authToken}` } }
+          );
         } else {
-          fileIdsToMove.push(String(item._id || item.id));
+          await axios.put(
+            `${API_BASE_URL}/api/files/${itemId}/move`,
+            { folderId: destinationId, targetFolderId: destinationId },
+            { headers: { Authorization: `Bearer ${authToken}` } }
+          );
         }
-      });
+      } else {
+        // Multi-item batch move
+        const folderIdsToMove = [];
+        const fileIdsToMove = [];
 
-      if (folderIdsToMove.length > 0 || fileIdsToMove.length > 1) {
+        items.forEach(item => {
+          if (!item) return;
+          const isF = item.isFolder || item.type === 'folder' || item.parentId !== undefined || (!item.s3Key && !item.mimeType && !item.size);
+          const id = String(item._id || item.id || item);
+          if (isF) folderIdsToMove.push(id);
+          else fileIdsToMove.push(id);
+        });
+
         await axios.put(`${API_BASE_URL}/api/folders/move-batch`, {
           folderIds: folderIdsToMove,
           fileIds: fileIdsToMove,
-          targetFolderId
-        }, { headers: { Authorization: `Bearer ${token}` } });
-      } else if (fileIdsToMove.length === 1) {
-        await axios.patch(`${API_BASE_URL}/api/files/${fileIdsToMove[0]}/move`, { targetFolderId }, { headers: { Authorization: `Bearer ${token}` } });
+          targetFolderId: destinationId
+        }, { headers: { Authorization: `Bearer ${authToken}` } });
       }
 
       setShowMoveModal(false);
@@ -564,10 +590,11 @@ function App() {
       setFileToMove(null);
       clearSelection();
       addToast('success', 'Item(s) moved successfully');
-      await fetchFiles();
+      await fetchFiles(currentFolderId);
       await fetchFolders(currentFolderId);
     } catch (err) {
-      addToast('error', err.response?.data?.message || err.response?.data?.error || 'Failed to move item(s)');
+      console.error('Move error:', err);
+      addToast('error', err.response?.data?.error || err.response?.data?.message || 'Failed to move item(s)');
     } finally {
       setIsMoveLoading(false);
     }
@@ -649,10 +676,44 @@ function App() {
     }
   }, [searchParams, token]);
 
-  const handleFolderClick = (folder) => {
+  const handleNavigateHome = () => {
+    // 1. Abort in-flight requests immediately
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    // 2. Clear state instantly (0ms)
+    activeFolderIdRef.current = null;
+    lastFetchedFolderIdRef.current = null;
     clearSelection();
+    setFiles([]);
+    setFolders([]);
+    setCurrentFolderId(null);
+    setIsContentLoading(true);
+    setIsFilesLoading(true);
+    setBreadcrumbs([{ id: null, name: 'Home' }]);
+
+    // 3. Update URL and trigger clean fetch
+    setSearchParams({});
+    if (location.pathname !== '/dashboard') {
+      navigate('/dashboard');
+    }
+    fetchFolders(null);
+    fetchFiles(null);
+  };
+
+  const handleFolderClick = (folder) => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    clearSelection();
+    const folderId = folder._id;
+    activeFolderIdRef.current = folderId;
+    lastFetchedFolderIdRef.current = folderId;
+
     // 1. Instant folder navigation handler (0ms UI response)
-    setCurrentFolderId(folder._id);
+    setCurrentFolderId(folderId);
     setBreadcrumbs(prev => {
       const existingIndex = prev.findIndex(b => b.id === folder._id);
       if (existingIndex >= 0) {
@@ -660,28 +721,41 @@ function App() {
       }
       return [...prev, { id: folder._id, name: folder.name }];
     });
-    setSearchParams({ folder: folder._id });
 
     // 2. Clear previous list so stale items vanish immediately
     setFiles([]);
     setFolders([]);
     setIsContentLoading(true);
+    setIsFilesLoading(true);
 
-    // 3. Trigger data fetch for target folder
-    fetchContents(folder._id);
+    // 3. Update URL and trigger clean fetch
+    setSearchParams({ folder: folderId });
+    fetchFolders(folderId);
+    fetchFiles(folderId);
   };
 
   const handleBreadcrumbClick = (folderId, index) => {
-    clearSelection();
-    setCurrentFolderId(folderId);
-    setBreadcrumbs(prev => prev.slice(0, index + 1));
-    setSearchParams(folderId ? { folder: folderId } : {});
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
 
+    clearSelection();
+    const targetId = folderId || null;
+    activeFolderIdRef.current = targetId;
+    lastFetchedFolderIdRef.current = targetId;
+
+    setCurrentFolderId(targetId);
+    setBreadcrumbs(prev => prev.slice(0, index + 1));
+
+    // Clear previous list so stale items vanish immediately
     setFiles([]);
     setFolders([]);
     setIsContentLoading(true);
+    setIsFilesLoading(true);
 
-    fetchContents(folderId);
+    setSearchParams(targetId ? { folder: targetId } : {});
+    fetchFolders(targetId);
+    fetchFiles(targetId);
   };
 
   const handleCloseSettings = () => {
@@ -702,11 +776,10 @@ function App() {
     // 2. Navigate cleanly to the target view and update viewMode
     if (tab === 'files') {
       newParams.delete('tab');
+      newParams.delete('folder');
       setViewMode('all');
-      setSearchParams(newParams);
-      if (location.pathname !== '/dashboard') {
-        navigate('/dashboard');
-      }
+      handleNavigateHome();
+      return;
     } else if (tab === 'recent') {
       newParams.set('tab', 'recent');
       setViewMode('recent');
@@ -751,47 +824,71 @@ function App() {
     setIsAccountDeleteModalOpen(true);
   };
 
-  const fetchFiles = useCallback(async (targetFolderId) => {
-    try {
-      let url = `${API_BASE_URL}/api/files?`;
-      const params = new URLSearchParams();
-      if (searchQuery) {
-        params.append('search', searchQuery);
-      } else {
-        if (viewMode === 'recent') {
-          params.append('recent', 'true');
-        } else {
-          const folderId = targetFolderId !== undefined ? (targetFolderId || null) : searchParams.get('folder');
-          if (folderId) {
-            params.append('folderId', folderId);
-          }
-        }
-      }
-      url += params.toString();
-      
-      const response = await axios.get(url, { headers: { Authorization: `Bearer ${token}` } });
+  const fetchFiles = useCallback(async (folderId = undefined) => {
+    const targetId = folderId !== undefined
+      ? (folderId || null)
+      : (searchParams.get('folder') || null);
+    activeFolderIdRef.current = targetId;
 
-      // Handle both raw arrays and { files: [...] } wrapper objects safely
-      if (Array.isArray(response.data)) {
-        setFiles(response.data);
-      } else if (response.data && Array.isArray(response.data.files)) {
-        setFiles(response.data.files);
-      } else {
-        setFiles([]);
+    // 1. Abort any previous in-flight file requests
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
+
+    try {
+      setIsFilesLoading(true);
+      setIsContentLoading(true);
+
+      const authToken = token || localStorage.getItem('token') || sessionStorage.getItem('token');
+      
+      const queryParams = {};
+      if (searchQuery) {
+        queryParams.search = searchQuery;
+      } else if (viewMode === 'recent') {
+        queryParams.recent = 'true';
+      } else if (targetId) {
+        queryParams.folderId = targetId;
       }
-    } catch (error) {
-      if (error.response && error.response.status === 401) {
+
+      const res = await axios.get(`${API_BASE_URL}/api/files`, {
+        params: queryParams,
+        headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+        signal: abortControllerRef.current.signal,
+      });
+
+      // 2. CRITICAL RACE CONDITION GUARD:
+      // If user clicked away to another folder while this request was traveling, discard it!
+      if (activeFolderIdRef.current !== targetId) {
+        return;
+      }
+
+      const fileList = Array.isArray(res.data) ? res.data : (res.data?.files || []);
+      setFiles(fileList);
+    } catch (err) {
+      // Ignore canceled requests from AbortController
+      if (axios.isCancel(err) || err.name === 'CanceledError' || err.name === 'AbortError' || err.code === 'ERR_CANCELED') {
+        return;
+      }
+      if (err.response && err.response.status === 401) {
         localStorage.clear();
         sessionStorage.clear();
         window.location.href = '/';
         return;
       }
-      console.error('Error fetching files:', error);
+      console.error('Error fetching files:', err);
+    } finally {
+      // Only turn off skeleton if we are still on the requested folder
+      if (activeFolderIdRef.current === targetId) {
+        setIsFilesLoading(false);
+        setIsContentLoading(false);
+      }
     }
   }, [searchParams, viewMode, token, searchQuery]);
 
   const fetchContents = useCallback(async (targetFolderId) => {
     setIsContentLoading(true);
+    setIsFilesLoading(true);
     try {
       await Promise.all([
         fetchFiles(targetFolderId),
@@ -801,19 +898,44 @@ function App() {
       console.error('Error fetching folder contents:', err);
     } finally {
       setIsContentLoading(false);
+      setIsFilesLoading(false);
     }
   }, [fetchFiles, fetchFolders]);
 
   useEffect(() => {
     if (token) {
       axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-      fetchStorageStats();
-      fetchFiles().finally(() => setIsContentLoading(false));
-      fetchFolders();
     } else {
       delete axios.defaults.headers.common['Authorization'];
     }
-  }, [token, fetchStorageStats, fetchFiles, fetchFolders, searchParams, viewMode, searchQuery]);
+  }, [token]);
+
+  // Deduplicate folder fetch triggers on URL search changes
+  useEffect(() => {
+    const authToken = token || localStorage.getItem('token') || sessionStorage.getItem('token');
+    if (!authToken) return;
+
+    const params = new URLSearchParams(window.location.search);
+    const folderIdFromUrl = params.get('folder') || null;
+
+    // Prevent duplicate back-to-back triggers for the exact same folder
+    if (lastFetchedFolderIdRef.current === folderIdFromUrl) {
+      return;
+    }
+    lastFetchedFolderIdRef.current = folderIdFromUrl;
+
+    fetchFolders(folderIdFromUrl);
+    fetchFiles(folderIdFromUrl);
+  }, [window.location.search, token, fetchFolders, fetchFiles]);
+
+  // Separate trigger for view mode or search query changes
+  useEffect(() => {
+    const authToken = token || localStorage.getItem('token') || sessionStorage.getItem('token');
+    if (!authToken) return;
+    const params = new URLSearchParams(window.location.search);
+    const folderIdFromUrl = params.get('folder') || null;
+    fetchFiles(folderIdFromUrl);
+  }, [viewMode, searchQuery, token, fetchFiles]);
 
   const toggleSort = () => {
     const newOrder = sortOrder === 'newest' ? 'oldest' : 'newest';
@@ -930,12 +1052,23 @@ function App() {
       let currentFileId = null;
 
       try {
+        // Ensure actual File reference is resolved whether nextItem is a File or an Object wrapper
+        const fileObj = nextItem.file instanceof File ? nextItem.file : (nextItem instanceof File ? nextItem : nextItem.file || nextItem);
+
+        const payload = {
+          fileName: fileObj.name || name,
+          name: fileObj.name || name,
+          fileSize: fileObj.size !== undefined ? fileObj.size : size,
+          size: fileObj.size !== undefined ? fileObj.size : size,
+          mimeType: fileObj.type || 'application/octet-stream',
+          type: fileObj.type || 'application/octet-stream',
+          folderId: currentFolderId || null,
+          folder: currentFolderId || null,
+        };
+
         // 1. Request presigned direct S3 upload ticket with quota enforcement
-        const presignRes = await axios.post(`${API_BASE_URL}/api/files/presigned-url`, {
-          fileName: name,
-          fileSize: size,
-          mimeType: file.type || 'application/octet-stream',
-          folderId: currentFolderId
+        const presignRes = await axios.post(`${API_BASE_URL}/api/files/presigned-url`, payload, {
+          headers: { Authorization: `Bearer ${localStorage.getItem('token') || token}` },
         });
         const presignedUrl = presignRes.data.presignedUrl || presignRes.data.signedUrl;
         const fileId = presignRes.data.fileId;
@@ -944,9 +1077,9 @@ function App() {
         // 2. Direct S3 Upload with native progress tracking (without server proxying)
         const s3Axios = axios.create();
         delete s3Axios.defaults.headers.common['Authorization'];
-        await s3Axios.put(presignedUrl, file, {
+        await s3Axios.put(presignedUrl, fileObj, {
           headers: {
-            'Content-Type': file.type || 'application/octet-stream'
+            'Content-Type': fileObj.type || 'application/octet-stream'
           },
           transformRequest: [(data, headers) => {
             if (headers) {
@@ -957,7 +1090,8 @@ function App() {
           }],
           signal: abortControllerRef.current.signal,
           onUploadProgress: (progressEvent) => {
-            const percentCompleted = Math.round((progressEvent.loaded * 100) / size);
+            const totalBytes = fileObj.size !== undefined ? fileObj.size : size;
+            const percentCompleted = totalBytes > 0 ? Math.round((progressEvent.loaded * 100) / totalBytes) : 100;
             const now = Date.now();
             const timeElapsed = now - prevUploadRef.current.time;
             if (timeElapsed >= 500) {
@@ -979,7 +1113,7 @@ function App() {
         setUploadQueue(prev => prev.map(item => item.id === id ? { ...item, status: 'analyzing' } : item));
 
         // Compute client-side SHA-256 using Web Crypto API
-        const computedSha256 = nextItem.fileHash || await computeSHA256(file);
+        const computedSha256 = nextItem.fileHash || await computeSHA256(fileObj);
 
         // 4. Finalize & graceful scan execution (auto-purged on threat)
         const finalizeRes = await axios.post(`${API_BASE_URL}/api/files/finalize-upload`, {
@@ -2007,7 +2141,7 @@ function App() {
             </div>
           </div>
 
-          {isContentLoading ? (
+          {(isContentLoading || isFilesLoading) ? (
             <div className="space-y-2 mt-4 animate-pulse">
               {/* Folder Skeletons */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">

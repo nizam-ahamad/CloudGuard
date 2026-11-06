@@ -74,19 +74,31 @@ export const processQueueItem = async ({
     const s3Axios = axios.create();
     delete s3Axios.defaults.headers.common['Authorization'];
 
-    const presignRes = await axios.post(`${apiBaseUrl}/api/files/presigned-url`, {
-      fileName: name,
-      fileSize: size,
-      mimeType: file.type || 'application/octet-stream',
-      folderId: folderId || null
+    // Ensure actual File reference is resolved whether item is a File or an Object wrapper
+    const fileObj = item.file instanceof File ? item.file : (item instanceof File ? item : item.file || item);
+
+    const payload = {
+      fileName: fileObj.name || name,
+      name: fileObj.name || name,
+      fileSize: fileObj.size !== undefined ? fileObj.size : size,
+      size: fileObj.size !== undefined ? fileObj.size : size,
+      mimeType: fileObj.type || 'application/octet-stream',
+      type: fileObj.type || 'application/octet-stream',
+      folderId: folderId || null,
+      folder: folderId || null,
+    };
+
+    const token = localStorage.getItem('token');
+    const presignRes = await axios.post(`${apiBaseUrl}/api/files/presigned-url`, payload, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {}
     });
 
     const presignedUrl = presignRes.data.presignedUrl || presignRes.data.signedUrl;
     currentFileId = presignRes.data.fileId;
 
-    await s3Axios.put(presignedUrl, file, {
+    await s3Axios.put(presignedUrl, fileObj, {
       headers: {
-        'Content-Type': file.type || 'application/octet-stream'
+        'Content-Type': fileObj.type || 'application/octet-stream'
       },
       transformRequest: [(data, headers) => {
         if (headers) {
@@ -101,7 +113,7 @@ export const processQueueItem = async ({
 
     if (onStatusChange) onStatusChange('analyzing');
 
-    const computedHash = item.fileHash || await computeSHA256(file);
+    const computedHash = item.fileHash || await computeSHA256(fileObj);
 
     const finalizeRes = await axios.post(`${apiBaseUrl}/api/files/finalize-upload`, {
       fileId: currentFileId,

@@ -16,10 +16,16 @@ server/temp/
 server/storage/
 *.log
 
-# Environment
+# Environment & Secrets
 .env
-.env.local
-.env.development
+.env.*
+*.env
+*.pem
+*.key
+credentials.json
 
-# Extras
+# Stale Test Uploads & API Dumps
+*keys.txt
+*API.txt
+*secret*
 malware_history.txt

@@ -70,6 +70,7 @@ const FolderModel = mongoose.models.Folder || mongoose.model('Folder', FolderSch
 const FileSchema = new mongoose.Schema({
   userId: { type: String, required: true },
   user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  folder: { type: mongoose.Schema.Types.ObjectId, ref: 'Folder', default: null },
   folderId: { type: mongoose.Schema.Types.ObjectId, ref: 'Folder', default: null },
   name: { type: String, required: true },
   originalName: { type: String },
@@ -234,6 +235,7 @@ async function getGlobalStorageUsed() {
 // Auth & Files Modular Routes
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/files', require('./routes/files'));
+app.use('/api/folders', require('./routes/folders'));
 app.use('/api/photos', verifyToken, (req, res, next) => {
   req.url = '/photos' + (req.url === '/' ? '' : req.url);
   return require('./routes/files')(req, res, next);
@@ -1131,8 +1133,23 @@ app.get('/api/folders/:id', verifyToken, async (req, res) => {
 
 const handleFolderRename = async (req, res) => {
   try {
-    const { newName, name } = req.body;
+    const { newName, name, parentId, targetFolderId } = req.body;
     const trimmedName = (newName || name || '').trim();
+
+    // If no name is provided, but destination is provided, execute move instead of throwing error
+    if (!trimmedName && (parentId !== undefined || targetFolderId !== undefined)) {
+      const dest = parentId !== undefined ? parentId : targetFolderId;
+      const targetParentId = dest === 'null' || dest === 'root' || !dest ? null : dest;
+      if (req.params.id === targetParentId) {
+        return res.status(400).json({ error: 'Cannot move a folder into itself' });
+      }
+      const folder = await FolderModel.findOne({ _id: req.params.id, userId: req.user._id });
+      if (!folder) return res.status(404).json({ error: 'Folder not found' });
+      folder.parentId = targetParentId;
+      await folder.save();
+      return res.json({ success: true, folder });
+    }
+
     if (!trimmedName) {
       return res.status(400).json({ error: 'Folder name cannot be empty' });
     }
@@ -1396,8 +1413,14 @@ app.get('/api/files', verifyToken, async (req, res) => {
       ];
     } else if (!isRecent) {
       if (!targetFolderId || targetFolderId === 'null' || targetFolderId === 'undefined') {
-        query.$or = [{ folderId: null }, { folder: null }];
+        // HOME (Root Directory):
+        // A file belongs to Home ONLY if it is not inside ANY folder.
+        // Both folder and folderId must be null/unset.
+        query.folder = null;
+        query.folderId = null;
       } else {
+        // SUBFOLDER:
+        // Match files assigned to targetFolderId via either field
         query.$or = [{ folderId: targetFolderId }, { folder: targetFolderId }];
       }
     }
@@ -1602,38 +1625,74 @@ app.patch('/api/files/:id/rename', verifyToken, async (req, res) => {
   }
 });
 
-// Move Folder Endpoint
-app.patch('/api/folders/:id/move', verifyToken, async (req, res) => {
+// Move Folder Endpoint (supports PUT and PATCH, parentId and targetFolderId)
+const handleFolderMoveInServer = async (req, res) => {
   try {
-    let { targetFolderId } = req.body;
-    if (!targetFolderId || targetFolderId === "null" || targetFolderId === "") {
-      targetFolderId = null;
-    }
-    const folder = await FolderModel.findOne({ _id: req.params.id, userId: req.user._id });
-    if (!folder) {
-      return res.status(404).json({ error: 'Folder not found' });
-    }
-    if (targetFolderId && targetFolderId.toString() === req.params.id.toString()) {
+    const rawUserId = req.user.id || req.user._id;
+    const userIdObj = mongoose.Types.ObjectId.isValid(rawUserId)
+      ? new mongoose.Types.ObjectId(rawUserId)
+      : rawUserId;
+
+    const folderId = req.params.id;
+    const { parentId, parentFolder, destinationId, targetFolderId } = req.body;
+
+    const rawTarget = parentId !== undefined ? parentId : (parentFolder !== undefined ? parentFolder : (destinationId !== undefined ? destinationId : targetFolderId));
+    const targetParentId = !rawTarget || rawTarget === 'null' || rawTarget === 'undefined' || rawTarget === 'root' ? null : rawTarget;
+
+    if (targetParentId && targetParentId.toString() === folderId.toString()) {
       return res.status(400).json({ error: 'Cannot move folder into itself' });
     }
-    folder.parentId = targetFolderId;
-    await folder.save();
-    res.json({ message: 'Folder moved successfully', folder });
-  } catch (err) {
-    console.error('Error moving folder:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
 
-// Move File Endpoint
-app.patch('/api/files/:id/move', verifyToken, async (req, res) => {
-  try {
-    let { targetFolderId } = req.body;
-    
-    // Explicitly handle "null" string, empty string, or missing to prevent CastError
-    if (!targetFolderId || targetFolderId === "null" || targetFolderId === "") {
-      targetFolderId = null;
+    const userQuery = [
+      { userId: userIdObj },
+      { user: userIdObj },
+      { userId: String(rawUserId) },
+      { user: String(rawUserId) },
+    ];
+
+    const folder = await FolderModel.findOne({
+      _id: folderId,
+      isTrash: { $ne: true },
+      $or: userQuery,
+    });
+
+    if (!folder) {
+      return res.status(404).json({ error: 'Folder not found or unauthorized' });
     }
+
+    if (targetParentId) {
+      const destinationFolder = await FolderModel.findOne({
+        _id: targetParentId,
+        isTrash: { $ne: true },
+        $or: userQuery,
+      });
+
+      if (!destinationFolder) {
+        return res.status(404).json({ error: 'Destination folder not found' });
+      }
+    }
+
+    folder.parentId = targetParentId;
+    folder.parentFolder = targetParentId;
+    await folder.save();
+    return res.status(200).json({ message: 'Folder moved successfully', success: true, folder });
+  } catch (err) {
+    if (err.code === 11000) {
+      return res.status(400).json({ error: 'A folder with this name already exists in the destination' });
+    }
+    console.error('Error moving folder:', err);
+    return res.status(500).json({ error: err.message || 'Failed to move folder' });
+  }
+};
+app.patch('/api/folders/:id/move', verifyToken, handleFolderMoveInServer);
+app.put('/api/folders/:id/move', verifyToken, handleFolderMoveInServer);
+
+// Move File Endpoint (supports PUT and PATCH, folderId and targetFolderId)
+const handleFileMoveInServer = async (req, res) => {
+  try {
+    let { targetFolderId, folderId, folder, parentId } = req.body;
+    const rawTarget = folderId !== undefined ? folderId : (folder !== undefined ? folder : (parentId !== undefined ? parentId : targetFolderId));
+    const targetParentId = (!rawTarget || rawTarget === "null" || rawTarget === "undefined" || rawTarget === "" || rawTarget === "root") ? null : rawTarget;
 
     const file = await FileModel.findOne({ _id: req.params.id, userId: req.user._id });
     
@@ -1641,15 +1700,18 @@ app.patch('/api/files/:id/move', verifyToken, async (req, res) => {
       return res.status(404).json({ error: 'File not found' });
     }
     
-    file.folderId = targetFolderId;
+    file.folderId = targetParentId;
+    file.folder = targetParentId;
     await file.save();
     
-    res.json({ message: 'File moved successfully', file });
+    res.json({ message: 'File moved successfully', success: true, file });
   } catch (err) {
     console.error('Error moving file:', err);
     res.status(500).json({ error: err.message });
   }
-});
+};
+app.patch('/api/files/:id/move', verifyToken, handleFileMoveInServer);
+app.put('/api/files/:id/move', verifyToken, handleFileMoveInServer);
 
 // Bulk Move Endpoint
 app.patch('/api/files/bulk-move', verifyToken, async (req, res) => {
@@ -1754,7 +1816,7 @@ const handleMoveBatch = async (req, res) => {
             _id: { $in: validFileIds },
             $or: [{ userId }, { userId: userId.toString() }, { user: userId }]
           },
-          { $set: { folderId: parsedTargetFolderId } }
+          { $set: { folderId: parsedTargetFolderId, folder: parsedTargetFolderId } }
         );
       }
     }
@@ -1930,8 +1992,15 @@ app.get('/api/files/:id/download-url', verifyToken, async (req, res) => {
 // Delete File Endpoint
 app.delete('/api/files/:id', verifyToken, async (req, res) => {
   try {
-    const file = await FileModel.findOne({ _id: req.params.id, userId: req.user._id });
-    if (!file) return res.status(404).json({ error: "File not found" });
+    const userId = req.user?.id || req.user?._id;
+    const userMatch = mongoose.Types.ObjectId.isValid(userId)
+      ? { $in: [String(userId), new mongoose.Types.ObjectId(userId)] }
+      : String(userId);
+    const file = await FileModel.findOne({ 
+      _id: req.params.id, 
+      $or: [{ userId: userMatch }, { user: userMatch }] 
+    });
+    if (!file) return res.status(404).json({ error: "File not found or unauthorized" });
 
     // Determine target S3 key
     const keyToDelete = file.s3Key || (file.location ? new URL(file.location).pathname.slice(1) : null);
