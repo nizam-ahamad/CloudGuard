@@ -89,7 +89,7 @@ const prepareDownloadPayload = (item) => ({
   s3Key: item.s3Key,
 });
 
-// Lightweight Video Thumbnail (Canvas Snapshot - NO active <video> tag in DOM)
+// Lightweight Video Thumbnail (Dynamic aspect-ratio canvas snapshot - zero distortion)
 function LightweightVideoThumbnail({ url, fileId, alt, className }) {
   const [snapshotSrc, setSnapshotSrc] = useState(() => globalThumbnailCache.get(fileId || url) || null);
 
@@ -113,16 +113,27 @@ function LightweightVideoThumbnail({ url, fileId, alt, className }) {
     const handleSeeked = () => {
       try {
         const canvas = document.createElement('canvas');
-        // 480px width maintains crisp detail on mobile and desktop
-        canvas.width = 480;
-        canvas.height = 270;
+        const vw = tempVideo.videoWidth || 480;
+        const vh = tempVideo.videoHeight || 270;
+
+        // Dynamically compute canvas dimensions preserving the true aspect ratio
+        // Handles 9:16 vertical mobile recordings, 16:9 landscape, 4:3, and 1:1 square
+        const maxDimension = 480;
+        if (vw >= vh) {
+          canvas.width = maxDimension;
+          canvas.height = Math.max(1, Math.round((vh / vw) * maxDimension));
+        } else {
+          canvas.height = maxDimension;
+          canvas.width = Math.max(1, Math.round((vw / vh) * maxDimension));
+        }
+
         const ctx = canvas.getContext('2d');
         ctx.drawImage(tempVideo, 0, 0, canvas.width, canvas.height);
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
         globalThumbnailCache.set(key, dataUrl);
         if (!isDestroyed) setSnapshotSrc(dataUrl);
       } catch (err) {
-        // Fallback: silently ignore if canvas is cross-origin tainted
+        // Fallback silently if canvas is cross-origin tainted
       } finally {
         tempVideo.src = '';
         tempVideo.remove();
@@ -150,12 +161,11 @@ function LightweightVideoThumbnail({ url, fileId, alt, className }) {
         alt={alt}
         loading="lazy"
         decoding="async"
-        className={className}
+        className={`${className} object-cover object-center`}
       />
     );
   }
 
-  // Pure CSS placeholder until frame captures (zero DOM video streaming)
   return (
     <div className={`flex flex-col items-center justify-center bg-zinc-950 text-zinc-600 ${className}`}>
       <Play className="w-6 h-6 text-zinc-500 fill-zinc-500/20" />
@@ -630,8 +640,7 @@ export default function PhotosView({ token: propToken }) {
                             alt={item.name}
                             loading="lazy"
                             decoding="async"
-                            sizes="(max-width: 640px) 33vw, (max-width: 1024px) 25vw, 16vw"
-                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                            className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-300"
                           />
                         )
                       ) : (
@@ -715,7 +724,7 @@ export default function PhotosView({ token: propToken }) {
                             <img
                               src={item.url}
                               alt=""
-                              className="w-full h-full object-cover"
+                              className="w-full h-full object-cover object-center"
                               loading="lazy"
                             />
                           )}
