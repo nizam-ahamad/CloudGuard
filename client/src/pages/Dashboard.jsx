@@ -3,6 +3,7 @@ import axios from 'axios';
 import { formatBytes } from '../utils/formatters';
 import { API_BASE_URL } from '../config';
 import { computeFileSHA256, computeSHA256 } from '../utils/cryptoHelper';
+import { generateMediaThumbnail } from '../utils/thumbnailHelper';
 
 export { computeFileSHA256, computeSHA256 };
 
@@ -34,9 +35,10 @@ export const uploadFileDirectlyToS3 = async (file, targetFolderId, onProgress) =
   const s3Axios = axios.create();
   delete s3Axios.defaults.headers.common['Authorization'];
 
-  // Step 2: Concurrently compute SHA-256 while streaming file directly to S3
-  const [sha256] = await Promise.all([
+  // Step 2: Concurrently compute SHA-256 and generate thumbnail while streaming file directly to S3
+  const [sha256, thumbnail] = await Promise.all([
     computeFileSHA256(file),
+    generateMediaThumbnail(file).catch(() => null),
     s3Axios.put(ticket.presignedUrl, file, {
       headers: {
         'Content-Type': file.type || 'application/octet-stream',
@@ -64,6 +66,7 @@ export const uploadFileDirectlyToS3 = async (file, targetFolderId, onProgress) =
       fileId: ticket.fileId,
       s3Key: ticket.s3Key,
       sha256,
+      thumbnail: thumbnail || undefined,
     },
     { headers }
   );
@@ -144,20 +147,23 @@ export const processQueueItem = async ({
     const presignedUrl = presignRes.data.presignedUrl || presignRes.data.signedUrl;
     currentFileId = presignRes.data.fileId;
 
-    await s3Axios.put(presignedUrl, fileObj, {
-      headers: {
-        'Content-Type': fileObj.type || 'application/octet-stream'
-      },
-      transformRequest: [(data, headers) => {
-        if (headers) {
-          delete headers.Authorization;
-          delete headers.authorization;
-        }
-        return data;
-      }],
-      signal: abortSignal,
-      onUploadProgress: onProgress
-    });
+    const [thumbnail] = await Promise.all([
+      generateMediaThumbnail(fileObj).catch(() => null),
+      s3Axios.put(presignedUrl, fileObj, {
+        headers: {
+          'Content-Type': fileObj.type || 'application/octet-stream'
+        },
+        transformRequest: [(data, headers) => {
+          if (headers) {
+            delete headers.Authorization;
+            delete headers.authorization;
+          }
+          return data;
+        }],
+        signal: abortSignal,
+        onUploadProgress: onProgress
+      })
+    ]);
 
     if (onStatusChange) onStatusChange('analyzing');
 
@@ -165,7 +171,8 @@ export const processQueueItem = async ({
 
     const finalizeRes = await axios.post(`${apiBaseUrl}/api/files/finalize-upload`, {
       fileId: currentFileId,
-      sha256: computedHash || undefined
+      sha256: computedHash || undefined,
+      thumbnail: thumbnail || undefined
     }, {
       signal: abortSignal
     });

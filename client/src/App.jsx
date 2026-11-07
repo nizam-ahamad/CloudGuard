@@ -16,6 +16,7 @@ import PrivacyPolicy from './pages/PrivacyPolicy';
 import TermsOfService from './pages/TermsOfService';
 import PhotosView, { invalidatePhotosCache } from './pages/PhotosView';
 import { computeSHA256 } from './pages/Dashboard';
+import { generateMediaThumbnail } from './utils/thumbnailHelper';
 import { 
   downloadSingleFileWithProgress, 
   downloadBatchZipWithProgress 
@@ -1381,37 +1382,40 @@ function App() {
         // 2. Direct S3 Upload with native progress tracking (without server proxying)
         const s3Axios = axios.create();
         delete s3Axios.defaults.headers.common['Authorization'];
-        await s3Axios.put(presignedUrl, fileObj, {
-          headers: {
-            'Content-Type': fileObj.type || 'application/octet-stream'
-          },
-          transformRequest: [(data, headers) => {
-            if (headers) {
-              delete headers.Authorization;
-              delete headers.authorization;
-            }
-            return data;
-          }],
-          signal: abortControllerRef.current.signal,
-          onUploadProgress: (progressEvent) => {
-            const totalBytes = fileObj.size !== undefined ? fileObj.size : size;
-            const percentCompleted = totalBytes > 0 ? Math.round((progressEvent.loaded * 100) / totalBytes) : 100;
-            const now = Date.now();
-            const timeElapsed = now - prevUploadRef.current.time;
-            if (timeElapsed >= 500) {
-              const bytesLoadedSinceLast = progressEvent.loaded - prevUploadRef.current.loaded;
-              const speedBps = (bytesLoadedSinceLast / timeElapsed) * 1000;
-              prevUploadRef.current = { time: now, loaded: progressEvent.loaded, speed: speedBps };
-            }
+        const [thumbnailData] = await Promise.all([
+          generateMediaThumbnail(fileObj).catch(() => null),
+          s3Axios.put(presignedUrl, fileObj, {
+            headers: {
+              'Content-Type': fileObj.type || 'application/octet-stream'
+            },
+            transformRequest: [(data, headers) => {
+              if (headers) {
+                delete headers.Authorization;
+                delete headers.authorization;
+              }
+              return data;
+            }],
+            signal: abortControllerRef.current.signal,
+            onUploadProgress: (progressEvent) => {
+              const totalBytes = fileObj.size !== undefined ? fileObj.size : size;
+              const percentCompleted = totalBytes > 0 ? Math.round((progressEvent.loaded * 100) / totalBytes) : 100;
+              const now = Date.now();
+              const timeElapsed = now - prevUploadRef.current.time;
+              if (timeElapsed >= 500) {
+                const bytesLoadedSinceLast = progressEvent.loaded - prevUploadRef.current.loaded;
+                const speedBps = (bytesLoadedSinceLast / timeElapsed) * 1000;
+                prevUploadRef.current = { time: now, loaded: progressEvent.loaded, speed: speedBps };
+              }
 
-            setUploadQueue(prev => prev.map(item => item.id === id ? {
-              ...item,
-              progress: percentCompleted,
-              loadedBytes: progressEvent.loaded,
-              speed: prevUploadRef.current.speed
-            } : item));
-          }
-        });
+              setUploadQueue(prev => prev.map(item => item.id === id ? {
+                ...item,
+                progress: percentCompleted,
+                loadedBytes: progressEvent.loaded,
+                speed: prevUploadRef.current.speed
+              } : item));
+            }
+          }),
+        ]);
 
         // 3. Status update to analyzing
         setUploadQueue(prev => prev.map(item => item.id === id ? { ...item, status: 'analyzing' } : item));
@@ -1422,7 +1426,8 @@ function App() {
         // 4. Finalize & graceful scan execution (auto-purged on threat)
         const finalizeRes = await axios.post(`${API_BASE_URL}/api/files/finalize-upload`, {
           fileId: currentFileId,
-          sha256: computedSha256 || undefined
+          sha256: computedSha256 || undefined,
+          thumbnail: thumbnailData || undefined,
         }, {
           signal: abortControllerRef.current.signal
         });

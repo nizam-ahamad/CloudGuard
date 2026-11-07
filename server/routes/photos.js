@@ -5,10 +5,9 @@ const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const File = require('../models/File');
 const authMiddleware = require('../middleware/auth');
-const { buildTenantQuery } = require('../utils/tenantQuery');
 
 const s3Client = new S3Client({
-  region: process.env.AWS_REGION || 'eu-north-1',
+  region: process.env.AWS_REGION || 'ap-south-1',
   credentials: {
     accessKeyId: process.env.AWS_ACCESS_KEY_ID,
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
@@ -25,57 +24,59 @@ const handleGetPhotos = async (req, res) => {
       return res.status(401).json({ error: 'Authentication required' });
     }
 
-    const mediaFilter = {
+    const userIdObj = mongoose.Types.ObjectId.isValid(rawUserId)
+      ? new mongoose.Types.ObjectId(rawUserId)
+      : rawUserId;
+
+    const userMatch = {
+      $or: [
+        { userId: userIdObj },
+        { user: userIdObj },
+        { userId: String(rawUserId) },
+        { user: String(rawUserId) },
+      ],
+    };
+
+    const mediaFiles = await File.find({
+      ...userMatch,
       isTrash: { $ne: true },
-      securityStatus: { $ne: 'threat_purged' },
+      securityStatus: { $in: ['clean', 'unverified'] },
       $or: [
         { mimeType: { $regex: MEDIA_MIME_REGEX } },
         { mimetype: { $regex: MEDIA_MIME_REGEX } },
         { name: { $regex: MEDIA_EXTENSIONS_REGEX } },
         { originalName: { $regex: MEDIA_EXTENSIONS_REGEX } },
       ],
-    };
-
-    // Safe scoped query: impossible for tenant ID to be dropped or overwritten
-    const query = buildTenantQuery(rawUserId, mediaFilter);
-
-    const mediaFiles = await File.find(query)
-      .select('name originalName size mimeType mimetype s3Key key location securityStatus uploadedAt createdAt folder')
+    })
+      .select('name originalName size mimeType mimetype s3Key thumbnailKey createdAt uploadedAt folder')
       .sort({ createdAt: -1, uploadedAt: -1 })
       .lean();
 
     const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
 
-    // Sign URLs on the server in parallel for the current user's media only
-    const photosWithUrls = await Promise.all(
+    // Sign 24-hour S3 URLs strictly for thumbnails
+    const photosWithThumbnails = await Promise.all(
       mediaFiles.map(async (file) => {
-        const fileName = file.originalName || file.name || '';
+        let thumbnailUrl = null;
+        if (file.thumbnailKey && bucket) {
+          try {
+            thumbnailUrl = await getSignedUrl(
+              s3Client,
+              new GetObjectCommand({
+                Bucket: bucket,
+                Key: file.thumbnailKey,
+              }),
+              { expiresIn: 86400 } // 24 hours
+            );
+          } catch (e) {
+            console.warn('[Thumbnail Presign Warning]:', e.message);
+          }
+        }
+
         const isVideo =
           (file.mimeType && file.mimeType.startsWith('video/')) ||
           (file.mimetype && file.mimetype.startsWith('video/')) ||
-          /\.(mp4|mkv|mov|avi|webm|wmv|flv|m4v|3gp)$/i.test(fileName);
-
-        let targetKey = file.s3Key || file.key;
-        if (!targetKey && file.location) {
-          try {
-            const urlObj = new URL(file.location);
-            targetKey = decodeURIComponent(urlObj.pathname.substring(1).replace(/\+/g, '%20'));
-          } catch (e) {}
-        }
-
-        let accessUrl = null;
-        if (targetKey && bucket) {
-          try {
-            const command = new GetObjectCommand({
-              Bucket: bucket,
-              Key: targetKey,
-              ResponseContentDisposition: `inline; filename="${encodeURIComponent(file.name || fileName)}"`,
-            });
-            accessUrl = await getSignedUrl(s3Client, command, { expiresIn: 7200 }); // 2 hours
-          } catch (e) {
-            console.warn(`Could not sign URL for file ${file._id}:`, e.message);
-          }
-        }
+          /\.(mp4|mkv|mov|avi|webm|wmv|flv|m4v|3gp)$/i.test(file.name || file.originalName || '');
 
         return {
           ...file,
@@ -83,19 +84,19 @@ const handleGetPhotos = async (req, res) => {
           name: file.name || file.originalName,
           originalName: file.originalName || file.name,
           mediaType: isVideo ? 'video' : 'image',
-          url: accessUrl,
+          thumbnailUrl,
         };
       })
     );
 
     return res.status(200).json({
       success: true,
-      count: photosWithUrls.length,
-      photos: photosWithUrls,
-      files: photosWithUrls,
+      count: photosWithThumbnails.length,
+      photos: photosWithThumbnails,
+      files: photosWithThumbnails,
     });
   } catch (err) {
-    console.error('Error in GET /api/photos:', err);
+    console.error('Error loading vault photos:', err);
     return res.status(500).json({ error: 'Failed to retrieve media library' });
   }
 };

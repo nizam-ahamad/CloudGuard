@@ -12,6 +12,7 @@ import {
   Download,
   Check,
   X,
+  Loader2,
 } from 'lucide-react';
 import { useToast } from '../context/ToastContext';
 import { useDownload } from '../context/DownloadContext';
@@ -367,12 +368,56 @@ export default function PhotosView({ token: propToken }) {
 
   // Carousel navigation
   const currentPreviewItem = previewIndex !== null ? mediaList[previewIndex] : null;
+  const [fullMediaUrl, setFullMediaUrl] = useState(null);
+  const [loadingFullMedia, setLoadingFullMedia] = useState(false);
+
+  useEffect(() => {
+    if (!currentPreviewItem) {
+      setFullMediaUrl(null);
+      setLoadingFullMedia(false);
+      return;
+    }
+
+    let isCancelled = false;
+    setLoadingFullMedia(true);
+    setFullMediaUrl(null);
+
+    const token = propToken || (typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null);
+    axios
+      .get(`/api/files/${currentPreviewItem._id}/access`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      .then((res) => {
+        if (!isCancelled) {
+          const url = res.data?.accessUrl || res.data?.url;
+          if (url) setFullMediaUrl(url);
+        }
+      })
+      .catch((err) => {
+        if (!isCancelled) {
+          console.warn('Full media access fetch notice:', err.message);
+          if (currentPreviewItem.url) setFullMediaUrl(currentPreviewItem.url);
+        }
+      })
+      .finally(() => {
+        if (!isCancelled) setLoadingFullMedia(false);
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [currentPreviewItem?._id, propToken]);
 
   // 3. Lightbox Preview Download (Top-Right Button)
   const handlePreviewDownload = useCallback(() => {
     if (!currentPreviewItem) return;
-    startDownload(prepareDownloadPayload(currentPreviewItem));
-  }, [currentPreviewItem, startDownload]);
+    const downloadItem = {
+      ...currentPreviewItem,
+      url: fullMediaUrl || currentPreviewItem.url,
+      accessUrl: fullMediaUrl || currentPreviewItem.accessUrl || currentPreviewItem.url,
+    };
+    startDownload(prepareDownloadPayload(downloadItem));
+  }, [currentPreviewItem, fullMediaUrl, startDownload]);
 
   // Undo Delete
   const handleUndoDelete = async (itemsToRestore) => {
@@ -620,34 +665,47 @@ export default function PhotosView({ token: propToken }) {
                       </div>
 
                       {/* Lightweight Thumbnail (Pure Image Tags Only) */}
-                      {item.url ? (
-                        isVideo ? (
-                          <div className="w-full h-full relative bg-zinc-950 flex items-center justify-center">
-                            <LightweightVideoThumbnail
-                              url={item.url}
-                              fileId={item._id}
-                              alt={item.name}
-                              className="w-full h-full object-cover pointer-events-none"
-                            />
-                            <div className="absolute top-1.5 right-1.5 bg-black/75 backdrop-blur-md px-1.5 py-0.5 rounded flex items-center gap-1 text-[10px] font-medium text-white shadow-md">
-                              <Play className="w-2.5 h-2.5 fill-white" />
-                              <span className="hidden sm:inline">Video</span>
+                      {(() => {
+                        const displayThumbnail = item.thumbnailUrl || item.accessUrl || item.url;
+                        return displayThumbnail ? (
+                          isVideo ? (
+                            <div className="w-full h-full relative bg-zinc-950 flex items-center justify-center">
+                              {item.thumbnailUrl ? (
+                                <img
+                                  src={item.thumbnailUrl}
+                                  alt={item.name}
+                                  loading="lazy"
+                                  decoding="async"
+                                  className="w-full h-full object-cover pointer-events-none"
+                                />
+                              ) : (
+                                <LightweightVideoThumbnail
+                                  url={item.url}
+                                  fileId={item._id}
+                                  alt={item.name}
+                                  className="w-full h-full object-cover pointer-events-none"
+                                />
+                              )}
+                              <div className="absolute top-1.5 right-1.5 bg-black/75 backdrop-blur-md px-1.5 py-0.5 rounded flex items-center gap-1 text-[10px] font-medium text-white shadow-md">
+                                <Play className="w-2.5 h-2.5 fill-white" />
+                                <span className="hidden sm:inline">Video</span>
+                              </div>
                             </div>
-                          </div>
+                          ) : (
+                            <img
+                              src={displayThumbnail}
+                              alt={item.name}
+                              loading="lazy"
+                              decoding="async"
+                              className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-300"
+                            />
+                          )
                         ) : (
-                          <img
-                            src={item.url}
-                            alt={item.name}
-                            loading="lazy"
-                            decoding="async"
-                            className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-300"
-                          />
-                        )
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center bg-zinc-100 dark:bg-zinc-900 text-zinc-400">
-                          <ImageIcon className="w-6 h-6" />
-                        </div>
-                      )}
+                          <div className="w-full h-full flex items-center justify-center bg-zinc-100 dark:bg-zinc-900 text-zinc-400">
+                            <ImageIcon className="w-6 h-6" />
+                          </div>
+                        );
+                      })()}
 
                       <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity hidden sm:flex items-end p-2 pointer-events-none">
                         <span className="text-[11px] text-white truncate w-full font-medium">
@@ -708,26 +766,38 @@ export default function PhotosView({ token: propToken }) {
 
                         {/* 40x40 Thumbnail */}
                         <div className="w-10 h-10 rounded-lg bg-zinc-100 dark:bg-zinc-800 overflow-hidden shrink-0 flex items-center justify-center border border-zinc-200 dark:border-zinc-700/50 relative">
-                          {isVideo ? (
-                            <>
-                              <LightweightVideoThumbnail
-                                url={item.url}
-                                fileId={item._id}
-                                alt={item.name}
-                                className="w-full h-full object-cover pointer-events-none"
+                          {(() => {
+                            const displayThumbnail = item.thumbnailUrl || item.accessUrl || item.url;
+                            return isVideo ? (
+                              <>
+                                {item.thumbnailUrl ? (
+                                  <img
+                                    src={item.thumbnailUrl}
+                                    alt={item.name}
+                                    className="w-full h-full object-cover pointer-events-none"
+                                    loading="lazy"
+                                  />
+                                ) : (
+                                  <LightweightVideoThumbnail
+                                    url={item.url}
+                                    fileId={item._id}
+                                    alt={item.name}
+                                    className="w-full h-full object-cover pointer-events-none"
+                                  />
+                                )}
+                                <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                                  <Play className="w-3.5 h-3.5 fill-white text-white" />
+                                </div>
+                              </>
+                            ) : (
+                              <img
+                                src={displayThumbnail}
+                                alt=""
+                                className="w-full h-full object-cover object-center"
+                                loading="lazy"
                               />
-                              <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
-                                <Play className="w-3.5 h-3.5 fill-white text-white" />
-                              </div>
-                            </>
-                          ) : (
-                            <img
-                              src={item.url}
-                              alt=""
-                              className="w-full h-full object-cover object-center"
-                              loading="lazy"
-                            />
-                          )}
+                            );
+                          })()}
                         </div>
 
                         <div className="min-w-0">
@@ -881,21 +951,58 @@ export default function PhotosView({ token: propToken }) {
 
           <div className="max-w-5xl max-h-[82vh] w-full flex items-center justify-center p-2">
             {currentPreviewItem.mediaType === 'video' ? (
-              <video
-                key={currentPreviewItem._id}
-                src={currentPreviewItem.url}
-                controls
-                autoPlay
-                playsInline
-                className="max-h-[80vh] w-auto max-w-full rounded-lg shadow-2xl bg-black"
-              />
+              (fullMediaUrl || currentPreviewItem.url) ? (
+                <video
+                  key={fullMediaUrl || currentPreviewItem.url}
+                  src={fullMediaUrl || currentPreviewItem.url}
+                  controls
+                  autoPlay
+                  playsInline
+                  className="max-h-[80vh] w-auto max-w-full rounded-lg shadow-2xl bg-black"
+                />
+              ) : (
+                <div className="relative flex items-center justify-center max-h-[80vh] w-full min-h-[300px]">
+                  {(currentPreviewItem.thumbnailUrl || currentPreviewItem.url) && (
+                    <img
+                      src={currentPreviewItem.thumbnailUrl || currentPreviewItem.url}
+                      alt={currentPreviewItem.name}
+                      className="max-h-[80vh] max-w-full object-contain rounded-lg filter blur-sm opacity-60"
+                    />
+                  )}
+                  <div className="absolute inset-0 flex flex-col items-center justify-center text-white gap-2">
+                    <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+                    <span className="text-xs font-medium">Loading video...</span>
+                  </div>
+                </div>
+              )
             ) : (
-              <img
-                key={currentPreviewItem._id}
-                src={currentPreviewItem.url}
-                alt={currentPreviewItem.name}
-                className="max-h-[80vh] max-w-full object-contain rounded-lg shadow-2xl"
-              />
+              <div className="relative flex items-center justify-center max-h-[80vh] w-full">
+                {/* Instant thumbnail / preview display so modal opens with zero delay */}
+                {(currentPreviewItem.thumbnailUrl || currentPreviewItem.accessUrl || currentPreviewItem.url) && (
+                  <img
+                    src={currentPreviewItem.thumbnailUrl || currentPreviewItem.accessUrl || currentPreviewItem.url}
+                    alt={currentPreviewItem.name}
+                    className={`max-h-[80vh] max-w-full object-contain rounded-lg shadow-2xl transition-opacity duration-300 ${
+                      fullMediaUrl ? 'opacity-0 absolute' : 'opacity-100'
+                    }`}
+                  />
+                )}
+                {/* High-res original once loaded */}
+                {fullMediaUrl && (
+                  <img
+                    key={fullMediaUrl}
+                    src={fullMediaUrl}
+                    alt={currentPreviewItem.name}
+                    className="max-h-[80vh] max-w-full object-contain rounded-lg shadow-2xl transition-opacity duration-300 opacity-100"
+                  />
+                )}
+                {loadingFullMedia && !fullMediaUrl && (
+                  <div className="absolute bottom-4 right-4 bg-black/75 backdrop-blur-md px-3 py-1.5 rounded-full flex items-center gap-2 text-white text-xs border border-white/10 shadow-lg">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-400" />
+                    <span>Loading high resolution...</span>
+                  </div>
+                )}
+              </div>
             )}
           </div>
 

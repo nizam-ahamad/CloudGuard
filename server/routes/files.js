@@ -180,7 +180,7 @@ router.get('/', authMiddleware, async (req, res) => {
     }
 
     let filesQuery = File.find(query)
-      .select('name originalName diskName sanitizedName size mimeType mimetype s3Key securityStatus isMalicious uploadedAt createdAt folder folderId')
+      .select('name originalName diskName sanitizedName size mimeType mimetype s3Key thumbnailKey securityStatus isMalicious uploadedAt createdAt folder folderId')
       .sort({ uploadedAt: -1, createdAt: -1 });
 
     if (isRecent) {
@@ -289,14 +289,40 @@ router.post('/presigned-url', authMiddleware, async (req, res) => {
 // -------------------------------------------------------------
 router.post('/finalize-upload', authMiddleware, async (req, res) => {
   try {
-    const { fileId, sha256 } = req.body;
+    const { fileId, sha256, thumbnail } = req.body;
     const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
 
     const file = await File.findOne(buildTenantQuery(rawUserId, { _id: fileId }));
     if (!file) return res.status(404).json({ error: 'File record not found' });
 
+    if (thumbnail && typeof thumbnail === 'string' && thumbnail.startsWith('data:image/')) {
+      try {
+        const matches = thumbnail.match(/^data:image\/([a-zA-Z0-9]+);base64,(.+)$/);
+        if (matches) {
+          const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
+          const buffer = Buffer.from(matches[2], 'base64');
+          const thumbS3Key = `thumbnails/${rawUserId}/${Date.now()}-${file._id}.${ext}`;
+          const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
+
+          await s3Client.send(new PutObjectCommand({
+            Bucket: bucket,
+            Key: thumbS3Key,
+            Body: buffer,
+            ContentType: `image/${ext}`,
+          }));
+
+          file.thumbnailKey = thumbS3Key;
+        }
+      } catch (thumbErr) {
+        console.warn('[Thumbnail S3 Save Notice]:', thumbErr.message);
+      }
+    }
+
     // Idempotency: If already clean, return immediately without re-incrementing storage
     if (file.securityStatus === 'clean') {
+      if (file.thumbnailKey) {
+        await file.save();
+      }
       return res.status(200).json({ success: true, isMalicious: false, file });
     }
 
@@ -373,6 +399,13 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
           Bucket: bucket,
           Key: file.s3Key,
         }));
+
+        if (file.thumbnailKey) {
+          await s3Client.send(new DeleteObjectCommand({
+            Bucket: bucket,
+            Key: file.thumbnailKey,
+          }));
+        }
       } catch (delErr) {
         console.error('[S3 Delete Error]:', delErr.message);
       }

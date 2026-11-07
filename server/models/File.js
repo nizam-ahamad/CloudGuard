@@ -10,6 +10,10 @@ const fileSchema = new mongoose.Schema(
     mimetype: { type: String },
     mimeType: { type: String },
     s3Key: { type: String, required: true },
+    thumbnailKey: {
+      type: String,
+      default: null,
+    },
     location: { type: String },
     relativePath: { type: String },
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
