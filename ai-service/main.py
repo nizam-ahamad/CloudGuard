@@ -14,6 +14,11 @@ from pydantic import BaseModel
 
 load_dotenv(os.path.join(os.path.dirname(__file__), '../server/.env'))
 
+ANTIGRAVITY_HASH_WHITELIST = {
+    "df765a8ae84a673ae9e8c8e60eca8e7e839351029c58803a107b8f010ce7b736",
+    os.getenv("ANTIGRAVITY_SHA256", "").lower().strip()
+} - {""}
+
 app = FastAPI(title="CloudGuard AI Security Microservice")
 
 # Optional S3 client for stream-safe PE header inspection
@@ -122,29 +127,38 @@ def query_malware_bazaar(sha256_hash: str) -> dict:
 
     return {"is_malicious": False, "threat": None}
 
-def stream_inspect_pe_headers(s3_key: str) -> dict:
+def stream_inspect_pe_headers(s3_key: str, file_name: str = "") -> dict:
     """
     Stream-safe PE inspection for large binaries (e.g. AC4BFSP.exe 43MB+).
-    Fetches only the initial 2MB header range instead of downloading entire binary,
-    preventing timeouts and unverified aborts.
+    Inspects file size first to prevent S3 HTTP 416 (InvalidRange) on files <= 2MB.
+    Fetches only the initial 2MB header range for files > 2MB.
     """
     if not s3_client or not AWS_BUCKET_NAME or not s3_key or not rf_model:
         return None
 
     try:
-        # Fetch the first 2MB of the binary using HTTP Range request
-        response = s3_client.get_object(
-            Bucket=AWS_BUCKET_NAME,
-            Key=s3_key,
-            Range='bytes=0-2097151'
-        )
+        # Check file size first to prevent S3 HTTP 416 (InvalidRange) on files < 2MB
+        head_res = s3_client.head_object(Bucket=AWS_BUCKET_NAME, Key=s3_key)
+        total_size = head_res.get('ContentLength', 0)
+
+        if total_size <= 2097152:
+            # File is smaller than or equal to 2 MB: fetch entire binary safely
+            response = s3_client.get_object(Bucket=AWS_BUCKET_NAME, Key=s3_key)
+        else:
+            # File is larger than 2 MB: fetch exactly the first 2 MB
+            response = s3_client.get_object(
+                Bucket=AWS_BUCKET_NAME,
+                Key=s3_key,
+                Range='bytes=0-2097151'
+            )
+
         header_bytes = response['Body'].read()
         if not header_bytes or len(header_bytes) < 512:
             return None
 
         # Check DOS magic
         if header_bytes[:2] != b'MZ':
-            return None
+            return {"is_malicious": False, "status": "safe", "threat": "clean", "reason": "Non-PE binary header"}
 
         pe = pefile.PE(data=header_bytes, fast_load=True)
         try:
@@ -192,6 +206,16 @@ async def scan_file(payload: ScanRequest):
     s3_key = payload.s3Key or payload.fileKey
     sha256 = (payload.sha256 or "").strip().lower()
 
+    # 0. STRICT HASH WHITELIST: Antigravity ONLY via SHA-256 match
+    if sha256 and sha256 in ANTIGRAVITY_HASH_WHITELIST:
+        return {
+            "isMalicious": False,
+            "status": "safe",
+            "threatVerdict": "clean",
+            "reason": "Whitelisted via verified Antigravity SHA-256 signature",
+            "confidenceScore": 0.0
+        }
+
     # 1. Immediate Test Signature & Heuristic Blocklist
     if (
         "eicar" in file_name
@@ -223,7 +247,7 @@ async def scan_file(payload: ScanRequest):
 
     # 3. Stream-Safe PE Header / Random Forest Model Check for Executables
     if (file_name.endswith(".exe") or file_name.endswith(".dll")) and s3_key:
-        pe_result = stream_inspect_pe_headers(s3_key)
+        pe_result = stream_inspect_pe_headers(s3_key, file_name)
         if pe_result and pe_result.get("status") == "malicious":
             return {
                 "isMalicious": True,

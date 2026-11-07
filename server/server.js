@@ -895,7 +895,7 @@ app.post('/api/upload', verifyToken, async (req, res) => {
       }
 
       if (calculatedHash && WHITELISTED_HASHES.includes(calculatedHash)) {
-        console.log(`[WHITELIST BYPASS] Hash ${calculatedHash} matched. Skipping AI model and VirusTotal.`);
+        console.log(`[WHITELIST BYPASS] Hash ${calculatedHash} matched. Skipping deep inspection.`);
         fileRecord.diskName = nestedRelativePath;
         fileRecord.relativePath = relativePath;
         fileRecord.size = exactFileSize;
@@ -1504,7 +1504,7 @@ app.get('/api/files', verifyToken, async (req, res) => {
     let query = {
       $or: [{ userId: userId }, { user: userId }],
       isTrash: { $ne: true },
-      securityStatus: { $ne: 'threat_purged' }
+      securityStatus: { $in: ['clean', 'unverified'] }
     };
     
     if (searchQuery) {
@@ -1541,7 +1541,7 @@ app.get('/api/files', verifyToken, async (req, res) => {
       dbFilesQuery = dbFilesQuery.sort({ uploadedAt: -1, createdAt: -1 });
     }
     
-    const dbFiles = await dbFilesQuery.select('_id name originalName diskName folder folderId size securityStatus isMalicious mimetype mimeType uploadedAt createdAt').lean();
+    const dbFiles = await dbFilesQuery.select('_id name originalName diskName folder folderId size thumbnail securityStatus isMalicious mimetype mimeType uploadedAt createdAt').lean();
     
     const mappedFiles = dbFiles.map(file => ({
       ...file,
@@ -1620,7 +1620,7 @@ app.get('/api/files/photos', verifyToken, async (req, res) => {
             },
             { isTrash: { $ne: true } },
             { isDeleted: { $ne: true } },
-            { securityStatus: { $ne: 'threat_purged' } },
+            { securityStatus: { $in: ['clean', 'unverified'] } },
             {
               $or: [
                 { mimetype: { $regex: /^(image|video)\//i } },
@@ -1632,7 +1632,7 @@ app.get('/api/files/photos', verifyToken, async (req, res) => {
             }
           ]
         })
-        .select('_id name originalName s3Key location size mimetype mimeType uploadedAt createdAt')
+        .select('_id name originalName s3Key location size thumbnail mimetype mimeType uploadedAt createdAt')
         .sort({ uploadedAt: -1, createdAt: -1 })
         .lean();
 

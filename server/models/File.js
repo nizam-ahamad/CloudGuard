@@ -22,6 +22,10 @@ const fileSchema = new mongoose.Schema(
     isMalicious: { type: Boolean, default: false },
     status: { type: String, default: 'safe' },
     securityStatus: { type: String, default: 'clean' },
+    thumbnail: {
+      type: String, // Base64 Data URL (10-15 KB)
+      default: null,
+    },
     uploadedAt: { type: Date, default: Date.now },
     createdAt: { type: Date, default: Date.now },
   },

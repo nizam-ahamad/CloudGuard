@@ -84,13 +84,28 @@ export const HeaderDownloadButton = () => {
   const { activeDownload, cancelActiveDownload } = useDownload();
   const [isOpen, setIsOpen] = useState(false);
 
+  // Auto-close download dropdown if upload tray opens
+  React.useEffect(() => {
+    const handleUploadOpen = () => setIsOpen(false);
+    window.addEventListener('cloudguard:upload-tray-opened', handleUploadOpen);
+    return () => window.removeEventListener('cloudguard:upload-tray-opened', handleUploadOpen);
+  }, []);
+
   // Keep dropdown open automatically while download is active if user opened it
   if (!activeDownload) return null;
 
   return (
     <div className="relative">
       <button
-        onClick={() => setIsOpen((prev) => !prev)}
+        onClick={() => {
+          setIsOpen((prev) => {
+            const next = !prev;
+            if (next) {
+              window.dispatchEvent(new CustomEvent('cloudguard:download-tray-opened'));
+            }
+            return next;
+          });
+        }}
         className="relative p-2 rounded-lg bg-neutral-100 hover:bg-neutral-200 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-blue-600 dark:text-blue-400 transition-colors cursor-pointer"
         title="View active download"
       >

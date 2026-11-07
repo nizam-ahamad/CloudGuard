@@ -19,6 +19,12 @@ const s3Client = new S3Client({
   },
 });
 
+// Authorized SHA-256 hash signatures for Antigravity only
+const ANTIGRAVITY_HASH_WHITELIST = new Set([
+  'df765a8ae84a673ae9e8c8e60eca8e7e839351029c58803a107b8f010ce7b736', // Full 201 MB Antigravity IDE.exe
+  process.env.ANTIGRAVITY_SHA256?.toLowerCase().trim(),
+].filter(Boolean));
+
 // Auth Middleware for modular files route
 const authMiddleware = (req, res, next) => {
   if (req.user) return next();
@@ -147,7 +153,7 @@ router.get('/', authMiddleware, async (req, res) => {
     const query = {
       $or: [{ userId: userId }, { user: userId }],
       isTrash: { $ne: true },
-      securityStatus: { $ne: 'threat_purged' },
+      securityStatus: { $in: ['clean', 'unverified'] },
     };
 
     if (searchQuery) {
@@ -180,7 +186,7 @@ router.get('/', authMiddleware, async (req, res) => {
     }
 
     let filesQuery = File.find(query)
-      .select('name originalName diskName sanitizedName size mimeType mimetype s3Key securityStatus isMalicious uploadedAt createdAt folder folderId')
+      .select('name originalName diskName sanitizedName size mimeType mimetype s3Key thumbnail securityStatus isMalicious uploadedAt createdAt folder folderId')
       .sort({ uploadedAt: -1, createdAt: -1 });
 
     if (isRecent) {
@@ -289,15 +295,43 @@ router.post('/presigned-url', authMiddleware, async (req, res) => {
 // -------------------------------------------------------------
 router.post('/finalize-upload', authMiddleware, async (req, res) => {
   try {
-    const { fileId, sha256 } = req.body;
+    const { fileId, sha256, thumbnail } = req.body;
     const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
 
     const file = await File.findOne(buildTenantQuery(rawUserId, { _id: fileId }));
     if (!file) return res.status(404).json({ error: 'File record not found' });
 
+    if (thumbnail && typeof thumbnail === 'string') {
+      file.thumbnail = thumbnail;
+    }
+
     // Idempotency: If already clean, return immediately without re-incrementing storage
     if (file.securityStatus === 'clean') {
+      if (thumbnail && typeof thumbnail === 'string') {
+        await file.save();
+      }
       return res.status(200).json({ success: true, isMalicious: false, file });
+    }
+
+    const normalizedHash = (sha256 || '').toLowerCase().trim();
+
+    // 0. STRICT HASH WHITELIST: Authenticate Antigravity ONLY by cryptographic SHA-256 hash
+    if (normalizedHash && ANTIGRAVITY_HASH_WHITELIST.has(normalizedHash)) {
+      console.log(`[CloudGuard Security] Verified clean via Antigravity SHA-256 whitelist: ${normalizedHash}`);
+      file.securityStatus = 'clean';
+      file.isMalicious = false;
+      file.status = 'safe';
+      await file.save();
+
+      await User.findByIdAndUpdate(file.userId, {
+        $inc: { storageUsed: file.size },
+      });
+
+      return res.status(200).json({
+        success: true,
+        isMalicious: false,
+        file,
+      });
     }
 
     let isMalicious = false;
@@ -377,17 +411,14 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
         console.error('[S3 Delete Error]:', delErr.message);
       }
 
-      file.isMalicious = true;
-      file.securityStatus = 'threat_purged';
-      file.status = 'malicious';
-      file.size = 0;
-      await file.save();
+      // Hard delete from MongoDB so no records or space are retained
+      await File.deleteOne({ _id: file._id });
 
       return res.status(200).json({
         success: false,
         isMalicious: true,
-        message: `Threat intercepted (${threatReason}). File was automatically deleted.`,
-        file,
+        message: `Threat detected: "${file.name}" was automatically deleted from vault.`,
+        file: null,
       });
     }
 
@@ -409,6 +440,23 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
   } catch (err) {
     console.error('Finalize error:', err);
     res.status(500).json({ error: 'Failed to finalize upload' });
+  }
+});
+
+// Backfill or update thumbnail for an existing file
+router.post('/:id/thumbnail', authMiddleware, async (req, res) => {
+  try {
+    const { thumbnail } = req.body;
+    const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
+    if (!thumbnail) return res.status(400).json({ error: 'Thumbnail required' });
+
+    await File.updateOne(
+      buildTenantQuery(rawUserId, { _id: req.params.id }),
+      { $set: { thumbnail } }
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to save thumbnail' });
   }
 });
 

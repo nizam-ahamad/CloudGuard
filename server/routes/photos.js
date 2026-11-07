@@ -27,7 +27,7 @@ const handleGetPhotos = async (req, res) => {
 
     const mediaFilter = {
       isTrash: { $ne: true },
-      securityStatus: { $ne: 'threat_purged' },
+      securityStatus: { $in: ['clean', 'unverified'] },
       $or: [
         { mimeType: { $regex: MEDIA_MIME_REGEX } },
         { mimetype: { $regex: MEDIA_MIME_REGEX } },
@@ -40,7 +40,7 @@ const handleGetPhotos = async (req, res) => {
     const query = buildTenantQuery(rawUserId, mediaFilter);
 
     const mediaFiles = await File.find(query)
-      .select('name originalName size mimeType mimetype s3Key key location securityStatus uploadedAt createdAt folder')
+      .select('name originalName size mimeType mimetype s3Key key location thumbnail securityStatus uploadedAt createdAt folder')
       .sort({ createdAt: -1, uploadedAt: -1 })
       .lean();
 

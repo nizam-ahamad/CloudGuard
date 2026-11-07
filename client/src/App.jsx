@@ -21,6 +21,7 @@ import {
   downloadBatchZipWithProgress 
 } from './utils/downloadHelper';
 import { HeaderDownloadButton, useDownload } from './context/DownloadContext';
+import { HeaderUploadButton, useUpload } from './context/UploadContext';
 import { Folder, FolderInput, X, MoreVertical, Pencil, Info, LayoutGrid, List, Check, Trash2, Image, Play, ChevronLeft, ChevronRight, Download, Clock, UploadCloud, FolderPlus, Menu, Sun, Moon, Loader2 } from 'lucide-react';
 
 import { API_BASE_URL } from "./config";
@@ -72,6 +73,7 @@ class ErrorBoundary extends React.Component {
 function App() {
   const toast = useToast();
   const { triggerDownload, startDownload } = useDownload();
+  const { enqueueFiles } = useUpload();
   const location = useLocation();
   const navigate = useNavigate();
   const [isLoading, setIsLoading] = useState(true);
@@ -907,6 +909,20 @@ function App() {
     }, 300);
   }, [currentFolderId, fetchFolders, fetchFiles]);
 
+  // Listen for background upload finishes from UploadContext to auto-refresh view
+  useEffect(() => {
+    const handleStorageUpdate = () => fetchStorageStats();
+    const handleFilesUpdate = () => fetchFiles(currentFolderId || null);
+
+    window.addEventListener('cloudguard:storage-updated', handleStorageUpdate);
+    window.addEventListener('cloudguard:files-updated', handleFilesUpdate);
+
+    return () => {
+      window.removeEventListener('cloudguard:storage-updated', handleStorageUpdate);
+      window.removeEventListener('cloudguard:files-updated', handleFilesUpdate);
+    };
+  }, [fetchStorageStats, fetchFiles, currentFolderId]);
+
   // Helper to build Google Drive style move messages
   const getMoveSuccessMessage = (items, destinationName) => {
     const dest = destinationName || 'Home';
@@ -1471,7 +1487,7 @@ function App() {
       });
 
       if (securityThreat) {
-        addToast('error', `Threat detected: "${name}" was automatically purged from storage.`);
+        toast.error(`Threat detected: "${name}" was automatically deleted from vault.`, { duration: 5000 });
       } else if (finalStatus === 'completed') {
         addToast('success', `"${name}" uploaded & verified clean.`);
         invalidatePhotosCache();
@@ -1500,29 +1516,7 @@ function App() {
 
   const handleFileUpload = async (filesToUpload) => {
     if (!filesToUpload || filesToUpload.length === 0) return;
-
-    const totalUploadSize = Array.from(filesToUpload).reduce((sum, file) => sum + file.size, 0);
-    const availableBytes = (storageStats?.storageLimit || storageStats?.totalLimitBytes || defaultStorageLimit) - (storageStats?.storageUsed || storageStats?.usedBytes || 0);
-    
-    if (totalUploadSize > availableBytes) {
-      addToast('error', "Upload Failed: Insufficient storage space.");
-      return;
-    }
-
-    const newItems = Array.from(filesToUpload).map(file => ({
-      id: Date.now() + Math.random().toString(36).substr(2, 9),
-      file,
-      name: file.name,
-      size: file.size,
-      progress: 0,
-      loadedBytes: 0,
-      speed: 0,
-      status: 'queued',
-      error: null
-    }));
-
-    setUploadQueue(prev => [...prev, ...newItems]);
-    setIsUploadDrawerOpen(true);
+    enqueueFiles(filesToUpload, currentFolderId || null);
   };
 
   const getFilesFromEntry = async (entry, path = '') => {
@@ -1567,13 +1561,8 @@ function App() {
       allFiles = Array.from(e.dataTransfer.files);
     }
 
-    if (allFiles.length > 15) {
-      addToast('error', "Upload limit exceeded. Please select a maximum of 15 items per upload to ensure stability.");
-      return;
-    }
-    
     if (allFiles.length > 0) {
-      await handleFileUpload(allFiles);
+      enqueueFiles(allFiles, currentFolderId || null);
     }
   };
 
@@ -1581,14 +1570,11 @@ function App() {
     e.preventDefault();
   };
 
-  const onFileInputChange = async (e) => {
+  const onFileInputChange = (e) => {
     if (e.target.files && e.target.files.length > 0) {
       const allFiles = Array.from(e.target.files);
-      if (allFiles.length > 15) {
-        addToast('error', "Upload limit exceeded. Please select a maximum of 15 items per upload to ensure stability.");
-        return;
-      }
-      await handleFileUpload(allFiles);
+      enqueueFiles(allFiles, currentFolderId || null);
+      e.target.value = '';
     }
   };
 
@@ -2122,8 +2108,11 @@ function App() {
 
         {/* 3. Right: Header Action Group (Strictly in-flow flex items, zero absolute positioning) */}
         <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
+          {/* Header Upload Tray */}
+          <HeaderUploadButton />
+
           {/* Header Download Tray */}
-          <HeaderDownloadButton/>
+          <HeaderDownloadButton />
 
           {/* Theme Toggle Button */}
           <button
@@ -2308,82 +2297,6 @@ function App() {
             </div>
           </section>
         )}
-
-        {/* Stacked Dashboard Queue Area */}
-        {(() => {
-          const activeOrQueuedItems = uploadQueue.filter(i => ['uploading', 'analyzing', 'queued'].includes(i.status));
-          if (activeOrQueuedItems.length === 0) return null;
-          
-          const activeUpload = activeOrQueuedItems.find(f => f.status === 'uploading' || f.status === 'analyzing');
-          const queuedItems = activeOrQueuedItems.filter(f => f.status === 'queued');
-
-          return (
-            <div className="mb-stack-lg flex flex-col gap-4">
-              {activeUpload && (
-                <div className="p-4 bg-white dark:bg-[#1e1f20] rounded-xl border border-outline-variant dark:border-zinc-800 shadow-sm">
-                  <div className="flex items-center justify-between gap-2 mb-1.5">
-                    <span className="text-sm font-medium text-on-surface dark:text-[#e3e3e3] truncate">
-                      {activeUpload.status === 'analyzing' ? `Analyzing ${activeUpload.name}...` : `Uploading ${activeUpload.name}...`}
-                    </span>
-                    <button 
-                      onClick={() => {
-                        addToast('info', 'Upload canceled');
-                        if (abortControllerRef.current) abortControllerRef.current.abort();
-                        setUploadQueue(prev => prev.map(i => i.id === activeUpload.id ? { ...i, status: 'failed', error: 'Canceled' } : i));
-                      }}
-                      className="text-error dark:text-zinc-400 dark:hover:text-red-400 hover:bg-error/10 p-1 rounded-full transition-colors flex items-center justify-center shrink-0"
-                      title="Cancel Upload"
-                    >
-                      <span className="material-symbols-outlined text-[20px]">close</span>
-                    </button>
-                  </div>
-                  <div className="w-full bg-neutral-200 dark:bg-neutral-800 rounded-full h-1.5 overflow-hidden mb-2">
-                    {activeUpload.status === 'uploading' ? (
-                      <div className="bg-gradient-to-r from-indigo-500 via-blue-500 to-cyan-400 relative h-full transition-all duration-300" style={{ width: `${activeUpload.progress}%` }}></div>
-                    ) : (
-                      <div className="bg-secondary relative h-full animate-pulse w-full"></div>
-                    )}
-                  </div>
-                  <div className="flex items-center justify-between text-xs text-neutral-500 dark:text-neutral-400 font-mono">
-                    <span>
-                      {activeUpload.status === 'analyzing' ? 'Scanning...' : `${formatBytes(activeUpload.loadedBytes || 0)} / ${formatBytes(activeUpload.size)} (${activeUpload.progress}%)`}
-                    </span>
-                    <span className="text-right">
-                      {activeUpload.status === 'analyzing' ? '' : (activeUpload.speed ? `${formatBytes(activeUpload.speed)}/s` : '-- KB/s')}
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              {queuedItems.length > 0 && (
-                <div className="flex flex-col gap-2">
-                  <h4 className="font-label-md text-on-surface-variant dark:text-zinc-400 ml-1">Up Next ({queuedItems.length})</h4>
-                  {queuedItems.map(item => (
-                    <div key={item.id} className="flex items-center justify-between p-3 bg-white/50 dark:bg-[#1e1f20]/50 border border-outline-variant/50 dark:border-zinc-800/50 rounded-lg">
-                      <div className="flex items-center gap-3 overflow-hidden">
-                        <span className="material-symbols-outlined text-secondary text-lg">schedule</span>
-                        <span className="font-body-sm text-on-surface dark:text-[#e3e3e3] truncate" title={item.name}>{item.name}</span>
-                      </div>
-                      <div className="flex items-center gap-3 shrink-0">
-                        <span className="text-xs text-on-surface-variant dark:text-zinc-400 hidden sm:inline">{(item.size / (1024 * 1024)).toFixed(1)} MB</span>
-                        <span className="text-xs text-on-surface-variant dark:text-zinc-500 italic">Waiting in queue...</span>
-                        <button 
-                          onClick={() => { 
-                            setUploadQueue(prev => prev.map(i => i.id === item.id ? { ...i, status: 'failed', error: 'Canceled' } : i));
-                          }}
-                          className="text-error dark:text-zinc-400 hover:bg-error/10 dark:hover:text-red-400 p-1 rounded-full transition-colors flex items-center justify-center ml-2"
-                          title="Cancel"
-                        >
-                          <span className="material-symbols-outlined text-[16px]">close</span>
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })()}
 
         {/* Recent Files Table */}
         <section>

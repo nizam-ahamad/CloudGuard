@@ -3,6 +3,7 @@ import axios from 'axios';
 import { formatBytes } from '../utils/formatters';
 import { API_BASE_URL } from '../config';
 import { computeFileSHA256, computeSHA256 } from '../utils/cryptoHelper';
+import { useUpload } from '../context/UploadContext';
 
 export { computeFileSHA256, computeSHA256 };
 
@@ -11,7 +12,7 @@ let globalDashboardStorageCache = null;
 /**
  * Direct-to-S3 Upload Pipeline with concurrent SHA-256 fingerprinting
  */
-export const uploadFileDirectlyToS3 = async (file, targetFolderId, onProgress) => {
+export const uploadFileDirectlyToS3 = async (file, targetFolderId, onProgress, toast) => {
   const token = localStorage.getItem('token');
   const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
@@ -70,7 +71,12 @@ export const uploadFileDirectlyToS3 = async (file, targetFolderId, onProgress) =
 
   // Step 4: Handle scan verdict
   if (finalizeResult.isMalicious) {
-    return { success: false, isMalicious: true, message: finalizeResult.message };
+    if (toast && typeof toast.error === 'function') {
+      toast.error(`Threat detected: "${file.name}" was automatically deleted from vault.`, {
+        duration: 5000,
+      });
+    }
+    return { success: false, isMalicious: true };
   }
 
   return { success: true, isMalicious: false, file: finalizeResult.file };
@@ -227,7 +233,16 @@ export const StorageMeter = ({ storageStats: propStats, fetchStorageStats }) => 
 };
 
 export const Dashboard = (props) => {
+  const { enqueueFiles } = useUpload();
   const [storageStats, setStorageStats] = useState(() => props.storageStats || globalDashboardStorageCache || null);
+
+  const handleFileSelect = (e) => {
+    const selected = e.target.files;
+    if (selected && selected.length > 0) {
+      enqueueFiles(selected, props.currentFolder?._id || props.folderId || null);
+    }
+    e.target.value = null; // Reset input
+  };
 
   useEffect(() => {
     // If storageStats is passed via props and updates in App.jsx, synchronize local state
