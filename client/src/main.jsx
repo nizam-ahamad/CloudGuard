@@ -6,6 +6,7 @@ import './index.css'
 import App from './App.jsx'
 import { ToastProvider } from './context/ToastContext'
 import { DownloadProvider } from './context/DownloadContext'
+import { UploadProvider } from './context/UploadContext'
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
 
@@ -15,7 +16,9 @@ createRoot(document.getElementById('root')).render(
       <BrowserRouter>
         <ToastProvider>
           <DownloadProvider>
-            <App />
+            <UploadProvider>
+              <App />
+            </UploadProvider>
           </DownloadProvider>
         </ToastProvider>
       </BrowserRouter>

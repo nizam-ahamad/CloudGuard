@@ -147,7 +147,7 @@ router.get('/', authMiddleware, async (req, res) => {
     const query = {
       $or: [{ userId: userId }, { user: userId }],
       isTrash: { $ne: true },
-      securityStatus: { $ne: 'threat_purged' },
+      securityStatus: { $in: ['clean', 'unverified'] },
     };
 
     if (searchQuery) {

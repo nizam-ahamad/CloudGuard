@@ -1504,7 +1504,7 @@ app.get('/api/files', verifyToken, async (req, res) => {
     let query = {
       $or: [{ userId: userId }, { user: userId }],
       isTrash: { $ne: true },
-      securityStatus: { $ne: 'threat_purged' }
+      securityStatus: { $in: ['clean', 'unverified'] }
     };
     
     if (searchQuery) {
@@ -1620,7 +1620,7 @@ app.get('/api/files/photos', verifyToken, async (req, res) => {
             },
             { isTrash: { $ne: true } },
             { isDeleted: { $ne: true } },
-            { securityStatus: { $ne: 'threat_purged' } },
+            { securityStatus: { $in: ['clean', 'unverified'] } },
             {
               $or: [
                 { mimetype: { $regex: /^(image|video)\//i } },

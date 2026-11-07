@@ -4,6 +4,7 @@ import { formatBytes } from '../utils/formatters';
 import { API_BASE_URL } from '../config';
 import { computeFileSHA256, computeSHA256 } from '../utils/cryptoHelper';
 import { generateMediaThumbnail } from '../utils/thumbnailHelper';
+import { useUpload } from '../context/UploadContext';
 
 export { computeFileSHA256, computeSHA256 };
 
@@ -234,7 +235,16 @@ export const StorageMeter = ({ storageStats: propStats, fetchStorageStats }) => 
 };
 
 export const Dashboard = (props) => {
+  const { enqueueFiles } = useUpload();
   const [storageStats, setStorageStats] = useState(() => props.storageStats || globalDashboardStorageCache || null);
+
+  const handleFileSelect = (e, currentFolderId = null) => {
+    const selected = e.target.files;
+    if (selected && selected.length > 0 && typeof enqueueFiles === 'function') {
+      enqueueFiles(selected, currentFolderId);
+    }
+    e.target.value = null; // Clear input to allow re-uploading same file name
+  };
 
   useEffect(() => {
     // If storageStats is passed via props and updates in App.jsx, synchronize local state
@@ -250,6 +260,48 @@ export const Dashboard = (props) => {
       props.fetchStorageStats();
     }
   }, []);
+
+  useEffect(() => {
+    const handleFilesUpdated = () => {
+      // 1. Invalidate in-memory cache for current folder so fresh data loads
+      globalDashboardStorageCache = null;
+      const currentFolderId =
+        props.currentFolder?._id ||
+        new URLSearchParams(window.location.search).get('folder') ||
+        null;
+
+      if (typeof folderDataCache !== 'undefined' && folderDataCache) {
+        if (currentFolderId) {
+          folderDataCache.delete(currentFolderId);
+        } else {
+          folderDataCache.delete('root');
+        }
+      }
+
+      // 2. Fetch fresh files for the active folder
+      if (typeof props.fetchFiles === 'function') {
+        props.fetchFiles(currentFolderId);
+      } else if (typeof props.fetchFolderContents === 'function') {
+        props.fetchFolderContents(currentFolderId).then((fresh) => {
+          if (fresh && typeof props.setFiles === 'function') {
+            props.setFiles(fresh.files || []);
+            if (typeof props.setFolders === 'function' && fresh.folders) props.setFolders(fresh.folders);
+          }
+        });
+      }
+
+      if (typeof props.fetchStorageStats === 'function') {
+        props.fetchStorageStats();
+      }
+    };
+
+    window.addEventListener('cloudguard:files-updated', handleFilesUpdated);
+    window.addEventListener('cloudguard:storage-updated', handleFilesUpdated);
+    return () => {
+      window.removeEventListener('cloudguard:files-updated', handleFilesUpdated);
+      window.removeEventListener('cloudguard:storage-updated', handleFilesUpdated);
+    };
+  }, [props.currentFolder?._id, props.fetchFiles, props.fetchFolderContents, props.fetchStorageStats]);
 
   return (
     <div className="space-y-4">
