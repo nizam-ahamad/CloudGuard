@@ -5,16 +5,69 @@ const Folder = require('../models/Folder');
 const File = require('../models/File');
 const User = require('../models/User');
 const authMiddleware = require('../middleware/auth');
+const { buildTenantQuery } = require('../utils/tenantQuery');
+
+// -------------------------------------------------------------
+// 0. FOLDER CREATION (POST /)
+// -------------------------------------------------------------
+router.post('/', authMiddleware, async (req, res) => {
+  try {
+    const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
+    if (!rawUserId || !mongoose.Types.ObjectId.isValid(String(rawUserId))) {
+      return res.status(401).json({ error: 'Unauthorized: Valid session required' });
+    }
+
+    const { name, parentId } = req.body;
+    const trimmedName = (name || '').trim();
+    if (!trimmedName) return res.status(400).json({ error: 'Folder name is required' });
+
+    const parent =
+      parentId && parentId !== 'null' && parentId !== 'undefined' && parentId !== 'root' && mongoose.Types.ObjectId.isValid(parentId)
+        ? new mongoose.Types.ObjectId(parentId)
+        : null;
+
+    // Query strictly for ACTIVE (non-trashed) folders with the same name in this directory
+    const duplicateQuery = buildTenantQuery(rawUserId, {
+      parentId: parent || null,
+      name: trimmedName,
+      isTrash: { $ne: true },
+    });
+
+    const existingFolder = await Folder.findOne(duplicateQuery);
+    if (existingFolder) {
+      return res.status(409).json({ error: 'A folder with this name already exists here' });
+    }
+
+    const userIdObj = new mongoose.Types.ObjectId(String(rawUserId));
+    const newFolder = new Folder({
+      name: trimmedName,
+      userId: userIdObj,
+      user: userIdObj,
+      parentId: parent || null,
+      parentFolder: parent || null,
+      isTrash: false,
+    });
+    await newFolder.save();
+    return res.status(201).json(newFolder);
+  } catch (err) {
+    if (err.code === 11000) {
+      return res.status(409).json({ error: 'A folder with this name already exists here' });
+    }
+    console.error('Error creating folder:', err);
+    return res.status(500).json({ error: 'Failed to create folder' });
+  }
+});
 
 // -------------------------------------------------------------
 // 1. DEDICATED MOVE ROUTE (PUT & PATCH /:id/move)
 // -------------------------------------------------------------
 const handleMoveFolder = async (req, res) => {
   try {
-    const rawUserId = req.user.id || req.user._id;
-    const userIdObj = mongoose.Types.ObjectId.isValid(rawUserId)
-      ? new mongoose.Types.ObjectId(rawUserId)
-      : rawUserId;
+    const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
+    if (!rawUserId || !mongoose.Types.ObjectId.isValid(String(rawUserId))) {
+      return res.status(401).json({ error: 'Unauthorized: Valid session required' });
+    }
+    const userIdObj = new mongoose.Types.ObjectId(String(rawUserId));
 
     const folderId = req.params.id;
     const { parentId, parentFolder, destinationId, targetFolderId } = req.body;
@@ -102,10 +155,11 @@ router.patch('/:id/move', authMiddleware, handleMoveFolder);
 // -------------------------------------------------------------
 const handleFolderUpdate = async (req, res) => {
   try {
-    const rawUserId = req.user.id || req.user._id;
-    const userIdObj = mongoose.Types.ObjectId.isValid(rawUserId)
-      ? new mongoose.Types.ObjectId(rawUserId)
-      : rawUserId;
+    const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
+    if (!rawUserId || !mongoose.Types.ObjectId.isValid(String(rawUserId))) {
+      return res.status(401).json({ error: 'Unauthorized: Valid session required' });
+    }
+    const userIdObj = new mongoose.Types.ObjectId(String(rawUserId));
 
     const userQuery = [
       { userId: userIdObj },
@@ -140,18 +194,19 @@ const handleFolderUpdate = async (req, res) => {
       return res.json({ success: true, folder });
     }
 
-    // Check for duplicate in the same parent directory
-    const existingDuplicate = await Folder.findOne({
+    // Check for duplicate in the same parent directory (ignoring trashed folders)
+    const duplicateQuery = buildTenantQuery(rawUserId, {
       _id: { $ne: req.params.id },
       parentId: folder.parentId || null,
       name: trimmedName,
       isTrash: { $ne: true },
-      $or: userQuery,
     });
+
+    const existingDuplicate = await Folder.findOne(duplicateQuery);
 
     if (existingDuplicate) {
       return res.status(409).json({
-        error: `A folder named "${trimmedName}" already exists in this directory.`,
+        error: 'A folder with this name already exists here',
       });
     }
 
@@ -175,10 +230,11 @@ router.patch('/:id', authMiddleware, handleFolderUpdate);
 // -------------------------------------------------------------
 const handleBatchMove = async (req, res) => {
   try {
-    const rawUserId = req.user.id || req.user._id || req.user.userId;
-    const userIdObj = mongoose.Types.ObjectId.isValid(rawUserId)
-      ? new mongoose.Types.ObjectId(rawUserId)
-      : rawUserId;
+    const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
+    if (!rawUserId || !mongoose.Types.ObjectId.isValid(String(rawUserId))) {
+      return res.status(401).json({ error: 'Unauthorized: Valid session required' });
+    }
+    const userIdObj = new mongoose.Types.ObjectId(String(rawUserId));
 
     const userQuery = {
       $or: [
@@ -314,81 +370,7 @@ router.put('/batch-move', authMiddleware, handleBatchMove);
 
 
 // -------------------------------------------------------------
-// 4. SOFT-DELETE FOLDER
-// -------------------------------------------------------------
-router.delete('/:id', authMiddleware, async (req, res) => {
-  try {
-    const rawUserId = req.user.id || req.user._id || req.user.userId;
-    const userIdObj = mongoose.Types.ObjectId.isValid(rawUserId)
-      ? new mongoose.Types.ObjectId(rawUserId)
-      : rawUserId;
-
-    const userMatch = {
-      $or: [
-        { userId: userIdObj },
-        { user: userIdObj },
-        { userId: String(rawUserId) },
-        { user: String(rawUserId) },
-      ],
-    };
-
-    const folder = await Folder.findOne({
-      _id: req.params.id,
-      ...userMatch,
-    });
-
-    if (!folder) return res.status(404).json({ error: 'Folder not found' });
-
-    folder.isTrash = true;
-    folder.trashedAt = new Date();
-    await folder.save();
-
-    // Mark children files as trashed
-    const folderIdObj = mongoose.Types.ObjectId.isValid(folder._id)
-      ? new mongoose.Types.ObjectId(folder._id)
-      : folder._id;
-
-    await File.updateMany(
-      {
-        $or: [
-          { folder: folderIdObj },
-          { folderId: folderIdObj },
-          { folder: String(folder._id) },
-          { folderId: String(folder._id) },
-        ],
-        ...userMatch,
-      },
-      { $set: { isTrash: true, trashedAt: new Date() } }
-    );
-
-    // Recalculate user storage quota
-    const stats = await File.aggregate([
-      {
-        $match: {
-          isTrash: { $ne: true },
-          securityStatus: { $ne: 'threat_purged' },
-          ...userMatch,
-        },
-      },
-      {
-        $group: {
-          _id: null,
-          actualUsedBytes: { $sum: { $ifNull: ['$size', 0] } },
-        },
-      },
-    ]);
-    const actualStorageUsed = stats[0]?.actualUsedBytes || 0;
-    await User.findByIdAndUpdate(rawUserId, { storageUsed: actualStorageUsed });
-
-    return res.status(200).json({ success: true, message: 'Folder deleted' });
-  } catch (err) {
-    console.error('Delete folder error:', err);
-    return res.status(500).json({ error: 'Failed to delete folder' });
-  }
-});
-
-// -------------------------------------------------------------
-// 5. BATCH DELETE & RESTORE (COMPATIBILITY)
+// 4. BATCH DELETE & RESTORE (COMPATIBILITY)
 // -------------------------------------------------------------
 router.post('/delete-batch', authMiddleware, (req, res, next) => require('./files').handleBatchDelete(req, res, next));
 router.post('/batch-delete', authMiddleware, (req, res, next) => require('./files').handleBatchDelete(req, res, next));
@@ -400,49 +382,39 @@ router.post('/batch-restore', authMiddleware, (req, res, next) => require('./fil
 // -------------------------------------------------------------
 const handleFolderDetails = async (req, res) => {
   try {
-    const rawUserId = req.user.id || req.user._id || req.user.userId;
+    const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
+    if (!rawUserId || !mongoose.Types.ObjectId.isValid(String(rawUserId))) {
+      return res.status(401).json({ error: 'Unauthorized: Valid session required' });
+    }
     const folderId = req.params.id;
 
     if (!mongoose.Types.ObjectId.isValid(folderId)) {
       return res.status(400).json({ error: 'Invalid folder ID' });
     }
 
-    const userIdObj = mongoose.Types.ObjectId.isValid(rawUserId)
-      ? new mongoose.Types.ObjectId(rawUserId)
-      : rawUserId;
+    const folderObjectId = new mongoose.Types.ObjectId(folderId);
 
-    const userMatch = {
-      $or: [
-        { userId: userIdObj },
-        { user: userIdObj },
-        { userId: String(rawUserId) },
-        { user: String(rawUserId) },
-      ],
-    };
-
-    const folder = await Folder.findOne({
-      _id: folderId,
-      isTrash: { $ne: true },
-      ...userMatch,
-    }).lean();
+    const folder = await Folder.findOne(
+      buildTenantQuery(rawUserId, {
+        _id: folderObjectId,
+        isTrash: { $ne: true },
+      })
+    ).lean();
 
     if (!folder) {
       return res.status(404).json({ error: 'Folder not found' });
     }
 
-    const folderObjectId = new mongoose.Types.ObjectId(folderId);
-
-    // 1. Count actual child subfolders inside this directory
-    const subfolderCount = await Folder.countDocuments({
-      isTrash: { $ne: true },
-      ...userMatch,
-      $or: [
-        { parentId: folderObjectId },
-        { parentFolder: folderObjectId },
-        { parentId: folderId },
-        { parentFolder: folderId },
-      ],
-    });
+    // 1. Count actual child subfolders inside this directory with strict tenant scoping
+    const subfolderCount = await Folder.countDocuments(
+      buildTenantQuery(rawUserId, {
+        isTrash: { $ne: true },
+        $or: [
+          { parentId: folderObjectId },
+          { parentFolder: folderObjectId },
+        ],
+      })
+    );
 
     // 2. Aggregate all active files inside this directory (robust size casting)
     const fileStats = await File.aggregate([
@@ -451,13 +423,11 @@ const handleFolderDetails = async (req, res) => {
           isTrash: { $ne: true },
           securityStatus: { $ne: 'threat_purged' },
           $and: [
-            userMatch,
+            buildTenantQuery(rawUserId),
             {
               $or: [
                 { folder: folderObjectId },
                 { folderId: folderObjectId },
-                { folder: folderId },
-                { folderId: folderId },
               ],
             },
           ],
@@ -514,6 +484,9 @@ const handleFolderDetails = async (req, res) => {
 router.get('/', authMiddleware, async (req, res) => {
   try {
     const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
+    if (!rawUserId || !mongoose.Types.ObjectId.isValid(String(rawUserId))) {
+      return res.status(401).json({ error: 'Unauthorized: Valid session required' });
+    }
     const parent = req.query.parentId || req.query.folderId || null;
 
     const parentId =
@@ -521,15 +494,7 @@ router.get('/', authMiddleware, async (req, res) => {
         ? new mongoose.Types.ObjectId(parent)
         : null;
 
-    const userMatch = {
-      $or: [
-        { userId: rawUserId },
-        { user: rawUserId },
-      ],
-    };
-
     const filter = {
-      ...userMatch,
       isTrash: { $ne: true },
     };
 
@@ -537,8 +502,8 @@ router.get('/', authMiddleware, async (req, res) => {
       filter.parentId = parentId || null;
     }
 
-    // STRICT: Only return folders that are NOT trashed
-    const folders = await Folder.find(filter)
+    const query = buildTenantQuery(rawUserId, filter);
+    const folders = await Folder.find(query)
       .sort({ name: 1 })
       .lean();
 
@@ -553,6 +518,9 @@ router.get('/', authMiddleware, async (req, res) => {
 router.delete('/:id', authMiddleware, async (req, res) => {
   try {
     const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
+    if (!rawUserId || !mongoose.Types.ObjectId.isValid(String(rawUserId))) {
+      return res.status(401).json({ error: 'Unauthorized: Valid session required' });
+    }
     const folderId = req.params.id;
 
     // Strict validation: reject non-ObjectIds immediately
@@ -561,10 +529,11 @@ router.delete('/:id', authMiddleware, async (req, res) => {
     }
 
     const folderObjectId = new mongoose.Types.ObjectId(folderId);
-    const userMatch = { $or: [{ userId: rawUserId }, { user: rawUserId }] };
 
     // 1. Delete or trash the targeted folder
-    const folder = await Folder.findOne({ _id: folderObjectId, ...userMatch });
+    const folder = await Folder.findOne(
+      buildTenantQuery(rawUserId, { _id: folderObjectId })
+    );
     if (!folder) {
       return res.status(404).json({ error: 'Folder not found' });
     }
@@ -574,20 +543,18 @@ router.delete('/:id', authMiddleware, async (req, res) => {
     folder.trashedAt = new Date();
     await folder.save();
 
-    // 2. Cascade ONLY to children of THIS SPECIFIC folder (guarded with valid ObjectId)
+    // 2. Cascade ONLY to children of THIS SPECIFIC folder (guarded with buildTenantQuery)
     await File.updateMany(
-      {
+      buildTenantQuery(rawUserId, {
         $or: [{ folder: folderObjectId }, { folderId: folderObjectId }],
-        ...userMatch,
-      },
+      }),
       { $set: { isTrash: true, trashedAt: new Date() } }
     );
 
     await Folder.updateMany(
-      {
+      buildTenantQuery(rawUserId, {
         $or: [{ parentId: folderObjectId }, { parentFolder: folderObjectId }],
-        ...userMatch,
-      },
+      }),
       { $set: { isTrash: true, trashedAt: new Date() } }
     );
 

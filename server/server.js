@@ -20,6 +20,7 @@ const FormData = require('form-data');
 const crypto = require('crypto');
 const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand, ListObjectsV2Command, DeleteObjectsCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+const { buildTenantQuery } = require('./utils/tenantQuery');
 
 // Multer in-memory storage configuration (prevent EC2 disk space exhaustion)
 const multer = require('multer');
@@ -66,82 +67,22 @@ const s3 = new S3Client({
   }
 });
 
-// Folder Metadata Schema
-const FolderSchema = new mongoose.Schema({
-  name: { type: String, required: true, trim: true },
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  parentId: { type: mongoose.Schema.Types.ObjectId, ref: 'Folder', default: null },
-  createdAt: { type: Date, default: Date.now }
-});
-FolderSchema.index({ userId: 1, parentId: 1 });
-FolderSchema.index({ user: 1, parentFolder: 1, isTrash: 1 });
-FolderSchema.index({ userId: 1, parentId: 1, isTrash: 1 });
-const FolderModel = mongoose.models.Folder || mongoose.model('Folder', FolderSchema);
-
-// File Metadata Schema
-const FileSchema = new mongoose.Schema({
-  userId: { type: String, required: true },
-  user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-  folder: { type: mongoose.Schema.Types.ObjectId, ref: 'Folder', default: null },
-  folderId: { type: mongoose.Schema.Types.ObjectId, ref: 'Folder', default: null },
-  name: { type: String, required: true },
-  originalName: { type: String },
-  s3Key: { type: String, required: true },
-  location: { type: String },
-  relativePath: { type: String },
-  size: { type: Number },
-  mimetype: { type: String },
-  mimeType: { type: String },
-  status: { type: String, default: 'safe' },
-  securityStatus: { type: String, default: 'Safe' },
-  isTrash: { type: Boolean, default: false },
-  isDeleted: { type: Boolean, default: false },
-  isMalicious: { type: Boolean, default: false },
-  uploadedAt: { type: Date, default: Date.now },
-  createdAt: { type: Date, default: Date.now }
-});
-
-// Compound indexes for ultra-fast index-only scan on active files and photos
-FileSchema.index({ userId: 1, isTrash: 1, isDeleted: 1, uploadedAt: -1 });
-FileSchema.index({ user: 1, isTrash: 1, isDeleted: 1, createdAt: -1 });
-FileSchema.index({ userId: 1, folderId: 1 });
-FileSchema.index({ user: 1, folder: 1, isTrash: 1 });
-FileSchema.index({ user: 1, folderId: 1, isTrash: 1 });
-FileSchema.index({ userId: 1, folderId: 1, isTrash: 1 });
-FileSchema.index({ user: 1, createdAt: -1 });
-FileSchema.index({ userId: 1, createdAt: -1 });
-
-const FileModel = mongoose.models.File || mongoose.model('File', FileSchema);
-
+// Use centralized Mongoose models from server/models/
 const File = require('./models/File');
 const Folder = require('./models/Folder');
 const User = require('./models/User');
 
+const FileModel = File;
+const FolderModel = Folder;
+const UserModel = User;
+
 // Automatic database recovery and quota reconciliation routine
 async function autoRecoverVaultData() {
   try {
-    console.log('[CloudGuard Recovery] Checking database integrity...');
+    console.log('[CloudGuard Recovery] Reconciling tenant storage quotas...');
 
-    // 1. Recover all files accidentally marked isTrash: true
-    const fileRecovery = await File.updateMany(
-      { isTrash: true },
-      { $set: { isTrash: false, trashedAt: null } }
-    );
-    if (fileRecovery.modifiedCount > 0) {
-      console.log(`[CloudGuard Recovery] ✅ Restored ${fileRecovery.modifiedCount} files back to active state.`);
-    }
-
-    // 2. Recover all folders accidentally marked isTrash: true
-    const folderRecovery = await Folder.updateMany(
-      { isTrash: true },
-      { $set: { isTrash: false, trashedAt: null } }
-    );
-    if (folderRecovery.modifiedCount > 0) {
-      console.log(`[CloudGuard Recovery] ✅ Restored ${folderRecovery.modifiedCount} folders back to active state.`);
-    }
-
-    // 3. Recalculate true active storage quotas for all users
-    const users = await User.find({});
+    // Recalculate true active storage quotas for all users (ignoring trashed & purged files)
+    const users = await User.find({}).select('_id email').lean();
     for (const u of users) {
       const stats = await File.aggregate([
         {
@@ -166,11 +107,8 @@ async function autoRecoverVaultData() {
 
       const trueBytes = stats[0]?.totalBytes || 0;
       await User.findByIdAndUpdate(u._id, { storageUsed: trueBytes });
-      const mbUsed = (trueBytes / (1024 * 1024)).toFixed(1);
-      console.log(`[CloudGuard Recovery] ✅ User ${u.email}: Storage resynced to ${trueBytes} bytes (~${mbUsed} MB).`);
     }
-
-    console.log('[CloudGuard Recovery] All database records verified and active.');
+    console.log('[CloudGuard Recovery] Storage quotas successfully reconciled.');
   } catch (err) {
     console.error('[CloudGuard Recovery Error]:', err.message);
   }
@@ -200,13 +138,21 @@ mongoose.connect(mongoURI, {
 
     // Execute automated self-healing vault data recovery
     await autoRecoverVaultData();
+
+    // Synchronize Mongoose indexes with MongoDB to ensure partialFilterExpression is active
+    try {
+      await Folder.syncIndexes();
+      await File.syncIndexes();
+      console.log('[CloudGuard] Database indexes synchronized successfully.');
+    } catch (indexErr) {
+      console.warn('[CloudGuard Index Sync Warning]:', indexErr.message);
+    }
   })
   .catch(err => {
     console.error("[DB Error]", err);
   });
 
-// User Model
-const UserModel = User;
+
 
 async function recalculateStorage(userId) {
     try {
@@ -1222,16 +1168,19 @@ app.get('/api/files/sync', verifyToken, async (req, res) => {
 // --- NEW FOLDER ROUTES ---
 app.post('/api/folders', verifyToken, async (req, res) => {
   try {
+    const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
     const { name, parentId } = req.body;
     const trimmedName = (name || '').trim();
     if (!trimmedName) return res.status(400).json({ error: 'Folder name is required' });
 
-    // Check if a folder with the same name already exists in this folder
-    const existing = await FolderModel.findOne({
-      name: trimmedName,
+    // Check if an active (non-trashed) folder with the same name already exists in this folder
+    const duplicateQuery = buildTenantQuery(rawUserId, {
       parentId: parentId || null,
-      userId: req.user._id,
+      name: trimmedName,
+      isTrash: { $ne: true },
     });
+
+    const existing = await FolderModel.findOne(duplicateQuery);
 
     if (existing) {
       return res.status(409).json({ error: 'A folder with this name already exists here' });
@@ -1240,11 +1189,15 @@ app.post('/api/folders', verifyToken, async (req, res) => {
     const newFolder = new FolderModel({
       name: trimmedName,
       userId: req.user._id,
-      parentId: parentId || null
+      parentId: parentId || null,
+      isTrash: false,
     });
     await newFolder.save();
     return res.status(201).json(newFolder);
   } catch (err) {
+    if (err.code === 11000) {
+      return res.status(409).json({ error: 'A folder with this name already exists here' });
+    }
     console.error('Error creating folder:', err);
     return res.status(500).json({ error: 'Failed to create folder' });
   }

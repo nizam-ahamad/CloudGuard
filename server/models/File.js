@@ -17,6 +17,7 @@ const fileSchema = new mongoose.Schema(
     folder: { type: mongoose.Schema.Types.ObjectId, ref: 'Folder', default: null },
     folderId: { type: mongoose.Schema.Types.ObjectId, ref: 'Folder', default: null },
     isTrash: { type: Boolean, default: false },
+    trashedAt: { type: Date, default: null },
     isDeleted: { type: Boolean, default: false },
     isMalicious: { type: Boolean, default: false },
     status: { type: String, default: 'safe' },

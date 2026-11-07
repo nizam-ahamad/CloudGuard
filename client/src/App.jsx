@@ -32,18 +32,26 @@ let globalStorageStatsCache = null;
 axios.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response && error.response.status === 401) {
-      const currentPath = window.location.pathname;
-      // Only redirect if currently on an authenticated dashboard route
-      if (currentPath.startsWith('/dashboard')) {
-        globalStorageStatsCache = null;
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-        sessionStorage.removeItem('token');
-        sessionStorage.removeItem('user');
+    const requestUrl = error.config?.url || '';
+    const isAuthRoute =
+      requestUrl.includes('/api/auth/login') ||
+      requestUrl.includes('/api/auth/register') ||
+      requestUrl.includes('/api/auth/google') ||
+      requestUrl.includes('/api/auth/verify-otp') ||
+      requestUrl.includes('/api/auth/forgot-password');
+
+    // Only redirect on 401 if it's an authenticated session request and NOT already on /login
+    if (error.response?.status === 401 && !isAuthRoute) {
+      globalStorageStatsCache = null;
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      sessionStorage.removeItem('token');
+      sessionStorage.removeItem('user');
+      if (window.location.pathname !== '/login' && window.location.pathname !== '/login/') {
         window.location.href = '/login?expired=true';
       }
     }
+
     return Promise.reject(error);
   }
 );
@@ -100,24 +108,39 @@ function App() {
     return userStr ? JSON.parse(userStr) : null;
   });
 
-  // Synchronize auth state with storage and auth-change events
+  // Dynamic token verification helper:
+  const getActiveToken = () => {
+    return localStorage.getItem('token') || sessionStorage.getItem('token') || null;
+  };
+
+  // Listen for cross-component auth changes
   useEffect(() => {
     const syncAuth = () => {
-      const storedToken = localStorage.getItem('token') || sessionStorage.getItem('token');
+      const activeToken = getActiveToken();
       const storedUser = localStorage.getItem('user') || sessionStorage.getItem('user');
-      setToken(storedToken);
+      setToken(activeToken);
       setUser(storedUser ? JSON.parse(storedUser) : null);
     };
 
-    window.addEventListener('storage', syncAuth);
+    window.addEventListener('cloudguard:auth-changed', syncAuth);
     window.addEventListener('auth-change', syncAuth);
+    window.addEventListener('storage', syncAuth);
     syncAuth();
 
     return () => {
-      window.removeEventListener('storage', syncAuth);
+      window.removeEventListener('cloudguard:auth-changed', syncAuth);
       window.removeEventListener('auth-change', syncAuth);
+      window.removeEventListener('storage', syncAuth);
     };
   }, [location.pathname]);
+
+  // Clear ?expired=true from address bar on /login without full reload
+  useEffect(() => {
+    if (window.location.pathname === '/login' && window.location.search.includes('expired=true')) {
+      const cleanUrl = window.location.pathname;
+      window.history.replaceState({}, document.title, cleanUrl);
+    }
+  }, [location.pathname, location.search]);
   const [authMode, setAuthMode] = useState('login');
   const [authForm, setAuthForm] = useState({ name: '', email: '', password: '', remember: false });
   const [authError, setAuthError] = useState('');

@@ -8,6 +8,7 @@ const folderSchema = new mongoose.Schema(
     parentId: { type: mongoose.Schema.Types.ObjectId, ref: 'Folder', default: null },
     parentFolder: { type: mongoose.Schema.Types.ObjectId, ref: 'Folder', default: null },
     isTrash: { type: Boolean, default: false },
+    trashedAt: { type: Date, default: null },
     createdAt: { type: Date, default: Date.now },
     updatedAt: { type: Date, default: Date.now },
   },
@@ -19,6 +20,12 @@ const folderSchema = new mongoose.Schema(
 
 // High-speed directory tree index & duplicate folder name prevention
 folderSchema.index({ userId: 1, parentId: 1, isTrash: 1 });
-folderSchema.index({ userId: 1, parentId: 1, name: 1 }, { unique: true });
+folderSchema.index(
+  { userId: 1, parentId: 1, name: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { isTrash: false },
+  }
+);
 
 module.exports = mongoose.models.Folder || mongoose.model('Folder', folderSchema);

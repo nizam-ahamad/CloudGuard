@@ -8,6 +8,7 @@ const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const User = require('../models/User');
 const File = require('../models/File');
 const Folder = require('../models/Folder');
+const { buildTenantQuery } = require('../utils/tenantQuery');
 
 // Ensure S3Client is configured with credentials and region
 const s3Client = new S3Client({
@@ -395,6 +396,10 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
     }
 
     // 5. Commit Clean File
+    if (file.securityStatus === 'clean') {
+      return res.status(200).json({ success: true, isMalicious: false, file });
+    }
+
     file.securityStatus = 'clean';
     file.isMalicious = false;
     file.status = 'safe';
@@ -524,7 +529,7 @@ const handleBatchDelete = async (req, res) => {
     // 1. Delete files ONLY if valid file IDs exist
     if (validFileIds.length > 0) {
       await File.updateMany(
-        { _id: { $in: validFileIds }, ...userMatch },
+        buildTenantQuery(rawUserId, { _id: { $in: validFileIds } }),
         { $set: { isTrash: true, trashedAt: new Date() } }
       );
     }
@@ -532,24 +537,26 @@ const handleBatchDelete = async (req, res) => {
     // 2. Delete folders ONLY if valid folder IDs exist
     if (validFolderIds.length > 0) {
       await Folder.updateMany(
-        { _id: { $in: validFolderIds }, ...userMatch },
+        buildTenantQuery(rawUserId, { _id: { $in: validFolderIds } }),
         { $set: { isTrash: true, trashedAt: new Date() } }
       );
 
-      // Cascade to contents of THESE specific folders only
+      // Cascade to child files with strict $and scoping
       await File.updateMany(
-        {
-          $or: [{ folder: { $in: validFolderIds } }, { folderId: { $in: validFolderIds } }],
-          ...userMatch,
-        },
+        buildTenantQuery(rawUserId, {
+          $or: [
+            { folder: { $in: validFolderIds } },
+            { folderId: { $in: validFolderIds } },
+          ],
+        }),
         { $set: { isTrash: true, trashedAt: new Date() } }
       );
 
+      // Cascade to child folders with strict $and scoping
       await Folder.updateMany(
-        {
+        buildTenantQuery(rawUserId, {
           $or: [{ parentId: { $in: validFolderIds } }, { parentFolder: { $in: validFolderIds } }],
-          ...userMatch,
-        },
+        }),
         { $set: { isTrash: true, trashedAt: new Date() } }
       );
     }
@@ -609,30 +616,31 @@ const handleBatchRestore = async (req, res) => {
 
     if (validFileIds.length > 0) {
       await File.updateMany(
-        { _id: { $in: validFileIds }, ...userMatch },
+        buildTenantQuery(rawUserId, { _id: { $in: validFileIds } }),
         { $set: { isTrash: false, trashedAt: null } }
       );
     }
 
     if (validFolderIds.length > 0) {
       await Folder.updateMany(
-        { _id: { $in: validFolderIds }, ...userMatch },
+        buildTenantQuery(rawUserId, { _id: { $in: validFolderIds } }),
         { $set: { isTrash: false, trashedAt: null } }
       );
 
       await File.updateMany(
-        {
-          $or: [{ folder: { $in: validFolderIds } }, { folderId: { $in: validFolderIds } }],
-          ...userMatch,
-        },
+        buildTenantQuery(rawUserId, {
+          $or: [
+            { folder: { $in: validFolderIds } },
+            { folderId: { $in: validFolderIds } },
+          ],
+        }),
         { $set: { isTrash: false, trashedAt: null } }
       );
 
       await Folder.updateMany(
-        {
+        buildTenantQuery(rawUserId, {
           $or: [{ parentId: { $in: validFolderIds } }, { parentFolder: { $in: validFolderIds } }],
-          ...userMatch,
-        },
+        }),
         { $set: { isTrash: false, trashedAt: null } }
       );
     }

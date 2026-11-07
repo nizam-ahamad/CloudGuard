@@ -2,8 +2,9 @@ import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { API_BASE_URL } from '../config';
 
-// Safe memory threshold for browser JSZip (1.5 GB)
-const BROWSER_ZIP_LIMIT = 1.5 * 1024 * 1024 * 1024;
+// Smart browser memory limit: archives <= 300 MB zip cleanly in-memory.
+// Larger batches automatically fallback to sequential native downloads to protect device RAM.
+const BROWSER_ZIP_LIMIT = 300 * 1024 * 1024; // 300 MB in bytes
 
 export function formatDownloadBytes(bytes) {
   if (!bytes || bytes === 0) return '0 B';
@@ -212,7 +213,7 @@ export async function downloadBatchZipWithProgress(
     // 1. Fire informative toast notification
     if (typeof onNotice === 'function') {
       onNotice(
-        `Large batch (${formattedTotal}). Downloading files individually to ensure full download speed.`
+        `Batch size (${formattedTotal}) exceeds 300 MB browser archive limit. Initiating direct sequential downloads...`
       );
     }
 

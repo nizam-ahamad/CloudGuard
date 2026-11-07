@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { GoogleLogin } from '@react-oauth/google';
 import axios from 'axios';
@@ -48,8 +48,8 @@ export default function AuthPage() {
     if (formError) setFormError('');
   };
 
-  // Google OAuth Success Handler
-  const handleGoogleSuccess = async (credentialResponse) => {
+  // Google OAuth Handlers (Memoized to prevent GSI re-initialization warnings)
+  const handleGoogleSuccess = useCallback(async (credentialResponse) => {
     try {
       setIsLoading(true);
       const res = await axios.post(`${API_BASE_URL}/api/auth/google`, {
@@ -59,7 +59,11 @@ export default function AuthPage() {
       localStorage.setItem('token', res.data.token);
       localStorage.setItem('user', JSON.stringify(res.data.user));
 
-      toast.success(isSignUp ? 'Account created successfully!' : `Welcome back, ${res.data.user.name}!`);
+      window.dispatchEvent(new Event('cloudguard:auth-changed'));
+      window.dispatchEvent(new Event('auth-change'));
+      window.dispatchEvent(new Event('storage'));
+
+      toast.success(`Welcome back, ${res.data.user?.name || 'User'}!`);
       window.location.href = '/dashboard';
     } catch (err) {
       console.error('Google Auth Error:', err);
@@ -69,7 +73,11 @@ export default function AuthPage() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [toast]);
+
+  const handleGoogleError = useCallback(() => {
+    toast.error('Google Sign-In failed');
+  }, [toast]);
 
   // OTP handlers
   const handleOtpChange = (index, value) => {
@@ -302,29 +310,64 @@ export default function AuthPage() {
       }
 
       // 5. Handling Login
-      const res = await axios.post(`${API_BASE_URL}/api/auth/login`, {
-        email: formData.email,
+      const endpoint = `${API_BASE_URL}/api/auth/login`;
+      console.log(`[Auth] Submitting login to ${endpoint}:`, { email: formData.email });
+
+      const res = await axios.post(endpoint, {
+        email: formData.email.toLowerCase().trim(),
         password: formData.password,
       });
 
+      console.log('[Auth] Server response:', res.data);
+
+      if (res.data?.requireOtp) {
+        setPendingEmail(formData.email);
+        setIsOtpMode(true);
+        setTimer(60);
+        setOtpValues(['', '', '', '', '', '']);
+        setOtpAttempts(0);
+        toast.info(res.data.message || 'Verification code sent to your inbox.');
+        return;
+      }
+
+      if (!res.data.token) {
+        throw new Error('No authentication token received from server.');
+      }
+
+      // 1. Store authentication tokens
       localStorage.setItem('token', res.data.token);
-      localStorage.setItem('user', JSON.stringify(res.data.user));
-      toast.success('Logged in successfully');
-      navigate('/dashboard');
+      localStorage.setItem('user', JSON.stringify(res.data.user || { email: formData.email }));
+
+      // 2. Dispatch custom event for any listening components
+      window.dispatchEvent(new Event('cloudguard:auth-changed'));
+      window.dispatchEvent(new Event('auth-change'));
+      window.dispatchEvent(new Event('storage'));
+
+      toast.success(`Welcome back, ${res.data.user?.name || 'User'}!`);
+
+      // 3. HARD NAVIGATION: Forces App.jsx to remount and read fresh token from localStorage
+      window.location.href = '/dashboard';
     } catch (err) {
-      console.error('Auth Error:', err);
-      if (err.response?.status === 403 && err.response?.data?.requireOtp) {
+      console.error('[Auth] Login error details:', err.response?.data || err.message);
+
+      if (err.response?.data?.requireOtp) {
         setPendingEmail(err.response.data.email || formData.email);
         setIsOtpMode(true);
         setTimer(60);
         setOtpValues(['', '', '', '', '', '']);
         setOtpAttempts(0);
-        toast.info(err.response.data.error || 'Please verify your email before logging in. A new OTP has been sent.');
+        toast.error(err.response.data.error || 'Please verify your account OTP');
         return;
       }
-      const msg = err.response?.data?.error || err.response?.data?.message || 'Authentication failed';
-      setFormError(msg);
-      toast.error(msg);
+
+      const errorMessage =
+        err.response?.data?.error ||
+        err.response?.data?.message ||
+        err.message ||
+        'Invalid email or password';
+
+      setFormError(errorMessage);
+      toast.error(errorMessage, { duration: 5000 });
     } finally {
       setIsLoading(false);
     }
@@ -600,16 +643,15 @@ export default function AuthPage() {
               </button>
             </div>
 
-            {/* 1. Primary Action: Google Social Login at Top */}
-            <div className="flex justify-center w-full">
+            {/* Google Authentication */}
+            <div className="w-full flex justify-center mb-5">
               <GoogleLogin
                 onSuccess={handleGoogleSuccess}
-                onError={() => toast.error('Google Sign-In failed')}
+                onError={handleGoogleError}
                 text={isSignUp ? 'signup_with' : 'signin_with'}
                 shape="pill"
                 theme="filled_black"
                 size="large"
-                width="100%"
               />
             </div>
 

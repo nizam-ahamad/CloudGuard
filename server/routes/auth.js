@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { OAuth2Client } = require('google-auth-library');
@@ -8,8 +9,8 @@ const { sendNotificationEmail } = require('../utils/emailService');
 
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
-// 6-digit cryptographic-safe numerical generator
-const generateOtp = () => Math.floor(100000 + Math.random() * 900000).toString();
+// Cryptographically secure 6-digit OTP generator (prevents PRNG state reconstruction)
+const generateOtp = () => crypto.randomInt(100000, 1000000).toString();
 
 // User verification middleware for authenticated routes (e.g. PUT /password)
 const verifyToken = async (req, res, next) => {
@@ -63,6 +64,10 @@ router.post('/google', async (req, res) => {
       let modified = false;
       if (!user.googleId) {
         user.googleId = googleId;
+        user.authProvider = user.password ? 'hybrid' : 'google';
+        modified = true;
+      } else if (user.password && user.authProvider !== 'hybrid') {
+        user.authProvider = 'hybrid';
         modified = true;
       }
       if (!user.avatar && picture) {
@@ -82,6 +87,7 @@ router.post('/google', async (req, res) => {
         avatar: picture || null,
         authProvider: 'google',
         isVerified: true,
+        password: null,
         storageUsed: 0,
         storageLimit: 5368709120,
       });
@@ -325,18 +331,30 @@ router.post('/resend-otp', async (req, res) => {
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
-    if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
 
-    const normalizedEmail = (email || '').toLowerCase().trim();
-    const user = await User.findOne({ email: normalizedEmail });
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Please enter both email and password' });
+    }
 
-    if (!user) return res.status(400).json({ error: 'Invalid email or password' });
+    const normalizedEmail = email.toLowerCase().trim();
+    // Explicitly include +password in query
+    const user = await User.findOne({ email: normalizedEmail }).select('+password');
+
+    if (!user) {
+      console.warn(`[Auth Warning] Login failed: User not found for ${normalizedEmail}`);
+      return res.status(400).json({ error: 'Invalid email or password' });
+    }
+
+    // Handle Google account without password set
+    if (!user.password && user.googleId) {
+      return res.status(400).json({
+        error: 'This account was created with Google Sign-In. Please sign in with Google or use "Forgot Password" to set a password.',
+        isGoogleAccount: true,
+      });
+    }
 
     if (!user.password) {
-      return res.status(400).json({
-        error: 'This account was registered using Google. Please sign in with Google.',
-        isOAuthUser: true,
-      });
+      return res.status(400).json({ error: 'No password configured for this account' });
     }
 
     if (!user.isVerified) {
@@ -361,20 +379,39 @@ router.post('/login', async (req, res) => {
     }
 
     const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(400).json({ error: 'Invalid email or password' });
+    if (!isMatch) {
+      console.warn(`[Auth Warning] Password mismatch for user: ${normalizedEmail}`);
+      return res.status(400).json({ error: 'Invalid email or password' });
+    }
 
+    // Generate JWT Session Token
     const token = jwt.sign(
       { id: user._id, _id: user._id, email: user.email, name: user.name, isAdmin: user.isAdmin || false },
-      process.env.JWT_SECRET,
+      process.env.JWT_SECRET || 'cloudguard_fallback_secret',
       { expiresIn: '7d' }
     );
-    return res.json({
+
+    console.log(`[Auth Success] User logged in successfully: ${normalizedEmail}`);
+
+    return res.status(200).json({
+      success: true,
       token,
-      user: formatUserResponse(user),
+      user: {
+        id: user._id,
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        avatar: user.avatar,
+        authProvider: user.authProvider,
+        hasPassword: !!user.password,
+        isVerified: user.isVerified,
+        storageUsed: user.storageUsed,
+        storageLimit: user.storageLimit,
+      },
     });
   } catch (err) {
-    console.error('Login Error:', err);
-    return res.status(500).json({ error: 'Login failed' });
+    console.error('[Auth Error] Server error during login:', err);
+    return res.status(500).json({ error: 'Internal server error during login' });
   }
 });
 
@@ -444,6 +481,7 @@ router.post('/reset-password', async (req, res) => {
 
     const salt = await bcrypt.genSalt(10);
     user.password = await bcrypt.hash(newPassword, salt);
+    user.authProvider = user.googleId ? 'hybrid' : 'local';
     user.otp = null;
     user.otpExpires = null;
     user.resetPasswordToken = null;
@@ -489,6 +527,7 @@ router.put('/reset-password/:token', async (req, res) => {
 
     const salt = await bcrypt.genSalt(10);
     user.password = await bcrypt.hash(password, salt);
+    user.authProvider = user.googleId ? 'hybrid' : 'local';
     user.otp = null;
     user.otpExpires = null;
     user.resetPasswordToken = null;
@@ -539,6 +578,7 @@ router.put('/password', verifyToken, async (req, res) => {
     const hashedPassword = await bcrypt.hash(newPassword, salt);
 
     user.password = hashedPassword;
+    user.authProvider = user.googleId ? 'hybrid' : 'local';
     await user.save();
 
     return res.status(200).json({ message: 'Password updated successfully', hasPassword: true });
