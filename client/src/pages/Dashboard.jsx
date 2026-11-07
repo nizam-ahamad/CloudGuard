@@ -1,35 +1,80 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { formatBytes } from '../utils/formatters';
+import { API_BASE_URL } from '../config';
+import { computeFileSHA256, computeSHA256 } from '../utils/cryptoHelper';
+
+export { computeFileSHA256, computeSHA256 };
 
 let globalDashboardStorageCache = null;
 
 /**
- * Native Web Crypto API SHA-256 calculation
+ * Direct-to-S3 Upload Pipeline with concurrent SHA-256 fingerprinting
  */
-export async function computeSHA256(file) {
-  try {
-    if (!file) return null;
-    // For files under 50MB, hash the full buffer
-    if (file.size <= 50 * 1024 * 1024) {
-      const buffer = await file.arrayBuffer();
-      const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
-      return Array.from(new Uint8Array(hashBuffer))
-        .map(b => b.toString(16).padStart(2, '0'))
-        .join('');
-    }
-    // For large files (>50MB), hash the initial 10MB slice for rapid fingerprinting
-    const slice = file.slice(0, 10 * 1024 * 1024);
-    const buffer = await slice.arrayBuffer();
-    const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
-    return Array.from(new Uint8Array(hashBuffer))
-      .map(b => b.toString(16).padStart(2, '0'))
-      .join('');
-  } catch (e) {
-    console.warn('Could not compute client-side hash:', e);
-    return null;
+export const uploadFileDirectlyToS3 = async (file, targetFolderId, onProgress) => {
+  const token = localStorage.getItem('token');
+  const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+  // Step 1: Request presigned upload ticket from backend (~5ms)
+  const { data: ticket } = await axios.post(
+    `${API_BASE_URL}/api/files/presigned-url`,
+    {
+      fileName: file.name,
+      fileSize: file.size,
+      mimeType: file.type || 'application/octet-stream',
+      folderId: targetFolderId || null,
+    },
+    { headers }
+  );
+
+  if (!ticket || !ticket.presignedUrl) {
+    throw new Error('Failed to acquire secure presigned upload ticket.');
   }
-}
+
+  const s3Axios = axios.create();
+  delete s3Axios.defaults.headers.common['Authorization'];
+
+  // Step 2: Concurrently compute SHA-256 while streaming file directly to S3
+  const [sha256] = await Promise.all([
+    computeFileSHA256(file),
+    s3Axios.put(ticket.presignedUrl, file, {
+      headers: {
+        'Content-Type': file.type || 'application/octet-stream',
+      },
+      transformRequest: [(data, reqHeaders) => {
+        if (reqHeaders) {
+          delete reqHeaders.Authorization;
+          delete reqHeaders.authorization;
+        }
+        return data;
+      }],
+      onUploadProgress: (progressEvent) => {
+        if (progressEvent.total) {
+          const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+          if (typeof onProgress === 'function') onProgress(percent);
+        }
+      },
+    }),
+  ]);
+
+  // Step 3: Finalize upload with backend (triggers MalwareBazaar check & PE Range scan)
+  const { data: finalizeResult } = await axios.post(
+    `${API_BASE_URL}/api/files/finalize-upload`,
+    {
+      fileId: ticket.fileId,
+      s3Key: ticket.s3Key,
+      sha256,
+    },
+    { headers }
+  );
+
+  // Step 4: Handle scan verdict
+  if (finalizeResult.isMalicious) {
+    return { success: false, isMalicious: true, message: finalizeResult.message };
+  }
+
+  return { success: true, isMalicious: false, file: finalizeResult.file };
+};
 
 /**
  * Clean Dark-Themed Skeleton Loader Component for Folder and File Navigation

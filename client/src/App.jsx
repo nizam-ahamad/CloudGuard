@@ -1471,9 +1471,9 @@ function App() {
       });
 
       if (securityThreat) {
-        addToast('error', `Threat detected: ${name} was automatically deleted.`);
+        addToast('error', `Threat detected: "${name}" was automatically purged from storage.`);
       } else if (finalStatus === 'completed') {
-        addToast('success', `Uploaded: ${name}`);
+        addToast('success', `"${name}" uploaded & verified clean.`);
         invalidatePhotosCache();
       } else if (finalStatus === 'failed' && errorMsg !== 'Canceled') {
         addToast('error', errorMsg || `Upload failed for ${name}`);

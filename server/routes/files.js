@@ -290,18 +290,14 @@ router.post('/presigned-url', authMiddleware, async (req, res) => {
 router.post('/finalize-upload', authMiddleware, async (req, res) => {
   try {
     const { fileId, sha256 } = req.body;
-    const userId = req.user.id || req.user._id;
-    const userMatch = mongoose.Types.ObjectId.isValid(userId)
-      ? { $in: [String(userId), new mongoose.Types.ObjectId(userId)] }
-      : String(userId);
+    const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
 
-    const file = await File.findOne({
-      _id: fileId,
-      $or: [{ userId: userMatch }, { user: userMatch }]
-    });
+    const file = await File.findOne(buildTenantQuery(rawUserId, { _id: fileId }));
+    if (!file) return res.status(404).json({ error: 'File record not found' });
 
-    if (!file) {
-      return res.status(404).json({ error: 'File not found or unauthorized' });
+    // Idempotency: If already clean, return immediately without re-incrementing storage
+    if (file.securityStatus === 'clean') {
+      return res.status(200).json({ success: true, isMalicious: false, file });
     }
 
     let isMalicious = false;
@@ -369,7 +365,7 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
 
     // 4. HARD AUTO-DELETE ON THREAT (Zero Quarantine, Zero Email Alerts)
     if (isMalicious) {
-      console.log(`[SECURITY INTERCEPT] Threat confirmed for ${file.name} (${threatReason}). Purging from S3 immediately...`);
+      console.log(`[CloudGuard Threat Alert] Purging malicious object from S3: ${file.s3Key} (${threatReason})`);
 
       try {
         const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
@@ -378,7 +374,7 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
           Key: file.s3Key,
         }));
       } catch (delErr) {
-        console.error('S3 Delete error:', delErr.message);
+        console.error('[S3 Delete Error]:', delErr.message);
       }
 
       file.isMalicious = true;
@@ -388,18 +384,14 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
       await file.save();
 
       return res.status(200).json({
-        success: true,
+        success: false,
         isMalicious: true,
-        message: `Security threat intercepted (${threatReason}). File was automatically deleted.`,
+        message: `Threat intercepted (${threatReason}). File was automatically deleted.`,
         file,
       });
     }
 
     // 5. Commit Clean File
-    if (file.securityStatus === 'clean') {
-      return res.status(200).json({ success: true, isMalicious: false, file });
-    }
-
     file.securityStatus = 'clean';
     file.isMalicious = false;
     file.status = 'safe';
