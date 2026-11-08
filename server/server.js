@@ -1534,11 +1534,25 @@ app.get('/api/files', verifyToken, async (req, res) => {
       }
     }
 
+    const limit = req.query.limit !== undefined 
+      ? parseInt(req.query.limit, 10) 
+      : (isRecent ? 10 : 0);
+    const skip = parseInt(req.query.skip, 10) || 0;
+
+    const totalCount = await FileModel.countDocuments(query);
+
     let dbFilesQuery = FileModel.find(query);
     if (isRecent) {
-      dbFilesQuery = dbFilesQuery.sort({ uploadedAt: -1 }).limit(50);
+      dbFilesQuery = dbFilesQuery.sort({ uploadedAt: -1, createdAt: -1 });
     } else {
       dbFilesQuery = dbFilesQuery.sort({ uploadedAt: -1, createdAt: -1 });
+    }
+
+    if (skip > 0) {
+      dbFilesQuery = dbFilesQuery.skip(skip);
+    }
+    if (limit > 0) {
+      dbFilesQuery = dbFilesQuery.limit(limit);
     }
     
     const dbFiles = await dbFilesQuery.select('_id name originalName diskName folder folderId size securityStatus isMalicious mimetype mimeType uploadedAt createdAt').lean();
@@ -1557,6 +1571,16 @@ app.get('/api/files', verifyToken, async (req, res) => {
       status: (file.securityStatus === 'clean' || file.securityStatus === 'Safe') ? 'Safe' : (file.securityStatus || 'Safe'),
       type: (file.originalName || file.name || '').split('.').pop()
     }));
+
+    res.set('X-Total-Count', String(totalCount));
+
+    if (isRecent) {
+      return res.status(200).json({
+        files: mappedFiles,
+        total: totalCount,
+        hasMore: skip + mappedFiles.length < totalCount,
+      });
+    }
 
     return res.status(200).json(mappedFiles);
   } catch (error) {

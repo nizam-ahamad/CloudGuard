@@ -48,53 +48,48 @@ const handleGetPhotos = async (req, res) => {
         { originalName: { $regex: MEDIA_EXTENSIONS_REGEX } },
       ],
     })
-      .select('name originalName size mimeType mimetype s3Key thumbnailKey createdAt uploadedAt folder')
+      .select('name originalName size mimeType mimetype s3Key thumbnailKey securityStatus isMalicious uploadedAt createdAt folder')
       .sort({ createdAt: -1, uploadedAt: -1 })
       .lean();
 
     const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
 
-    // Sign 24-hour S3 URLs strictly for thumbnails
+    // Sign 24-hour S3 URLs strictly for thumbnails (both images and videos)
     const photosWithThumbnails = await Promise.all(
-      mediaFiles.map(async (file) => {
+      mediaFiles.map(async (item) => {
         let thumbnailUrl = null;
-        if (file.thumbnailKey && bucket) {
+        if (item.thumbnailKey && bucket) {
           try {
             thumbnailUrl = await getSignedUrl(
               s3Client,
               new GetObjectCommand({
                 Bucket: bucket,
-                Key: file.thumbnailKey,
+                Key: item.thumbnailKey,
               }),
               { expiresIn: 86400 } // 24 hours
             );
           } catch (e) {
-            console.warn('[Thumbnail Presign Warning]:', e.message);
+            console.warn(`Failed to sign thumbnail URL for ${item.name}:`, e.message);
           }
         }
 
         const isVideo =
-          (file.mimeType && file.mimeType.startsWith('video/')) ||
-          (file.mimetype && file.mimetype.startsWith('video/')) ||
-          /\.(mp4|mkv|mov|avi|webm|wmv|flv|m4v|3gp)$/i.test(file.name || file.originalName || '');
+          (item.mimeType && item.mimeType.startsWith('video/')) ||
+          (item.mimetype && item.mimetype.startsWith('video/')) ||
+          /\.(mp4|mkv|mov|avi|webm|wmv|flv|m4v|3gp)$/i.test(item.name || item.originalName || '');
 
         return {
-          ...file,
-          _id: String(file._id),
-          name: file.name || file.originalName,
-          originalName: file.originalName || file.name,
+          ...item,
+          _id: String(item._id),
+          name: item.name || item.originalName,
+          originalName: item.originalName || item.name,
           mediaType: isVideo ? 'video' : 'image',
           thumbnailUrl,
         };
       })
     );
 
-    return res.status(200).json({
-      success: true,
-      count: photosWithThumbnails.length,
-      photos: photosWithThumbnails,
-      files: photosWithThumbnails,
-    });
+    return res.status(200).json(photosWithThumbnails);
   } catch (err) {
     console.error('Error loading vault photos:', err);
     return res.status(500).json({ error: 'Failed to retrieve media library' });

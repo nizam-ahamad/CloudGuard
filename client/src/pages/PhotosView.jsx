@@ -10,6 +10,7 @@ import {
   Play,
   Image as ImageIcon,
   Download,
+  RotateCw,
   Check,
   X,
   Loader2,
@@ -24,7 +25,6 @@ import CentralizedFloatingBar from '../components/FloatingBar';
 let globalPhotosCache = null;
 let lastPhotosFetchTimestamp = 0;
 const CACHE_TTL_MS = 60 * 1000; // 60 seconds fresh cache
-const globalThumbnailCache = new Map();
 
 // Compatibility cache exports so other components importing them don't break
 export const invalidatePhotosCache = () => {
@@ -89,90 +89,6 @@ const prepareDownloadPayload = (item) => ({
   mimeType: item.mimeType,
   s3Key: item.s3Key,
 });
-
-// Lightweight Video Thumbnail (Dynamic aspect-ratio canvas snapshot - zero distortion)
-function LightweightVideoThumbnail({ url, fileId, alt, className }) {
-  const [snapshotSrc, setSnapshotSrc] = useState(() => globalThumbnailCache.get(fileId || url) || null);
-
-  useEffect(() => {
-    const key = fileId || url;
-    if (snapshotSrc || !url) return;
-
-    if (globalThumbnailCache.has(key)) {
-      setSnapshotSrc(globalThumbnailCache.get(key));
-      return;
-    }
-
-    let isDestroyed = false;
-    const tempVideo = document.createElement('video');
-    tempVideo.src = `${url}#t=1.0`;
-    tempVideo.crossOrigin = 'anonymous';
-    tempVideo.muted = true;
-    tempVideo.playsInline = true;
-    tempVideo.preload = 'metadata';
-
-    const handleSeeked = () => {
-      try {
-        const canvas = document.createElement('canvas');
-        const vw = tempVideo.videoWidth || 480;
-        const vh = tempVideo.videoHeight || 270;
-
-        // Dynamically compute canvas dimensions preserving the true aspect ratio
-        // Handles 9:16 vertical mobile recordings, 16:9 landscape, 4:3, and 1:1 square
-        const maxDimension = 480;
-        if (vw >= vh) {
-          canvas.width = maxDimension;
-          canvas.height = Math.max(1, Math.round((vh / vw) * maxDimension));
-        } else {
-          canvas.height = maxDimension;
-          canvas.width = Math.max(1, Math.round((vw / vh) * maxDimension));
-        }
-
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(tempVideo, 0, 0, canvas.width, canvas.height);
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-        globalThumbnailCache.set(key, dataUrl);
-        if (!isDestroyed) setSnapshotSrc(dataUrl);
-      } catch (err) {
-        // Fallback silently if canvas is cross-origin tainted
-      } finally {
-        tempVideo.src = '';
-        tempVideo.remove();
-      }
-    };
-
-    tempVideo.addEventListener('loadeddata', () => {
-      tempVideo.currentTime = 1.0;
-    }, { once: true });
-
-    tempVideo.addEventListener('seeked', handleSeeked, { once: true });
-    tempVideo.addEventListener('error', () => tempVideo.remove(), { once: true });
-
-    return () => {
-      isDestroyed = true;
-      tempVideo.src = '';
-      tempVideo.remove();
-    };
-  }, [url, fileId, snapshotSrc]);
-
-  if (snapshotSrc) {
-    return (
-      <img
-        src={snapshotSrc}
-        alt={alt}
-        loading="lazy"
-        decoding="async"
-        className={`${className} object-cover object-center`}
-      />
-    );
-  }
-
-  return (
-    <div className={`flex flex-col items-center justify-center bg-zinc-950 text-zinc-600 ${className}`}>
-      <Play className="w-6 h-6 text-zinc-500 fill-zinc-500/20" />
-    </div>
-  );
-}
 
 export default function PhotosView({ token: propToken }) {
   const toast = useToast();
@@ -419,6 +335,36 @@ export default function PhotosView({ token: propToken }) {
     startDownload(prepareDownloadPayload(downloadItem));
   }, [currentPreviewItem, fullMediaUrl, startDownload]);
 
+  const handleDownloadMedia = async (item) => {
+    if (!item) return;
+    try {
+      const token = propToken || (typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null);
+      // Prefer dedicated download-url endpoint if available, fallback to accessUrl/url
+      let downloadHref = fullMediaUrl || item.downloadUrl || item.accessUrl || item.url;
+      if (!downloadHref && item._id) {
+        const res = await axios.get(`/api/files/${item._id}/access`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        downloadHref = res.data?.downloadUrl || res.data?.accessUrl || res.data?.url;
+      }
+
+      if (!downloadHref) return;
+
+      // Trigger direct browser download
+      const a = document.createElement('a');
+      a.href = downloadHref;
+      a.download = item.name || item.originalName || 'download';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } catch (err) {
+      console.error('Failed to download media item:', err);
+      if (item.url || item.accessUrl) {
+        window.open(item.url || item.accessUrl, '_blank');
+      }
+    }
+  };
+
   // Undo Delete
   const handleUndoDelete = async (itemsToRestore) => {
     try {
@@ -525,6 +471,23 @@ export default function PhotosView({ token: propToken }) {
 
         {/* View Controls */}
         <div className="flex items-center gap-2 self-start sm:self-auto">
+          {/* 1. Reload Button (Left of Tile Resizer) */}
+          <button
+            type="button"
+            onClick={() => {
+              // Clear in-memory photos cache if present and force fresh fetch
+              if (typeof globalPhotosCache !== 'undefined') globalPhotosCache = null;
+              if (typeof fetchMedia === 'function') fetchMedia(true);
+              else if (typeof fetchPhotos === 'function') fetchPhotos(true);
+            }}
+            disabled={loading}
+            title="Reload photos"
+            aria-label="Reload photos"
+            className="p-1.5 rounded-lg border border-neutral-200 dark:border-neutral-700/60 bg-neutral-100 hover:bg-neutral-200 dark:bg-neutral-800/80 dark:hover:bg-neutral-700 text-neutral-600 dark:text-neutral-300 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+          >
+            <RotateCw className={`w-4 h-4 ${loading ? 'animate-spin text-blue-500' : ''}`} />
+          </button>
+
           {viewMode === 'grid' && (
             <div className="flex items-center bg-zinc-200/80 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-800 rounded-lg p-0.5">
               <button
@@ -635,7 +598,7 @@ export default function PhotosView({ token: propToken }) {
               <div className={`grid ${gridColumnClass}`}>
                 {items.map((item) => {
                   const globalIndex = mediaList.findIndex((m) => m._id === item._id);
-                  const isVideo = item.mediaType === 'video';
+                  const isVideo = item.mimeType?.startsWith('video/') || item.mediaType === 'video' || item.name?.match(/\.(mp4|webm|mov|mkv)$/i);
                   const isSelected = selectedIds.has(item._id);
 
                   return (
@@ -664,45 +627,40 @@ export default function PhotosView({ token: propToken }) {
                         <Check className={`w-3.5 h-3.5 stroke-[3] ${isSelected ? 'opacity-100' : 'opacity-0'}`} />
                       </div>
 
-                      {/* Lightweight Thumbnail (Pure Image Tags Only) */}
+                      {/* Card Thumbnail Container */}
                       {(() => {
-                        const displayThumbnail = item.thumbnailUrl || item.accessUrl || item.url;
-                        return displayThumbnail ? (
-                          isVideo ? (
-                            <div className="w-full h-full relative bg-zinc-950 flex items-center justify-center">
-                              {item.thumbnailUrl ? (
-                                <img
-                                  src={item.thumbnailUrl}
-                                  alt={item.name}
-                                  loading="lazy"
-                                  decoding="async"
-                                  className="w-full h-full object-cover pointer-events-none"
-                                />
-                              ) : (
-                                <LightweightVideoThumbnail
-                                  url={item.url}
-                                  fileId={item._id}
-                                  alt={item.name}
-                                  className="w-full h-full object-cover pointer-events-none"
-                                />
-                              )}
-                              <div className="absolute top-1.5 right-1.5 bg-black/75 backdrop-blur-md px-1.5 py-0.5 rounded flex items-center gap-1 text-[10px] font-medium text-white shadow-md">
-                                <Play className="w-2.5 h-2.5 fill-white" />
-                                <span className="hidden sm:inline">Video</span>
+                        const displayThumbnail = item.thumbnailUrl || item.thumbnail || item.url || item.accessUrl;
+                        return (
+                          <div className="relative w-full h-full overflow-hidden bg-neutral-100 dark:bg-neutral-900 flex items-center justify-center">
+                            {displayThumbnail ? (
+                              <img
+                                src={displayThumbnail}
+                                alt={item.name}
+                                loading="lazy"
+                                decoding="async"
+                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                                onError={(e) => {
+                                  // Fallback if image URL fails to load
+                                  e.currentTarget.style.display = 'none';
+                                }}
+                              />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center bg-neutral-200 dark:bg-zinc-800">
+                                {isVideo ? (
+                                  <Play className="w-8 h-8 text-neutral-400 dark:text-zinc-500"/>
+                                ) : (
+                                  <ImageIcon className="w-8 h-8 text-neutral-400 dark:text-zinc-500"/>
+                                )}
                               </div>
-                            </div>
-                          ) : (
-                            <img
-                              src={displayThumbnail}
-                              alt={item.name}
-                              loading="lazy"
-                              decoding="async"
-                              className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-300"
-                            />
-                          )
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center bg-zinc-100 dark:bg-zinc-900 text-zinc-400">
-                            <ImageIcon className="w-6 h-6" />
+                            )}
+
+                            {/* Video Badge Overlay */}
+                            {isVideo && (
+                              <div className="absolute top-2 left-2 z-10 bg-black/60 backdrop-blur-md px-2 py-0.5 rounded-md flex items-center gap-1 text-[11px] font-medium text-white border border-white/10 select-none pointer-events-none">
+                                <Play className="w-3 h-3 fill-white"/>
+                                <span>Video</span>
+                              </div>
+                            )}
                           </div>
                         );
                       })()}
@@ -736,7 +694,7 @@ export default function PhotosView({ token: propToken }) {
               <div className="bg-white dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-800/80 rounded-xl divide-y divide-zinc-200 dark:divide-zinc-800/60 overflow-hidden shadow-sm">
                 {items.map((item) => {
                   const globalIndex = mediaList.findIndex((m) => m._id === item._id);
-                  const isVideo = item.mediaType === 'video';
+                  const isVideo = item.mimeType?.startsWith('video/') || item.mediaType === 'video' || item.name?.match(/\.(mp4|webm|mov|mkv)$/i);
                   const isSelected = selectedIds.has(item._id);
 
                   return (
@@ -767,35 +725,35 @@ export default function PhotosView({ token: propToken }) {
                         {/* 40x40 Thumbnail */}
                         <div className="w-10 h-10 rounded-lg bg-zinc-100 dark:bg-zinc-800 overflow-hidden shrink-0 flex items-center justify-center border border-zinc-200 dark:border-zinc-700/50 relative">
                           {(() => {
-                            const displayThumbnail = item.thumbnailUrl || item.accessUrl || item.url;
-                            return isVideo ? (
+                            const displayThumbnail = item.thumbnailUrl || item.thumbnail || item.url || item.accessUrl;
+                            return (
                               <>
-                                {item.thumbnailUrl ? (
+                                {displayThumbnail ? (
                                   <img
-                                    src={item.thumbnailUrl}
-                                    alt={item.name}
-                                    className="w-full h-full object-cover pointer-events-none"
+                                    src={displayThumbnail}
+                                    alt={item.name || ''}
+                                    className="w-full h-full object-cover object-center"
                                     loading="lazy"
+                                    decoding="async"
+                                    onError={(e) => {
+                                      e.currentTarget.style.display = 'none';
+                                    }}
                                   />
                                 ) : (
-                                  <LightweightVideoThumbnail
-                                    url={item.url}
-                                    fileId={item._id}
-                                    alt={item.name}
-                                    className="w-full h-full object-cover pointer-events-none"
-                                  />
+                                  <div className="w-full h-full flex items-center justify-center bg-zinc-200 dark:bg-zinc-800">
+                                    {isVideo ? (
+                                      <Play className="w-4 h-4 text-zinc-400 dark:text-zinc-500" />
+                                    ) : (
+                                      <ImageIcon className="w-4 h-4 text-zinc-400 dark:text-zinc-500" />
+                                    )}
+                                  </div>
                                 )}
-                                <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
-                                  <Play className="w-3.5 h-3.5 fill-white text-white" />
-                                </div>
+                                {isVideo && (
+                                  <div className="absolute inset-0 bg-black/40 flex items-center justify-center pointer-events-none">
+                                    <Play className="w-3.5 h-3.5 fill-white text-white" />
+                                  </div>
+                                )}
                               </>
-                            ) : (
-                              <img
-                                src={displayThumbnail}
-                                alt=""
-                                className="w-full h-full object-cover object-center"
-                                loading="lazy"
-                              />
                             );
                           })()}
                         </div>
@@ -899,24 +857,29 @@ export default function PhotosView({ token: propToken }) {
             </div>
 
             <div className="flex items-center gap-2">
-              {currentPreviewItem.url && (
-                <button
-                  type="button"
-                  onClick={handlePreviewDownload}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-zinc-800/80 hover:bg-zinc-700 text-xs font-semibold text-zinc-200 transition-colors cursor-pointer"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">Download</span>
-                </button>
-              )}
+              {/* Download Button (Left of Cross) */}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleDownloadMedia(currentPreviewItem);
+                }}
+                title="Download media"
+                aria-label="Download media"
+                className="p-2 rounded-full bg-neutral-800/80 hover:bg-neutral-700 active:scale-95 text-neutral-200 hover:text-white backdrop-blur-md border border-neutral-700/50 transition-all cursor-pointer shrink-0"
+              >
+                <Download className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
+              </button>
 
+              {/* Existing Cross (✕) Close Button */}
               <button
                 type="button"
                 onClick={() => setPreviewIndex(null)}
-                className="p-1.5 rounded-full bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 hover:text-white transition-colors cursor-pointer"
-                aria-label="Close"
+                className="p-2 rounded-full bg-neutral-800/80 hover:bg-neutral-700 active:scale-95 text-neutral-200 hover:text-white backdrop-blur-md border border-neutral-700/50 transition-all cursor-pointer shrink-0"
+                title="Close preview"
+                aria-label="Close preview"
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
               </button>
             </div>
           </div>
@@ -950,7 +913,7 @@ export default function PhotosView({ token: propToken }) {
           )}
 
           <div className="max-w-5xl max-h-[82vh] w-full flex items-center justify-center p-2">
-            {currentPreviewItem.mediaType === 'video' ? (
+            {(currentPreviewItem.mediaType === 'video' || currentPreviewItem.mimeType?.startsWith('video/') || currentPreviewItem.name?.match(/\.(mp4|webm|mov|mkv)$/i)) ? (
               (fullMediaUrl || currentPreviewItem.url) ? (
                 <video
                   key={fullMediaUrl || currentPreviewItem.url}

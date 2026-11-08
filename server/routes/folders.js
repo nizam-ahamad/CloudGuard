@@ -378,8 +378,48 @@ router.post('/restore-batch', authMiddleware, (req, res, next) => require('./fil
 router.post('/batch-restore', authMiddleware, (req, res, next) => require('./files').handleBatchRestore(req, res, next));
 
 // -------------------------------------------------------------
-// 6. FOLDER DETAILS AGGREGATION
+// 6. FOLDER DETAILS AGGREGATION & RECURSIVE DESCENDANTS
 // -------------------------------------------------------------
+// Helper to recursively collect all descendant subfolder IDs
+async function getDescendantFolderIds(folderId, userMatch) {
+  const visited = new Set([String(folderId)]);
+  let currentLevelIds = [folderId];
+  const allDescendants = [];
+
+  while (currentLevelIds.length > 0) {
+    const objectIds = currentLevelIds
+      .filter((id) => mongoose.Types.ObjectId.isValid(String(id)))
+      .map((id) => new mongoose.Types.ObjectId(String(id)));
+    const stringIds = currentLevelIds.map((id) => String(id));
+
+    const children = await Folder.find({
+      isTrash: { $ne: true },
+      ...userMatch,
+      $or: [
+        { parentId: { $in: objectIds } },
+        { parentFolder: { $in: objectIds } },
+        { parentId: { $in: stringIds } },
+        { parentFolder: { $in: stringIds } },
+      ],
+    })
+      .select('_id')
+      .lean();
+
+    const nextLevelIds = [];
+    for (const child of children) {
+      const childIdStr = String(child._id);
+      if (!visited.has(childIdStr)) {
+        visited.add(childIdStr);
+        allDescendants.push(child._id);
+        nextLevelIds.push(child._id);
+      }
+    }
+    currentLevelIds = nextLevelIds;
+  }
+
+  return allDescendants;
+}
+
 const handleFolderDetails = async (req, res) => {
   try {
     const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
@@ -392,42 +432,81 @@ const handleFolderDetails = async (req, res) => {
       return res.status(400).json({ error: 'Invalid folder ID' });
     }
 
-    const folderObjectId = new mongoose.Types.ObjectId(folderId);
+    const userIdObj = mongoose.Types.ObjectId.isValid(rawUserId)
+      ? new mongoose.Types.ObjectId(rawUserId)
+      : rawUserId;
 
-    const folder = await Folder.findOne(
-      buildTenantQuery(rawUserId, {
-        _id: folderObjectId,
-        isTrash: { $ne: true },
-      })
-    ).lean();
+    const userMatch = {
+      $or: [
+        { userId: userIdObj },
+        { user: userIdObj },
+        { userId: String(rawUserId) },
+        { user: String(rawUserId) },
+      ],
+    };
+
+    const folder = await Folder.findOne({
+      _id: folderId,
+      isTrash: { $ne: true },
+      ...userMatch,
+    }).lean();
 
     if (!folder) {
       return res.status(404).json({ error: 'Folder not found' });
     }
 
-    // 1. Count actual child subfolders inside this directory with strict tenant scoping
-    const subfolderCount = await Folder.countDocuments(
-      buildTenantQuery(rawUserId, {
-        isTrash: { $ne: true },
-        $or: [
-          { parentId: folderObjectId },
-          { parentFolder: folderObjectId },
-        ],
-      })
-    );
+    const folderObjectId = new mongoose.Types.ObjectId(folderId);
 
-    // 2. Aggregate all active files inside this directory (robust size casting)
-    const fileStats = await File.aggregate([
+    // 1. Direct Immediate Subfolder Count (Only 1 level down)
+    const directFolderCount = await Folder.countDocuments({
+      isTrash: { $ne: true },
+      ...userMatch,
+      $or: [
+        { parentId: folderObjectId },
+        { parentFolder: folderObjectId },
+        { parentId: folderId },
+        { parentFolder: folderId },
+      ],
+    });
+
+    // 2. Direct Immediate Files Count (Only files directly in this folder)
+    const directFilesCount = await File.countDocuments({
+      isTrash: false,
+      securityStatus: { $in: ['clean', 'unverified'] },
+      $and: [
+        userMatch,
+        {
+          $or: [
+            { folder: folderObjectId },
+            { folderId: folderObjectId },
+            { folder: folderId },
+            { folderId: folderId },
+          ],
+        },
+      ],
+    });
+
+    // 3. Recursive Total Size (Cumulative size across this folder and all sub-branches)
+    const descendantFolderIds = await getDescendantFolderIds(folderId, userMatch);
+    const allFolderIds = [folder._id, ...descendantFolderIds];
+    const allFolderObjectIds = allFolderIds
+      .filter((id) => mongoose.Types.ObjectId.isValid(String(id)))
+      .map((id) => new mongoose.Types.ObjectId(String(id)));
+    const allFolderStringIds = allFolderIds.map((id) => String(id));
+
+    const sizeStats = await File.aggregate([
       {
         $match: {
-          isTrash: { $ne: true },
-          securityStatus: { $ne: 'threat_purged' },
+          isTrash: false,
+          securityStatus: { $in: ['clean', 'unverified'] },
           $and: [
-            buildTenantQuery(rawUserId),
+            userMatch,
             {
               $or: [
-                { folder: folderObjectId },
-                { folderId: folderObjectId },
+                { folder: { $in: allFolderObjectIds } },
+                { folderId: { $in: allFolderObjectIds } },
+                { folder: { $in: allFolderStringIds } },
+                { folderId: { $in: allFolderStringIds } },
               ],
             },
           ],
@@ -436,7 +515,6 @@ const handleFolderDetails = async (req, res) => {
       {
         $group: {
           _id: null,
-          totalFiles: { $sum: 1 },
           totalBytes: {
             $sum: {
               $convert: {
@@ -451,26 +529,25 @@ const handleFolderDetails = async (req, res) => {
       },
     ]);
 
-    const totalFiles = fileStats[0]?.totalFiles || 0;
-    const totalBytes = fileStats[0]?.totalBytes || 0;
+    const totalBytes = sizeStats[0]?.totalBytes || 0;
 
     return res.status(200).json({
       success: true,
       folder: {
         ...folder,
-        fileCount: totalFiles,
-        folderCount: subfolderCount,
-        totalFiles,
-        totalFolders: subfolderCount,
-        subfolderCount,
+        // CONTAINS displays direct immediate children only
+        fileCount: directFilesCount,
+        folderCount: directFolderCount,
+        totalFiles: directFilesCount,
+        totalFolders: directFolderCount,
+        // SIZE displays cumulative disk usage
         totalSize: totalBytes,
         size: totalBytes,
       },
-      fileCount: totalFiles,
-      folderCount: subfolderCount,
-      totalFiles,
-      totalFolders: subfolderCount,
-      subfolderCount,
+      fileCount: directFilesCount,
+      folderCount: directFolderCount,
+      totalFiles: directFilesCount,
+      totalFolders: directFolderCount,
       totalSize: totalBytes,
       size: totalBytes,
     });

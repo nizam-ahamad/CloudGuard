@@ -179,12 +179,23 @@ router.get('/', authMiddleware, async (req, res) => {
       }
     }
 
+    const limit = req.query.limit !== undefined 
+      ? parseInt(req.query.limit, 10) 
+      : (isRecent ? 10 : 0);
+    const skip = parseInt(req.query.skip, 10) || 0;
+
+    // Fetch total count matching the query to evaluate hasMore
+    const totalCount = await File.countDocuments(query);
+
     let filesQuery = File.find(query)
       .select('name originalName diskName sanitizedName size mimeType mimetype s3Key thumbnailKey securityStatus isMalicious uploadedAt createdAt folder folderId')
       .sort({ uploadedAt: -1, createdAt: -1 });
 
-    if (isRecent) {
-      filesQuery = filesQuery.limit(50);
+    if (skip > 0) {
+      filesQuery = filesQuery.skip(skip);
+    }
+    if (limit > 0) {
+      filesQuery = filesQuery.limit(limit);
     }
 
     const files = await filesQuery.lean();
@@ -203,6 +214,16 @@ router.get('/', authMiddleware, async (req, res) => {
       status: (file.securityStatus === 'clean' || file.securityStatus === 'Safe') ? 'Safe' : (file.securityStatus || 'Safe'),
       type: (file.originalName || file.name || '').split('.').pop()
     }));
+
+    res.set('X-Total-Count', String(totalCount));
+
+    if (isRecent) {
+      return res.status(200).json({
+        files: mappedFiles,
+        total: totalCount,
+        hasMore: skip + mappedFiles.length < totalCount,
+      });
+    }
 
     return res.status(200).json(mappedFiles);
   } catch (err) {

@@ -324,6 +324,10 @@ function App() {
   };
 
   const [files, setFiles] = useState([]);
+  const [recentSkip, setRecentSkip] = useState(0);
+  const [hasMoreRecent, setHasMoreRecent] = useState(false);
+  const [isLoadingMoreRecent, setIsLoadingMoreRecent] = useState(false);
+  const RECENT_PAGE_SIZE = 10;
   const [sortOrder, setSortOrder] = useState('newest');
   const [fileToDelete, setFileToDelete] = useState(null);
   const [itemToDelete, setItemToDelete] = useState(null);
@@ -356,6 +360,7 @@ function App() {
   const abortControllerRef = useRef(null);
   const activeFolderIdRef = useRef(null);
   const lastFetchedFolderIdRef = useRef(undefined);
+  const isNavigatingRef = useRef(false);
   const filesInFlightRef = useRef(false);
   const activeFetchingFolderRef = useRef(undefined);
   const isRefreshingRef = useRef(false);
@@ -656,42 +661,32 @@ function App() {
   }, [searchParams, token]);
 
   const handleNavigateHome = () => {
-    // 1. Abort in-flight requests immediately
+    if (!currentFolderId && location.pathname === '/dashboard') return;
+
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
 
-    // 2. Clear state instantly (0ms)
-    activeFolderIdRef.current = null;
-    lastFetchedFolderIdRef.current = null;
     clearSelection();
-    setFiles([]);
-    setFolders([]);
     setCurrentFolderId(null);
-    setIsContentLoading(true);
-    setIsFilesLoading(true);
     setBreadcrumbs([{ id: null, name: 'Home' }]);
 
-    // 3. Update URL and trigger clean fetch
+    // Update URL only - let URL listener trigger the fetch cleanly once
     setSearchParams({});
     if (location.pathname !== '/dashboard') {
       navigate('/dashboard');
     }
-    fetchFolders(null);
-    fetchFiles(null);
   };
 
   const handleFolderClick = (folder) => {
+    const folderId = folder._id;
+    if (currentFolderId === folderId) return;
+
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
 
     clearSelection();
-    const folderId = folder._id;
-    activeFolderIdRef.current = folderId;
-    lastFetchedFolderIdRef.current = folderId;
-
-    // 1. Instant folder navigation handler (0ms UI response)
     setCurrentFolderId(folderId);
     setBreadcrumbs(prev => {
       const existingIndex = prev.findIndex(b => b.id === folder._id);
@@ -701,40 +696,24 @@ function App() {
       return [...prev, { id: folder._id, name: folder.name }];
     });
 
-    // 2. Clear previous list so stale items vanish immediately
-    setFiles([]);
-    setFolders([]);
-    setIsContentLoading(true);
-    setIsFilesLoading(true);
-
-    // 3. Update URL and trigger clean fetch
+    // Update URL only - let URL listener execute the fetch cleanly once
     setSearchParams({ folder: folderId });
-    fetchFolders(folderId);
-    fetchFiles(folderId);
   };
 
   const handleBreadcrumbClick = (folderId, index) => {
+    const targetId = folderId || null;
+    if (currentFolderId === targetId) return;
+
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
 
     clearSelection();
-    const targetId = folderId || null;
-    activeFolderIdRef.current = targetId;
-    lastFetchedFolderIdRef.current = targetId;
-
     setCurrentFolderId(targetId);
     setBreadcrumbs(prev => prev.slice(0, index + 1));
 
-    // Clear previous list so stale items vanish immediately
-    setFiles([]);
-    setFolders([]);
-    setIsContentLoading(true);
-    setIsFilesLoading(true);
-
+    // Update URL only - let URL listener execute the fetch cleanly once
     setSearchParams(targetId ? { folder: targetId } : {});
-    fetchFolders(targetId);
-    fetchFiles(targetId);
   };
 
   const handleCloseSettings = () => {
@@ -803,10 +782,16 @@ function App() {
     setIsAccountDeleteModalOpen(true);
   };
 
-  const fetchFiles = useCallback(async (folderId = undefined) => {
+  const fetchFiles = useCallback(async (folderId = undefined, force = false) => {
     const targetId = folderId !== undefined
       ? (folderId || null)
       : (searchParams.get('folder') || null);
+
+    // Prevent duplicate back-to-back trigger for identical folder
+    if (!force && lastFetchedFolderIdRef.current === targetId && files.length > 0) {
+      return;
+    }
+    lastFetchedFolderIdRef.current = targetId;
 
     // ROUTE GUARD: Never fetch files if user is in Photos, Trash, or Settings
     const currentPath = window.location.pathname;
@@ -841,6 +826,8 @@ function App() {
         queryParams.search = searchQuery;
       } else if (viewMode === 'recent') {
         queryParams.recent = 'true';
+        queryParams.limit = RECENT_PAGE_SIZE;
+        queryParams.skip = 0;
       } else if (targetId) {
         queryParams.folderId = targetId;
       }
@@ -859,6 +846,15 @@ function App() {
 
       const fileList = Array.isArray(res.data) ? res.data : (res.data?.files || []);
       setFiles(fileList);
+      if (viewMode === 'recent' && !searchQuery) {
+        const hasMore = res.data?.hasMore !== undefined
+          ? res.data.hasMore
+          : fileList.length === RECENT_PAGE_SIZE;
+        setRecentSkip(0);
+        setHasMoreRecent(hasMore);
+      } else {
+        setHasMoreRecent(false);
+      }
     } catch (err) {
       // Ignore canceled requests from AbortController
       if (axios.isCancel(err) || err.name === 'CanceledError' || err.name === 'AbortError' || err.code === 'ERR_CANCELED') {
@@ -879,7 +875,38 @@ function App() {
         setIsContentLoading(false);
       }
     }
-  }, [searchParams, viewMode, token, searchQuery]);
+  }, [searchParams, viewMode, token, searchQuery, files.length]);
+
+  const handleLoadMoreRecent = async () => {
+    if (isLoadingMoreRecent || !hasMoreRecent) return;
+    setIsLoadingMoreRecent(true);
+
+    try {
+      const nextSkip = files.length;
+      const authToken = token || localStorage.getItem('token') || sessionStorage.getItem('token');
+      const res = await axios.get(`${API_BASE_URL}/api/files`, {
+        params: { recent: 'true', limit: RECENT_PAGE_SIZE, skip: nextSkip },
+        headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+      });
+
+      const newItems = Array.isArray(res.data) ? res.data : (res.data?.files || []);
+      const hasMore = res.data?.hasMore !== undefined 
+        ? res.data.hasMore 
+        : newItems.length === RECENT_PAGE_SIZE;
+
+      setFiles((prev) => {
+        const existingIds = new Set(prev.map(f => String(f._id || f.id)));
+        const uniqueNew = newItems.filter(f => !existingIds.has(String(f._id || f.id)));
+        return [...prev, ...uniqueNew];
+      });
+      setRecentSkip(nextSkip);
+      setHasMoreRecent(hasMore);
+    } catch (err) {
+      console.error('Failed to load more recent files:', err);
+    } finally {
+      setIsLoadingMoreRecent(false);
+    }
+  };
 
   const fetchContents = useCallback(async (targetFolderId) => {
     setIsContentLoading(true);
@@ -1142,10 +1169,14 @@ function App() {
     const params = new URLSearchParams(window.location.search);
     const activeFolderId = params.get('folder') || null;
 
+    // Skip duplicate execution if already on this folder
+    if (lastFetchedFolderIdRef.current === activeFolderId) {
+      return;
+    }
+
     // 2. Fetch folders and files for the active directory
     fetchFolders(activeFolderId);
-    fetchFiles(activeFolderId);
-    lastFetchedFolderIdRef.current = activeFolderId;
+    fetchFiles(activeFolderId, true);
   }, [location.pathname, location.search, window.location.pathname, window.location.search, fetchStorageStats, fetchFolders, fetchFiles]);
 
   // Real-time listener for live upload completion events across the app
@@ -1693,7 +1724,7 @@ function App() {
   });
 
   const searchFiltered = sortedFiles.filter(file => file.name.toLowerCase().includes(searchQuery.toLowerCase()));
-  const filteredFiles = viewMode === 'recent' ? searchFiltered.slice(0, 5) : searchFiltered;
+  const filteredFiles = searchFiltered;
   const selectableFiles = filteredFiles.filter(f => !f.isFolder);
   const isAllFilesSelected = selectableFiles.length > 0 && selectedFileIds.length === selectableFiles.length;
   const isSomeFilesSelected = selectedFileIds.length > 0 && selectedFileIds.length < selectableFiles.length;
@@ -2824,6 +2855,27 @@ function App() {
               </table>
             </div>
           </div>
+
+          {/* Load More Button Container */}
+          {viewMode === 'recent' && hasMoreRecent && (
+            <div className="flex justify-center mt-6 pb-8">
+              <button
+                type="button"
+                onClick={handleLoadMoreRecent}
+                disabled={isLoadingMoreRecent}
+                className="flex items-center gap-2 px-5 py-2.5 text-xs font-semibold rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-800/60 shadow-sm transition-all cursor-pointer disabled:opacity-50"
+              >
+                {isLoadingMoreRecent ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-500" />
+                    <span>Loading more files...</span>
+                  </>
+                ) : (
+                  <span>Load More</span>
+                )}
+              </button>
+            </div>
+          )}
             </>
           )}
           </section>
