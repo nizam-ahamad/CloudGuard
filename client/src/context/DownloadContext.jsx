@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useRef, useCallback } from 'react';
+import React, { createContext, useContext, useState, useRef, useEffect, useCallback } from 'react';
 import { Download, X } from 'lucide-react';
 import { downloadSingleFileWithProgress, downloadBatchZipWithProgress } from '../utils/downloadHelper';
 import { useToast } from './ToastContext';
@@ -83,26 +83,65 @@ export const useDownload = () => {
 export const HeaderDownloadButton = () => {
   const { activeDownload, cancelActiveDownload } = useDownload();
   const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef(null);
 
-  // Keep dropdown open automatically while download is active if user opened it
+  // Close when upload tray opens or global close is dispatched
+  useEffect(() => {
+    const handleClose = () => setIsOpen(false);
+    window.addEventListener('cloudguard:upload-tray-opened', handleClose);
+    window.addEventListener('cloudguard:close-all-trays', handleClose);
+    return () => {
+      window.removeEventListener('cloudguard:upload-tray-opened', handleClose);
+      window.removeEventListener('cloudguard:close-all-trays', handleClose);
+    };
+  }, []);
+
+  // Click outside listener
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleClickOutside = (e) => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isOpen]);
+
+  const toggleOpen = (e) => {
+    e.stopPropagation();
+    setIsOpen((prev) => {
+      const nextState = !prev;
+      if (nextState) {
+        // Explicitly close upload tray when this opens
+        window.dispatchEvent(new CustomEvent('cloudguard:download-tray-opened'));
+      }
+      return nextState;
+    });
+  };
+
   if (!activeDownload) return null;
 
   return (
-    <div className="relative">
+    <div ref={containerRef} className="relative inline-block">
       <button
-        onClick={() => setIsOpen((prev) => !prev)}
-        className="relative p-2 rounded-lg bg-neutral-100 hover:bg-neutral-200 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-blue-600 dark:text-blue-400 transition-colors cursor-pointer"
+        type="button"
+        onClick={toggleOpen}
         title="View active download"
+        className="relative p-2 rounded-lg bg-neutral-100 hover:bg-neutral-200 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-blue-600 dark:text-blue-400 transition-colors cursor-pointer"
       >
-        <Download className="w-5 h-5 animate-bounce" />
+        <Download className="w-5 h-5 animate-bounce"/>
         <span className="absolute -top-1 -right-1 flex h-4 min-w-4 px-1 items-center justify-center rounded-full bg-blue-600 text-[10px] font-bold text-white shadow-sm">
           {activeDownload.percent}%
         </span>
       </button>
 
-      {/* Tray Dropdown Popover */}
+      {/* Download Dropdown Tray */}
       {isOpen && (
-        <div className="fixed sm:absolute top-16 sm:top-full left-4 sm:left-auto right-4 sm:right-0 mt-2 sm:w-80 p-3.5 rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-2xl z-50 select-none animate-in fade-in zoom-in-95">
+        <div 
+          onClick={(e) => e.stopPropagation()}
+          className="absolute right-0 mt-2.5 w-[calc(100vw-2rem)] sm:w-80 p-4 rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-2xl z-50 select-none"
+        >
           <div className="flex items-start justify-between gap-3 mb-2.5">
             <div className="min-w-0 flex-1">
               <p className="text-xs font-semibold text-neutral-900 dark:text-white truncate">
@@ -113,9 +152,8 @@ export const HeaderDownloadButton = () => {
                 {activeDownload.text}
               </p>
             </div>
-            
-            {/* Cancel Button */}
             <button
+              type="button"
               onClick={() => {
                 cancelActiveDownload();
                 setIsOpen(false);
@@ -123,11 +161,10 @@ export const HeaderDownloadButton = () => {
               className="p-1 rounded-md text-neutral-400 hover:text-rose-500 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer shrink-0"
               title="Cancel download"
             >
-              <X className="w-4 h-4" />
+              <X className="w-4 h-4"/>
             </button>
           </div>
 
-          {/* Progress Bar */}
           <div className="w-full bg-neutral-100 dark:bg-neutral-800 rounded-full h-1.5 overflow-hidden">
             <div
               className="bg-blue-600 h-full transition-all duration-200 rounded-full"

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useRef, useEffect, useCallback } from 'react';
 import axios from 'axios';
-import { UploadCloud, CheckCircle2, AlertTriangle, X, Loader2 } from 'lucide-react';
+import { Upload, UploadCloud, CheckCircle2, AlertTriangle, X, Loader2 } from 'lucide-react';
 import { computeFileSHA256 } from '../utils/cryptoHelper';
 import { generateMediaThumbnail } from '../utils/thumbnailHelper';
 import { useToast } from './ToastContext';
@@ -42,72 +42,40 @@ export function UploadProvider({ children }) {
     queueRef.current = queue;
   }, [queue]);
 
-  const speedTrackerRef = useRef({ lastBytes: 0, lastTime: Date.now(), idleTicks: 0 });
+  const speedTrackerRef = useRef({ lastBytes: 0, lastTime: Date.now() });
+  const isAnyUploading = queue.some((i) => i.status === 'uploading');
 
-  // Close dropdown on outside click or when download tray opens
   useEffect(() => {
-    const handleOutsideClick = (e) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
-        setIsOpen(false);
-      }
-    };
-    const handleDownloadOpen = () => setIsOpen(false);
-
-    document.addEventListener('mousedown', handleOutsideClick);
-    window.addEventListener('cloudguard:download-tray-opened', handleDownloadOpen);
-    return () => {
-      document.removeEventListener('mousedown', handleOutsideClick);
-      window.removeEventListener('cloudguard:download-tray-opened', handleDownloadOpen);
-    };
-  }, []);
-
-  // Check if any items are pending or actively running
-  const hasActiveTransfers = queue.some((i) =>
-    ['uploading', 'hashing', 'finalizing', 'queued'].includes(i.status)
-  );
-
-  // Smooth, rolling upload speed meter that persists through batch image uploads
-  useEffect(() => {
-    if (!hasActiveTransfers) {
+    if (!isAnyUploading) {
       setGlobalSpeed('');
-      speedTrackerRef.current = { lastBytes: 0, lastTime: Date.now(), idleTicks: 0 };
+      speedTrackerRef.current = { lastBytes: 0, lastTime: Date.now() };
       return;
     }
 
+    const initialBytes = queueRef.current.reduce((sum, item) => sum + (item.uploadedBytes || 0), 0);
+    speedTrackerRef.current = { lastBytes: initialBytes, lastTime: Date.now() };
+
     const interval = setInterval(() => {
-      const totalUploadedBytes = queueRef.current.reduce(
-        (sum, item) => sum + (item.uploadedBytes || 0),
-        0
-      );
+      const totalUploadedBytes = queueRef.current.reduce((sum, item) => sum + (item.uploadedBytes || 0), 0);
       const now = Date.now();
       const timeDiff = (now - speedTrackerRef.current.lastTime) / 1000;
 
       if (timeDiff >= 0.4) {
-        const bytesDiff = totalUploadedBytes - speedTrackerRef.current.lastBytes;
+        const bytesDiff = Math.max(0, totalUploadedBytes - speedTrackerRef.current.lastBytes);
+        const bytesPerSec = bytesDiff / timeDiff;
 
-        if (bytesDiff > 0) {
-          const bytesPerSec = bytesDiff / timeDiff;
-          const speedStr =
-            bytesPerSec >= 1024 * 1024
-              ? `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`
-              : `${Math.round(bytesPerSec / 1024)} KB/s`;
+        if (bytesPerSec > 0) {
+          const speedStr = bytesPerSec >= 1024 * 1024
+            ? `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`
+            : `${Math.round(bytesPerSec / 1024)} KB/s`;
           setGlobalSpeed(speedStr);
-          speedTrackerRef.current.idleTicks = 0;
-        } else {
-          // If in between small image chunks, preserve the last speed for up to 1.5s
-          speedTrackerRef.current.idleTicks += 1;
-          if (speedTrackerRef.current.idleTicks > 3) {
-            setGlobalSpeed('');
-          }
         }
-
-        speedTrackerRef.current.lastBytes = totalUploadedBytes;
-        speedTrackerRef.current.lastTime = now;
+        speedTrackerRef.current = { lastBytes: totalUploadedBytes, lastTime: now };
       }
-    }, 400);
+    }, 500);
 
     return () => clearInterval(interval);
-  }, [hasActiveTransfers]);
+  }, [isAnyUploading]);
 
   const toggleOpen = () => {
     setIsOpen((prev) => {
@@ -293,10 +261,17 @@ export function UploadProvider({ children }) {
     );
   };
 
+  const hasActiveTransfers = queue.some((i) =>
+    ['uploading', 'hashing', 'finalizing', 'queued'].includes(i.status)
+  );
+
   return (
     <UploadContext.Provider
       value={{
         queue,
+        uploadQueue: queue,
+        isUploading: hasActiveTransfers,
+        clearCompleted: clearFinished,
         isOpen,
         globalSpeed,
         toggleOpen,
@@ -316,6 +291,9 @@ export const useUpload = () => {
   return (
     context || {
       queue: [],
+      uploadQueue: [],
+      isUploading: false,
+      clearCompleted: () => {},
       isOpen: false,
       globalSpeed: '',
       toggleOpen: () => {},
@@ -330,149 +308,178 @@ export const useUpload = () => {
 /**
  * Top Header Upload Button with Status Badge and Dropdown Tray
  */
-export function HeaderUploadButton() {
-  const { queue, isOpen, globalSpeed, toggleOpen, removeQueueItem, clearFinished, dropdownRef } =
-    useUpload();
+export const HeaderUploadButton = () => {
+  const { uploadQueue, queue, isUploading, clearCompleted, clearFinished, globalSpeed, removeQueueItem } = useUpload();
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef(null);
 
-  const activeCount = queue.filter((i) =>
+  const activeQueue = uploadQueue || queue || [];
+  const isWorking = activeQueue.some((i) =>
     ['uploading', 'hashing', 'finalizing', 'queued'].includes(i.status)
-  ).length;
-  const isWorking = activeCount > 0;
+  );
+  const activeIsUploading =
+    typeof isUploading === 'boolean'
+      ? isUploading
+      : isWorking;
+  const activeClear = clearCompleted || clearFinished;
 
-  if (queue.length === 0) return null;
+  // Close when download tray opens or global close is dispatched
+  useEffect(() => {
+    const handleClose = () => setIsOpen(false);
+    window.addEventListener('cloudguard:download-tray-opened', handleClose);
+    window.addEventListener('cloudguard:close-upload-tray', handleClose);
+    window.addEventListener('cloudguard:close-all-trays', handleClose);
+    return () => {
+      window.removeEventListener('cloudguard:download-tray-opened', handleClose);
+      window.removeEventListener('cloudguard:close-upload-tray', handleClose);
+      window.removeEventListener('cloudguard:close-all-trays', handleClose);
+    };
+  }, []);
+
+  // Click outside listener
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleClickOutside = (e) => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isOpen]);
+
+  const toggleOpen = (e) => {
+    e.stopPropagation();
+    setIsOpen((prev) => {
+      const nextState = !prev;
+      if (nextState) {
+        // Explicitly close download tray when this opens
+        window.dispatchEvent(new CustomEvent('cloudguard:upload-tray-opened'));
+      }
+      return nextState;
+    });
+  };
+
+  const activeCount = activeQueue.filter(
+    (i) =>
+      i.status === 'uploading' ||
+      i.status === 'pending' ||
+      i.status === 'queued' ||
+      i.status === 'hashing' ||
+      i.status === 'finalizing'
+  ).length;
+
+  if (activeQueue.length === 0) return null;
 
   return (
-    <div className="relative inline-block" ref={dropdownRef}>
-      {/* Navbar Icon Button */}
+    <div ref={containerRef} className="relative inline-block">
       <button
-        onClick={toggleOpen}
-        title="Upload Activity"
         type="button"
-        className={`relative p-2 rounded-lg transition-colors border cursor-pointer ${
-          isWorking
-            ? 'bg-blue-500/10 text-blue-500 border-blue-500/30 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800'
-            : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 border-transparent dark:text-neutral-400 dark:hover:text-white dark:hover:bg-neutral-800'
-        }`}
+        onClick={toggleOpen}
+        title="View upload queue"
+        className="relative p-2 rounded-lg bg-neutral-100 hover:bg-neutral-200 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-neutral-700 dark:text-neutral-200 transition-colors cursor-pointer"
       >
-        <UploadCloud className={`w-5 h-5 ${isWorking ? 'animate-bounce' : ''}`} />
-        {isWorking && (
-          <span className="absolute -top-1 -right-1 px-1.5 py-0.2 text-[10px] font-bold bg-blue-600 text-white rounded-full shadow-sm">
+        <UploadCloud className={`w-5 h-5 ${activeIsUploading ? 'animate-pulse text-blue-500' : ''}`} />
+        {activeCount > 0 && (
+          <span className="absolute -top-1 -right-1 flex h-4 min-w-4 px-1 items-center justify-center rounded-full bg-blue-600 text-[10px] font-bold text-white shadow-sm">
             {activeCount}
           </span>
         )}
       </button>
 
-      {/* Dropdown Flyout */}
+      {/* Upload Dropdown Tray */}
       {isOpen && (
-        <div className="fixed sm:absolute top-16 sm:top-full left-4 sm:left-auto right-4 sm:right-0 mt-2 sm:w-96 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-xl shadow-2xl z-50 overflow-hidden text-neutral-900 dark:text-white text-xs animate-in fade-in zoom-in-95">
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="absolute right-0 mt-2.5 w-[calc(100vw-2rem)] sm:w-96 max-h-[75vh] flex flex-col rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-2xl z-50 select-none overflow-hidden"
+        >
           {/* Header */}
-          <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-100 dark:border-neutral-800 bg-neutral-50/50 dark:bg-neutral-800/40">
+          <div className="flex items-center justify-between p-3.5 border-b border-neutral-200 dark:border-neutral-800 bg-neutral-50/50 dark:bg-neutral-800/40">
             <div className="flex items-center gap-2">
-              <span className="font-semibold text-sm">
+              <span className="text-xs font-semibold text-neutral-900 dark:text-white">
                 {isWorking ? `Uploading (${activeCount} left)` : 'Uploads Complete'}
               </span>
-              {/* Unboxed speed text adaptive to light and dark theme */}
               {isWorking && globalSpeed && (
-                <span className="text-[11px] font-medium tabular-nums text-neutral-500 dark:text-neutral-400">
-                  • {globalSpeed}
+                <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold tabular-nums bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border border-blue-200/50 dark:border-blue-800/40">
+                  {globalSpeed}
                 </span>
               )}
             </div>
-            {!isWorking && (
+            <div className="flex items-center gap-1">
+              {!isWorking && (
+                <button
+                  type="button"
+                  onClick={activeClear}
+                  className="text-[11px] text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white px-2 py-0.5 rounded hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
+                >
+                  Clear all
+                </button>
+              )}
               <button
-                onClick={clearFinished}
                 type="button"
-                className="text-[11px] text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300 transition-colors cursor-pointer"
+                onClick={() => setIsOpen(false)}
+                className="p-1 text-neutral-400 hover:text-neutral-700 dark:hover:text-white rounded hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
               >
-                Clear all
+                <X className="w-4 h-4" />
               </button>
-            )}
+            </div>
           </div>
 
-          {/* List */}
-          <div className="max-h-72 overflow-y-auto divide-y divide-neutral-100 dark:divide-neutral-800/60">
-            {queue.map((item) => (
-              <div
-                key={item.id}
-                className="p-3 hover:bg-neutral-50/70 dark:hover:bg-neutral-800/30 transition-colors"
-              >
+          {/* Item List */}
+          <div className="overflow-y-auto p-2 space-y-1.5 divide-y divide-neutral-100 dark:divide-neutral-800/60 max-h-80">
+            {activeQueue.map((item) => (
+              <div key={item.id} className="pt-1.5 first:pt-0">
                 <div className="flex items-start justify-between gap-2 mb-1.5">
                   <div className="flex flex-col min-w-0 flex-1">
-                    <span className="font-medium truncate text-neutral-800 dark:text-neutral-200" title={item.name}>
-                      {item.name}
+                    <span
+                      className="font-medium truncate text-neutral-800 dark:text-neutral-200 text-xs"
+                      title={item.file?.name || item.name}
+                    >
+                      {item.file?.name || item.name}
                     </span>
                     {/* Live Uploaded Size vs Total Size */}
                     <span className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-0.5 tabular-nums">
                       {item.status === 'uploading' &&
-                        `${formatBytes(item.uploadedBytes || 0)} of ${formatBytes(item.size)}`}
-                      {item.status === 'hashing' && `${formatBytes(item.size)} • Preparing`}
-                      {item.status === 'finalizing' && `${formatBytes(item.size)} • Inspecting security`}
-                      {item.status === 'queued' && `${formatBytes(item.size)} • Queued`}
-                      {item.status === 'clean' && formatBytes(item.size)}
-                      {item.status === 'unverified' && `${formatBytes(item.size)} • Unverified`}
-                      {item.status === 'threat_purged' && `${formatBytes(item.size)} • Threat blocked`}
-                      {item.status === 'error' && `${formatBytes(item.size)} • ${item.error || 'Failed'}`}
+                        `${formatBytes(item.uploadedBytes || 0)} of ${formatBytes(item.file?.size || item.size)}`}
+                      {item.status === 'hashing' && `${formatBytes(item.file?.size || item.size)} • Preparing`}
+                      {item.status === 'finalizing' && `${formatBytes(item.file?.size || item.size)} • Inspecting security`}
+                      {item.status === 'queued' && `${formatBytes(item.file?.size || item.size)} • Queued`}
+                      {(item.status === 'completed' || item.status === 'clean') && `${formatBytes(item.file?.size || item.size)} • Safe`}
+                      {(item.status === 'malicious' || item.status === 'threat_purged') && `${formatBytes(item.file?.size || item.size)} • Deleted`}
+                      {item.status === 'error' && `${formatBytes(item.file?.size || item.size)} • ${item.error || 'Failed'}`}
                     </span>
                   </div>
 
                   <div className="flex items-center gap-1.5 shrink-0 pt-0.5">
-                    {item.status === 'clean' && (
-                      <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-medium">
-                        <CheckCircle2 className="w-3.5 h-3.5" /> Safe
-                      </span>
-                    )}
-                    {item.status === 'unverified' && (
-                      <span className="flex items-center gap-1 text-amber-500 font-medium">
-                        <AlertTriangle className="w-3.5 h-3.5" /> Unverified
-                      </span>
-                    )}
-                    {item.status === 'threat_purged' && (
-                      <span className="flex items-center gap-1 text-red-500 font-medium">
-                        <AlertTriangle className="w-3.5 h-3.5" /> Deleted
-                      </span>
-                    )}
-                    {item.status === 'error' && (
-                      <span className="text-red-500 font-medium">Failed</span>
-                    )}
-                    {item.status === 'uploading' && (
-                      <span className="text-blue-500 font-medium tabular-nums flex items-center gap-1">
-                        <Loader2 className="w-3 h-3 animate-spin" /> {item.progress}%
-                      </span>
-                    )}
-                    {item.status === 'hashing' && (
-                      <span className="text-neutral-400 font-medium">Hashing...</span>
-                    )}
-                    {item.status === 'finalizing' && (
-                      <span className="text-amber-500 font-medium flex items-center gap-1">
-                        <Loader2 className="w-3 h-3 animate-spin" /> Scanning
-                      </span>
-                    )}
-                    {item.status === 'queued' && (
-                      <span className="text-neutral-400 font-medium">Waiting</span>
-                    )}
-
+                    <span className="text-[10px] text-neutral-500 dark:text-neutral-400 font-medium tabular-nums">
+                      {item.status === 'completed' || item.status === 'clean'
+                        ? 'Done'
+                        : item.status === 'malicious' || item.status === 'threat_purged'
+                        ? 'Deleted'
+                        : `${item.progress || 0}%`}
+                    </span>
                     <button
-                      onClick={() => removeQueueItem(item.id)}
                       type="button"
-                      className="p-1 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 rounded transition-colors cursor-pointer"
-                      title="Dismiss"
+                      onClick={() => removeQueueItem(item.id)}
+                      className="p-0.5 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 rounded transition-colors cursor-pointer"
                     >
                       <X className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 </div>
 
-                {/* Progress bar */}
-                {['uploading', 'hashing', 'finalizing'].includes(item.status) && (
-                  <div className="w-full bg-neutral-200 dark:bg-neutral-800 h-1 rounded-full overflow-hidden mt-1">
-                    <div
-                      className={`h-full transition-all duration-150 rounded-full ${
-                        item.status === 'finalizing' ? 'bg-amber-500' : 'bg-blue-600'
-                      }`}
-                      style={{ width: `${item.progress}%` }}
-                    />
-                  </div>
-                )}
+                <div className="w-full bg-neutral-100 dark:bg-neutral-800 rounded-full h-1 overflow-hidden">
+                  <div
+                    className={`h-full transition-all duration-150 ${
+                      item.status === 'malicious' || item.status === 'threat_purged'
+                        ? 'bg-rose-500'
+                        : item.status === 'completed' || item.status === 'clean'
+                        ? 'bg-emerald-500'
+                        : 'bg-blue-600'
+                    }`}
+                    style={{ width: `${item.progress || 0}%` }}
+                  />
+                </div>
               </div>
             ))}
           </div>
@@ -480,4 +487,4 @@ export function HeaderUploadButton() {
       )}
     </div>
   );
-}
+};
