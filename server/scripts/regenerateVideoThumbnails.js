@@ -88,9 +88,9 @@ async function regenerateThumbnails() {
         const duration = await getVideoDuration(tmpVideoPath);
         console.log(`  Duration: ${duration.toFixed(1)}s`);
 
-        // Test deep into the episode to guarantee clear character scenes
-        const candidates = [30.0, 60.0, 90.0, 15.0, 120.0, 10.0].filter((t) => t < duration);
-        if (candidates.length === 0) candidates.push(0.5);
+        // Candidate timestamps prioritizing 5.0s (with safe fallbacks for shorter clips)
+        const candidates = [5.0, 2.0, 1.0].filter((t) => t < duration);
+        if (candidates.length === 0) candidates.push(Math.max(0.1, duration * 0.5));
 
         let bestFramePath = null;
         let bestLuminance = -1;
@@ -110,8 +110,8 @@ async function regenerateThumbnails() {
               bestFramePath = framePath;
             }
 
-            if (lum >= 35) {
-              console.log(`  Found bright scene @ ${seekTime.toFixed(1)}s!`);
+            if (lum >= 20) {
+              console.log(`  Found acceptable non-black scene @ ${seekTime.toFixed(1)}s!`);
               break;
             }
           } catch (frameErr) {

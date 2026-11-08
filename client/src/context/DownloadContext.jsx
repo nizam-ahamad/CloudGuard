@@ -140,7 +140,7 @@ export const HeaderDownloadButton = () => {
       {isOpen && (
         <div 
           onClick={(e) => e.stopPropagation()}
-          className="absolute right-0 mt-2.5 w-[calc(100vw-2rem)] sm:w-80 p-4 rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-2xl z-50 select-none"
+          className="fixed left-3 right-3 top-16 sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2.5 sm:w-80 p-4 rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-2xl z-50 select-none"
         >
           <div className="flex items-start justify-between gap-3 mb-2.5">
             <div className="min-w-0 flex-1">

@@ -389,9 +389,9 @@ export const HeaderUploadButton = () => {
 
       {/* Upload Dropdown Tray */}
       {isOpen && (
-        <div
+        <div 
           onClick={(e) => e.stopPropagation()}
-          className="absolute right-0 mt-2.5 w-[calc(100vw-2rem)] sm:w-96 max-h-[75vh] flex flex-col rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-2xl z-50 select-none overflow-hidden"
+          className="fixed left-3 right-3 top-16 sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2.5 sm:w-96 max-h-[75vh] flex flex-col rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-2xl z-50 select-none overflow-hidden"
         >
           {/* Header */}
           <div className="flex items-center justify-between p-3.5 border-b border-neutral-200 dark:border-neutral-800 bg-neutral-50/50 dark:bg-neutral-800/40">

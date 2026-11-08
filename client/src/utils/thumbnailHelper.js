@@ -76,8 +76,8 @@ export async function generateMediaThumbnail(file, maxDimension = 512, quality =
     }
   }
 
-  // 2. Video Poster Frame Extraction (Skips initial black frames)
-  if (file.type?.startsWith('video/')) {
+  // 2. Video Poster Frame Extraction (Default 5.0s seeker)
+  if (file.type?.startsWith('video/') || file.name?.match(/\.(mp4|webm|mov|mkv)$/i)) {
     return new Promise((resolve) => {
       const video = document.createElement('video');
       video.preload = 'metadata';
@@ -88,7 +88,8 @@ export async function generateMediaThumbnail(file, maxDimension = 512, quality =
       video.src = url;
 
       video.onloadedmetadata = () => {
-        const targetTime = video.duration > 3 ? 1.0 : Math.max(0.2, video.duration * 0.15);
+        const duration = video.duration || 10;
+        const targetTime = duration > 5 ? 5.0 : Math.max(0.2, duration * 0.5);
         video.currentTime = targetTime;
       };
 
