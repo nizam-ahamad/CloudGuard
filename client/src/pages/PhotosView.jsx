@@ -124,6 +124,8 @@ export default function PhotosView({ token: propToken }) {
   // Mobile swipe tracking
   const touchStartX = useRef(0);
   const touchEndX = useRef(0);
+  const urlCacheRef = useRef(new Map()); // fileId -> accessUrl
+  const activeLoadIdRef = useRef(null);
 
   // Native CloudGuard Pill Toast
   const showPillToast = useCallback(({ message, actionText = null, onAction = null, duration = 6000 }) => {
@@ -171,36 +173,28 @@ export default function PhotosView({ token: propToken }) {
     );
   }, [toast]);
 
-  const fetchMedia = useCallback(async (force = false) => {
-    const now = Date.now();
-    // Do NOT make any network call if cache is under 60 seconds old
-    if (!force && globalPhotosCache && (now - lastPhotosFetchTimestamp < CACHE_TTL_MS)) {
-      setMediaList(globalPhotosCache);
-      setLoading(false);
-      return;
-    }
+  const isMountedRef = useRef(false);
 
-    if (!globalPhotosCache) {
-      setLoading(true);
-    }
-
+  const fetchMedia = useCallback(async () => {
     try {
-      const token = propToken || (typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null);
+      setLoading(true);
+      const token = localStorage.getItem('token');
       const res = await axios.get('/api/photos', {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: { Authorization: `Bearer ${token}` },
       });
 
-      const items = res.data.photos || (Array.isArray(res.data) ? res.data : []);
-      globalPhotosCache = items;
+      const list = Array.isArray(res.data) ? res.data : (res.data?.photos || []);
+      globalPhotosCache = list;
       lastPhotosFetchTimestamp = Date.now();
-      setMediaList(items);
+      setMediaList(list);
     } catch (err) {
       console.error('Failed to load photos:', err);
     } finally {
       setLoading(false);
     }
-  }, [propToken]);
+  }, []);
 
+  // Execute fetch ONLY once on initial mount
   useEffect(() => {
     fetchMedia();
   }, [fetchMedia]);
@@ -282,47 +276,110 @@ export default function PhotosView({ token: propToken }) {
     startDownload(prepareDownloadPayload(item));
   }, [startDownload]);
 
-  // Carousel navigation
+  // Carousel navigation & state
   const currentPreviewItem = previewIndex !== null ? mediaList[previewIndex] : null;
+  const previewItem = currentPreviewItem;
+  const mediaItems = mediaList;
   const [fullMediaUrl, setFullMediaUrl] = useState(null);
   const [loadingFullMedia, setLoadingFullMedia] = useState(false);
+  const setOriginalUrl = setFullMediaUrl;
+  const setLoadingOriginal = setLoadingFullMedia;
 
-  useEffect(() => {
-    if (!currentPreviewItem) {
-      setFullMediaUrl(null);
-      setLoadingFullMedia(false);
+  const closePreview = useCallback(() => {
+    setPreviewIndex(null);
+    setFullMediaUrl(null);
+    activeLoadIdRef.current = null;
+  }, []);
+
+  const setPreviewItem = useCallback((item) => {
+    if (!item) {
+      closePreview();
+      return;
+    }
+    const idx = mediaList.findIndex((m) => m._id === item._id);
+    setPreviewIndex(idx >= 0 ? idx : null);
+  }, [mediaList, closePreview]);
+
+  // 2. Single unified media loader with cache check
+  const loadMediaUrl = useCallback(async (item) => {
+    if (!item || !item._id) return;
+
+    const fileId = item._id;
+
+    // Check cache first for 0ms instant display and 0 network requests
+    if (urlCacheRef.current.has(fileId)) {
+      setOriginalUrl(urlCacheRef.current.get(fileId));
+      setLoadingOriginal(false);
       return;
     }
 
-    let isCancelled = false;
-    setLoadingFullMedia(true);
-    setFullMediaUrl(null);
+    // Prevent duplicate back-to-back requests for the same file
+    if (activeLoadIdRef.current === fileId) {
+      return;
+    }
+    activeLoadIdRef.current = fileId;
 
-    const token = propToken || (typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null);
-    axios
-      .get(`/api/files/${currentPreviewItem._id}/access`, {
+    setOriginalUrl(null);
+    setLoadingOriginal(true);
+
+    try {
+      const token = propToken || (typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null);
+      const res = await axios.get(`/api/files/${fileId}/access`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
-      })
-      .then((res) => {
-        if (!isCancelled) {
-          const url = res.data?.accessUrl || res.data?.url;
-          if (url) setFullMediaUrl(url);
-        }
-      })
-      .catch((err) => {
-        if (!isCancelled) {
-          console.warn('Full media access fetch notice:', err.message);
-          if (currentPreviewItem.url) setFullMediaUrl(currentPreviewItem.url);
-        }
-      })
-      .finally(() => {
-        if (!isCancelled) setLoadingFullMedia(false);
       });
 
-    return () => {
-      isCancelled = true;
-    };
-  }, [currentPreviewItem?._id, propToken]);
+      const accessUrl = res.data?.accessUrl || res.data?.url;
+      if (accessUrl) {
+        urlCacheRef.current.set(fileId, accessUrl);
+      }
+
+      // Only update state if the user hasn't already clicked away to another item
+      if (activeLoadIdRef.current === fileId) {
+        setOriginalUrl(accessUrl || item.url || null);
+      }
+    } catch (err) {
+      console.error('Failed to load media asset:', err);
+      if (item.url && activeLoadIdRef.current === fileId) {
+        setOriginalUrl(item.url);
+      }
+    } finally {
+      if (activeLoadIdRef.current === fileId) {
+        setLoadingOriginal(false);
+      }
+    }
+  }, [propToken]);
+
+  // 3. Carousel Navigation Handlers: Only change state, do not double-fetch
+  const handleNext = useCallback(() => {
+    if (!currentPreviewItem || mediaList.length === 0) return;
+    const currentIndex = mediaList.findIndex((m) => m._id === currentPreviewItem._id);
+    const nextIndex = (currentIndex + 1) % mediaList.length;
+    const nextItem = mediaList[nextIndex];
+    setPreviewIndex(nextIndex);
+    loadMediaUrl(nextItem);
+  }, [currentPreviewItem, mediaList, loadMediaUrl]);
+
+  const handlePrev = useCallback(() => {
+    if (!currentPreviewItem || mediaList.length === 0) return;
+    const currentIndex = mediaList.findIndex((m) => m._id === currentPreviewItem._id);
+    const prevIndex = (currentIndex - 1 + mediaList.length) % mediaList.length;
+    const prevItem = mediaList[prevIndex];
+    setPreviewIndex(prevIndex);
+    loadMediaUrl(prevItem);
+  }, [currentPreviewItem, mediaList, loadMediaUrl]);
+
+  const navigateNext = handleNext;
+  const navigatePrev = handlePrev;
+
+  // 4. Grid card click handler
+  const openPreview = useCallback((item, index = null) => {
+    if (!item) return;
+    const targetIndex = index !== null && index >= 0 
+      ? index 
+      : mediaList.findIndex((m) => m._id === item._id);
+    setPreviewIndex(targetIndex >= 0 ? targetIndex : null);
+    loadMediaUrl(item);
+  }, [mediaList, loadMediaUrl]);
 
   // 3. Lightbox Preview Download (Top-Right Button)
   const handlePreviewDownload = useCallback(() => {
@@ -422,28 +479,16 @@ export default function PhotosView({ token: propToken }) {
     }
   };
 
-  const navigatePrev = useCallback(() => {
-    if (previewIndex !== null && previewIndex > 0) {
-      setPreviewIndex(previewIndex - 1);
-    }
-  }, [previewIndex]);
-
-  const navigateNext = useCallback(() => {
-    if (previewIndex !== null && previewIndex < mediaList.length - 1) {
-      setPreviewIndex(previewIndex + 1);
-    }
-  }, [previewIndex, mediaList.length]);
-
   useEffect(() => {
     if (previewIndex === null) return;
     const handleKeyDown = (e) => {
-      if (e.key === 'ArrowLeft') navigatePrev();
-      if (e.key === 'ArrowRight') navigateNext();
-      if (e.key === 'Escape') setPreviewIndex(null);
+      if (e.key === 'ArrowLeft') handlePrev();
+      if (e.key === 'ArrowRight') handleNext();
+      if (e.key === 'Escape') closePreview();
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [previewIndex, navigatePrev, navigateNext]);
+  }, [previewIndex, handlePrev, handleNext, closePreview]);
 
   const handleTouchStart = (e) => {
     touchStartX.current = e.changedTouches[0].screenX;
@@ -604,7 +649,7 @@ export default function PhotosView({ token: propToken }) {
                   return (
                     <div
                       key={item._id}
-                      onClick={() => setPreviewIndex(globalIndex)}
+                      onClick={() => openPreview(item, globalIndex)}
                       className={`group relative aspect-square bg-white dark:bg-zinc-900 rounded-lg sm:rounded-xl overflow-hidden border transition-all shadow-sm active:scale-95 touch-manipulation cursor-pointer ${
                         isSelected
                           ? 'ring-2 ring-emerald-500 border-emerald-500 dark:border-emerald-500'
@@ -700,7 +745,7 @@ export default function PhotosView({ token: propToken }) {
                   return (
                     <div
                       key={item._id}
-                      onClick={() => setPreviewIndex(globalIndex)}
+                      onClick={() => openPreview(item, globalIndex)}
                       className={`flex items-center justify-between p-3 cursor-pointer transition-colors ${
                         isSelected
                           ? 'bg-emerald-500/10 dark:bg-emerald-500/15'
@@ -840,7 +885,7 @@ export default function PhotosView({ token: propToken }) {
       {currentPreviewItem && (
         <div
           onClick={(e) => {
-            if (e.target === e.currentTarget) setPreviewIndex(null);
+            if (e.target === e.currentTarget) closePreview();
           }}
           className="fixed inset-0 z-50 bg-black/95 backdrop-blur-md flex items-center justify-center animate-enter select-none"
           onTouchStart={handleTouchStart}
@@ -874,7 +919,7 @@ export default function PhotosView({ token: propToken }) {
               {/* Existing Cross (✕) Close Button */}
               <button
                 type="button"
-                onClick={() => setPreviewIndex(null)}
+                onClick={closePreview}
                 className="p-2 rounded-full bg-neutral-800/80 hover:bg-neutral-700 active:scale-95 text-neutral-200 hover:text-white backdrop-blur-md border border-neutral-700/50 transition-all cursor-pointer shrink-0"
                 title="Close preview"
                 aria-label="Close preview"

@@ -674,8 +674,16 @@ function App() {
     }
   }, [searchParams, token]);
 
+  // 1. Clean Home Breadcrumb Handler: Only clears folder and resets URL
   const handleNavigateHome = () => {
-    if (!currentFolderId && location.pathname === '/dashboard') return;
+    // If already at root /dashboard with no folder and no query, do nothing
+    if (
+      window.location.pathname === '/dashboard' &&
+      !window.location.search &&
+      !currentFolderId
+    ) {
+      return;
+    }
 
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -685,16 +693,14 @@ function App() {
     setCurrentFolderId(null);
     setBreadcrumbs([{ id: null, name: 'Home' }]);
 
-    // Update URL only - let URL listener trigger the fetch cleanly once
-    setSearchParams({});
-    if (location.pathname !== '/dashboard') {
-      navigate('/dashboard');
-    }
+    navigate('/dashboard');
+    // DO NOT call fetchFolders(null) or fetchFiles(null) here!
   };
 
+  // 2. Clean Folder Click Handler: Only updates state and URL
   const handleFolderClick = (folder) => {
-    const folderId = folder._id;
-    if (currentFolderId === folderId) return;
+    const folderId = folder?._id || folder;
+    if (!folderId || currentFolderId === folderId) return;
 
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -703,15 +709,16 @@ function App() {
     clearSelection();
     setCurrentFolderId(folderId);
     setBreadcrumbs(prev => {
-      const existingIndex = prev.findIndex(b => b.id === folder._id);
+      const existingIndex = prev.findIndex(b => b.id === folderId);
       if (existingIndex >= 0) {
         return prev.slice(0, existingIndex + 1);
       }
-      return [...prev, { id: folder._id, name: folder.name }];
+      return [...prev, { id: folderId, name: folder.name || 'Folder' }];
     });
 
-    // Update URL only - let URL listener execute the fetch cleanly once
-    setSearchParams({ folder: folderId });
+    navigate(`/dashboard?folder=${folderId}`);
+    // DO NOT call fetchFolders(folderId) or fetchFiles(folderId) here!
+    // The URL listener useEffect will execute the fetch cleanly once.
   };
 
   const handleBreadcrumbClick = (folderId, index) => {
@@ -726,8 +733,7 @@ function App() {
     setCurrentFolderId(targetId);
     setBreadcrumbs(prev => prev.slice(0, index + 1));
 
-    // Update URL only - let URL listener execute the fetch cleanly once
-    setSearchParams(targetId ? { folder: targetId } : {});
+    navigate(targetId ? `/dashboard?folder=${targetId}` : '/dashboard');
   };
 
   const handleCloseSettings = () => {
@@ -1174,33 +1180,31 @@ function App() {
     }
   }, [token]);
 
-  // Navigation & route listener effect:
+  // Navigation & route listener effect (Single Source of Truth for Folder Navigation):
   useEffect(() => {
     const token = localStorage.getItem('token') || sessionStorage.getItem('token');
     if (!token) return;
 
-    const currentPath = window.location.pathname;
-
-    // STRICT ROUTE ISOLATION: Only trigger dashboard sync on /dashboard
-    if (currentPath !== '/dashboard' && currentPath !== '/dashboard/') {
+    // Strict route guard: Only run on the main dashboard view
+    const pathname = window.location.pathname;
+    if (pathname !== '/dashboard' && pathname !== '/dashboard/') {
       return;
     }
 
-    // 1. ALWAYS synchronize storage stats on navigating to My Files
-    fetchStorageStats();
+    const searchParams = new URLSearchParams(window.location.search);
+    const activeFolderId = searchParams.get('folder') || null;
 
-    const params = new URLSearchParams(window.location.search);
-    const activeFolderId = params.get('folder') || null;
-
-    // Skip duplicate execution if already on this folder
+    // Skip duplicate execution if already fetching or loaded for this exact folder
     if (lastFetchedFolderIdRef.current === activeFolderId) {
       return;
     }
+    lastFetchedFolderIdRef.current = activeFolderId;
 
-    // 2. Fetch folders and files for the active directory
+    // Trigger single coordinated fetch
     fetchFolders(activeFolderId);
     fetchFiles(activeFolderId, true);
-  }, [location.pathname, location.search, window.location.pathname, window.location.search, fetchStorageStats, fetchFolders, fetchFiles]);
+    fetchStorageStats();
+  }, [location.search, location.pathname, window.location.search, window.location.pathname]);
 
   // Real-time listener for live upload completion events across the app
   useEffect(() => {
@@ -1224,7 +1228,7 @@ function App() {
     };
   }, [fetchFiles, fetchStorageStats, fetchFolders, currentFolderId]);
 
-  // Separate trigger for view mode or search query changes
+  // Separate trigger ONLY for search query or viewMode changes (never on folder navigation)
   useEffect(() => {
     const token = localStorage.getItem('token') || sessionStorage.getItem('token');
     if (!token) return;
@@ -1237,7 +1241,7 @@ function App() {
     const params = new URLSearchParams(window.location.search);
     const activeFolderId = params.get('folder') || null;
     fetchFiles(activeFolderId, true);
-  }, [viewMode, searchQuery, location.pathname, searchParams]);
+  }, [viewMode, searchQuery]);
 
   const toggleSort = () => {
     const newOrder = sortOrder === 'newest' ? 'oldest' : 'newest';

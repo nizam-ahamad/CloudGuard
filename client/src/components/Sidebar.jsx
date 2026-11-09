@@ -2,7 +2,7 @@ import React from 'react';
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { Settings, Folder, Clock, Image } from 'lucide-react';
 
-export default function Sidebar({ isCollapsed = false, onClose, setShowSettings, setActiveTab }) {
+export default function Sidebar({ isCollapsed = false, onClose, setShowSettings, setActiveTab, setCurrentFolder }) {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -21,7 +21,6 @@ export default function Sidebar({ isCollapsed = false, onClose, setShowSettings,
   };
 
   const handleNavClick = (tab) => {
-    // 1. Immediately dismiss settings in state and query string
     if (typeof setShowSettings === 'function') {
       setShowSettings(false);
     }
@@ -29,24 +28,20 @@ export default function Sidebar({ isCollapsed = false, onClose, setShowSettings,
       onClose();
     }
 
-    // 2. Clear ?view=settings from URL
-    const newParams = new URLSearchParams(searchParams);
-    newParams.delete('view');
-
-    // 3. Navigate cleanly to the target view
     if (tab === 'files') {
-      newParams.delete('tab');
-      setSearchParams(newParams);
-      if (typeof setActiveTab === 'function') setActiveTab('files');
+      if (typeof setCurrentFolder === 'function') {
+        setCurrentFolder(null);
+      }
+      if (typeof setActiveTab === 'function') {
+        setActiveTab('files');
+      }
       navigate('/dashboard');
     } else if (tab === 'recent') {
-      newParams.set('tab', 'recent');
-      setSearchParams(newParams);
-      if (typeof setActiveTab === 'function') setActiveTab('recent');
+      if (typeof setActiveTab === 'function') {
+        setActiveTab('recent');
+      }
       navigate('/dashboard?tab=recent');
     } else if (tab === 'photos') {
-      newParams.delete('tab');
-      setSearchParams(newParams);
       navigate('/dashboard/photos');
     }
   };

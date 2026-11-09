@@ -1,10 +1,24 @@
 const rateLimit = require('express-rate-limit');
 
+const isDevelopment = process.env.NODE_ENV !== 'production';
+
+// Skip CORS preflights AND local developer traffic
+const skipLocalAndOptions = (req) => {
+  if (req.method === 'OPTIONS') return true;
+  if (isDevelopment) {
+    const ip = req.ip || req.socket?.remoteAddress || '';
+    if (ip === '127.0.0.1' || ip === '::1' || ip.includes('127.0.0.1') || ip.includes('localhost')) {
+      return true; // Never rate-limit localhost in development
+    }
+  }
+  return false;
+};
+
 // 1. Strict Auth Limiter (Login & Registration: max 10 attempts per 15 min per IP)
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
-  skip: (req) => req.method === 'OPTIONS',
+  skip: skipLocalAndOptions,
   standardHeaders: true,
   legacyHeaders: false,
   message: { 
@@ -17,7 +31,7 @@ const authLimiter = rateLimit({
 const otpLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 5,
-  skip: (req) => req.method === 'OPTIONS',
+  skip: skipLocalAndOptions,
   standardHeaders: true,
   legacyHeaders: false,
   message: { 
@@ -30,7 +44,7 @@ const otpLimiter = rateLimit({
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 300,
-  skip: (req) => req.method === 'OPTIONS',
+  skip: skipLocalAndOptions,
   standardHeaders: true,
   legacyHeaders: false,
   message: { 
@@ -40,4 +54,3 @@ const apiLimiter = rateLimit({
 });
 
 module.exports = { authLimiter, otpLimiter, apiLimiter };
-
