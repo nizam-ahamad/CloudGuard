@@ -131,74 +131,70 @@ router.get('/:id/access', authMiddleware, async (req, res) => {
 // -------------------------------------------------------------
 router.get('/', authMiddleware, async (req, res) => {
   try {
-    // 1. Guard against missing req.user
-    const userId = req.user?.id || req.user?._id || req.user?.userId;
-    if (!userId) {
+    const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
+    if (!rawUserId) {
       return res.status(401).json({ error: 'Authentication required' });
     }
 
-    const targetFolderId = req.query.folderId || req.query.folder || null;
     const isRecent = req.query.recent === 'true';
     const searchQuery = (req.query.search || '').trim();
-
-    const query = {
-      $or: [{ userId: userId }, { user: userId }],
-      isTrash: { $ne: true },
-      securityStatus: { $in: ['clean', 'unverified'] },
-    };
-
-    if (searchQuery) {
-      const safeSearch = escapeRegex(searchQuery);
-      query.$and = [
-        {
-          $or: [
-            { name: { $regex: safeSearch, $options: 'i' } },
-            { originalName: { $regex: safeSearch, $options: 'i' } }
-          ],
-        },
-      ];
-    } else if (!isRecent) {
-      if (!targetFolderId || targetFolderId === 'null' || targetFolderId === 'undefined') {
-        // HOME (Root Directory):
-        // A file belongs to Home ONLY if it is not inside ANY folder.
-        // Both folder and folderId must be null/unset.
-        query.folder = null;
-        query.folderId = null;
-      } else {
-        // Subfolder: match targetFolderId via either pointer field
-        query.$and = [
-          {
-            $or: [
-              { folder: targetFolderId },
-              { folderId: targetFolderId },
-            ],
-          },
-        ];
-      }
-    }
+    const targetFolderId = req.query.folderId || req.query.folder || null;
+    const hasTargetFolder = Boolean(targetFolderId && targetFolderId !== 'null' && targetFolderId !== 'undefined');
 
     const limit = req.query.limit !== undefined 
       ? parseInt(req.query.limit, 10) 
       : (isRecent ? 10 : 0);
     const skip = parseInt(req.query.skip, 10) || 0;
 
-    // Fetch total count matching the query to evaluate hasMore
+    // Base filter
+    const baseFilter = {
+      isTrash: { $ne: true },
+      securityStatus: { $in: ['clean', 'unverified'] },
+    };
+
+    // FOLDER SCOPING:
+    if (hasTargetFolder) {
+      // 1. Explicit folder targeted -> scope strictly to that folder
+      baseFilter.$or = [
+        { folder: targetFolderId },
+        { folderId: targetFolderId },
+      ];
+    } else if (!isRecent && !searchQuery) {
+      // 2. Only restrict to root directory ("Home") when browsing Home WITHOUT search or recent
+      baseFilter.folder = null;
+      baseFilter.folderId = null;
+    }
+    // 3. When isRecent === true OR searchQuery is active without folderId -> search across ALL folders!
+
+    // Search filter (ReDoS-safe)
+    if (searchQuery) {
+      const safeSearch = escapeRegex(searchQuery);
+      baseFilter.$and = [
+        {
+          $or: [
+            { name: { $regex: safeSearch, $options: 'i' } },
+            { originalName: { $regex: safeSearch, $options: 'i' } },
+          ],
+        },
+      ];
+    }
+
+    const query = typeof buildTenantQuery === 'function'
+      ? buildTenantQuery(rawUserId, baseFilter)
+      : { userId: rawUserId, ...baseFilter };
+
     const totalCount = await File.countDocuments(query);
 
-    let filesQuery = File.find(query)
+    let fileQuery = File.find(query)
       .select('name originalName diskName sanitizedName size mimeType mimetype s3Key thumbnailKey securityStatus isMalicious uploadedAt createdAt folder folderId')
       .sort({ uploadedAt: -1, createdAt: -1 });
 
-    if (skip > 0) {
-      filesQuery = filesQuery.skip(skip);
-    }
-    if (limit > 0) {
-      filesQuery = filesQuery.limit(limit);
-    }
+    if (skip > 0) fileQuery = fileQuery.skip(skip);
+    if (limit > 0) fileQuery = fileQuery.limit(limit);
 
-    const files = await filesQuery.lean();
+    const rawFiles = await fileQuery.lean();
 
-    const mappedFiles = files.map(file => ({
+    const files = rawFiles.map(file => ({
       ...file,
       _id: file._id.toString(),
       id: file.s3Key || file._id.toString(),
@@ -215,15 +211,17 @@ router.get('/', authMiddleware, async (req, res) => {
 
     res.set('X-Total-Count', String(totalCount));
 
+    // If recent was requested, return pagination metadata
     if (isRecent) {
       return res.status(200).json({
-        files: mappedFiles,
+        files,
         total: totalCount,
-        hasMore: skip + mappedFiles.length < totalCount,
+        hasMore: skip + files.length < totalCount,
       });
     }
 
-    return res.status(200).json(mappedFiles);
+    // Otherwise return standard array for folder navigation
+    return res.status(200).json(files);
   } catch (err) {
     console.error('Error fetching files:', err);
     return res.status(500).json({ error: 'Failed to retrieve files' });

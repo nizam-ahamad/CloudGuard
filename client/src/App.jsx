@@ -834,11 +834,12 @@ function App() {
       setIsContentLoading(true);
 
       const authToken = token || localStorage.getItem('token') || sessionStorage.getItem('token');
+      const isRecentTab = searchParams.get('tab') === 'recent' || viewMode === 'recent' || new URLSearchParams(window.location.search).get('tab') === 'recent';
       
       const queryParams = {};
       if (searchQuery) {
         queryParams.search = searchQuery;
-      } else if (viewMode === 'recent') {
+      } else if (isRecentTab) {
         queryParams.recent = 'true';
         queryParams.limit = RECENT_PAGE_SIZE;
         queryParams.skip = 0;
@@ -858,15 +859,12 @@ function App() {
         return;
       }
 
-      const fileList = Array.isArray(res.data) ? res.data : (res.data?.files || []);
-      setFiles(fileList);
-      if (viewMode === 'recent' && !searchQuery) {
-        const hasMore = res.data?.hasMore !== undefined
-          ? res.data.hasMore
-          : fileList.length === RECENT_PAGE_SIZE;
-        setRecentSkip(0);
-        setHasMoreRecent(hasMore);
+      if (isRecentTab && res.data && typeof res.data === 'object' && !Array.isArray(res.data)) {
+        setFiles(res.data.files || []);
+        setHasMoreRecent(Boolean(res.data.hasMore));
       } else {
+        const fileList = Array.isArray(res.data) ? res.data : (res.data?.files || []);
+        setFiles(fileList);
         setHasMoreRecent(false);
       }
     } catch (err) {
@@ -903,9 +901,9 @@ function App() {
         headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
       });
 
-      const newItems = Array.isArray(res.data) ? res.data : (res.data?.files || []);
+      const newItems = res.data?.files || (Array.isArray(res.data) ? res.data : []);
       const hasMore = res.data?.hasMore !== undefined 
-        ? res.data.hasMore 
+        ? Boolean(res.data.hasMore) 
         : newItems.length === RECENT_PAGE_SIZE;
 
       setFiles((prev) => {
@@ -1238,8 +1236,8 @@ function App() {
 
     const params = new URLSearchParams(window.location.search);
     const activeFolderId = params.get('folder') || null;
-    fetchFiles(activeFolderId);
-  }, [viewMode, searchQuery, location.pathname]);
+    fetchFiles(activeFolderId, true);
+  }, [viewMode, searchQuery, location.pathname, searchParams]);
 
   const toggleSort = () => {
     const newOrder = sortOrder === 'newest' ? 'oldest' : 'newest';
@@ -2946,17 +2944,17 @@ function App() {
           </div>
 
           {/* Load More Button Container */}
-          {viewMode === 'recent' && hasMoreRecent && (
-            <div className="flex justify-center mt-6 pb-8">
+          {(viewMode === 'recent' || new URLSearchParams(window.location.search).get('tab') === 'recent') && hasMoreRecent && (
+            <div className="flex justify-center items-center py-6">
               <button
                 type="button"
                 onClick={handleLoadMoreRecent}
                 disabled={isLoadingMoreRecent}
-                className="flex items-center gap-2 px-5 py-2.5 text-xs font-semibold rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-800/60 shadow-sm transition-all cursor-pointer disabled:opacity-50"
+                className="flex items-center gap-2 px-5 py-2.5 text-xs font-semibold rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-neutral-800 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-700 shadow-sm transition-all cursor-pointer disabled:opacity-50"
               >
                 {isLoadingMoreRecent ? (
                   <>
-                    <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-500" />
+                    <span className="w-3.5 h-3.5 border-2 border-neutral-400 border-t-transparent rounded-full animate-spin" />
                     <span>Loading more files...</span>
                   </>
                 ) : (

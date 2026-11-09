@@ -235,6 +235,11 @@ export const StorageMeter = ({ storageStats: propStats, fetchStorageStats }) => 
 };
 
 export const Dashboard = (props) => {
+  const {
+    hasMoreRecent = false,
+    isLoadingMoreRecent = false,
+    onLoadMoreRecent = props.handleLoadMoreRecent,
+  } = props;
   const { enqueueFiles } = useUpload();
   const [storageStats, setStorageStats] = useState(() => props.storageStats || globalDashboardStorageCache || null);
 
@@ -307,6 +312,26 @@ export const Dashboard = (props) => {
     <div className="space-y-4">
       <StorageMeter storageStats={storageStats} fetchStorageStats={props.fetchStorageStats} />
       <FolderNavigationSkeleton />
+
+      {/* Load More Button for Recent Tab */}
+      {new URLSearchParams(window.location.search).get('tab') === 'recent' && hasMoreRecent && (
+        <div className="flex justify-center items-center py-6">
+          <button
+            onClick={onLoadMoreRecent}
+            disabled={isLoadingMoreRecent}
+            className="flex items-center gap-2 px-5 py-2.5 text-xs font-semibold rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-neutral-800 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-700 shadow-sm transition-all cursor-pointer disabled:opacity-50"
+          >
+            {isLoadingMoreRecent ? (
+              <>
+                <span className="w-3.5 h-3.5 border-2 border-neutral-400 border-t-transparent rounded-full animate-spin" />
+                <span>Loading more files...</span>
+              </>
+            ) : (
+              <span>Load More</span>
+            )}
+          </button>
+        </div>
+      )}
     </div>
   );
 };
