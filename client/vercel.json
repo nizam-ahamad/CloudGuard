@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "http://51.20.66.100:5000/api/:path*"
+      "destination": "https://api.cloudguard.site/api/:path*"
     },
     {
       "source": "/(.*)",
