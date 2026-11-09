@@ -237,7 +237,7 @@ export function UploadProvider({ children }) {
       }
 
       window.dispatchEvent(new CustomEvent('cloudguard:storage-updated'));
-      window.dispatchEvent(new CustomEvent('cloudguard:files-updated'));
+      window.dispatchEvent(new CustomEvent('cloudguard:files-updated', { detail: { folderId } }));
     } catch (err) {
       console.error('[Upload Pipeline Error]:', err);
       updateItem(id, {
@@ -248,6 +248,16 @@ export function UploadProvider({ children }) {
       toast.error(`Upload failed: "${file.name}"`);
     } finally {
       processingIdsRef.current.delete(id);
+      setTimeout(() => {
+        const remaining = (queueRef.current || []).filter((i) =>
+          ['uploading', 'hashing', 'finalizing', 'queued'].includes(i.status)
+        );
+        if (remaining.length === 0) {
+          window.dispatchEvent(new CustomEvent('cloudguard:all-uploads-completed', { detail: { folderId } }));
+          window.dispatchEvent(new CustomEvent('cloudguard:files-updated', { detail: { folderId } }));
+          window.dispatchEvent(new CustomEvent('cloudguard:storage-updated'));
+        }
+      }, 100);
     }
   };
 

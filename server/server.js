@@ -31,9 +31,11 @@ const upload = multer({
 });
 
 const WHITELISTED_HASHES = [
+  '9b0c8e42758f48c426a39c1919281322381a77d7e526d5b7be7cdb63e1d2873a', // Antigravity.exe
   'df765a8ae84a673ae9e8c8e60eca8e7e839351029c58803a107b8f010ce7b736', // Antigravity IDE.exe
-  '231d90772d0e26d4376e85bc35fb349c2341926cba84d800828791b33e1103ef'
-].map(h => h.toLowerCase().trim());
+  '231d90772d0e26d4376e85bc35fb349c2341926cba84d800828791b33e1103ef',
+  process.env.ANTIGRAVITY_SHA256?.toLowerCase().trim(),
+].filter(Boolean).map(h => h.toLowerCase().trim());
 
 const app = express();
 
@@ -42,6 +44,23 @@ app.set('trust proxy', 1);
 
 // Disable 304 Not Modified generation
 app.set('etag', false);
+
+const helmet = require('helmet');
+
+// Security Headers (Configured to permit cross-origin S3 thumbnails and Vercel proxying)
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    crossOriginEmbedderPolicy: false,
+  })
+);
+
+// Configure CORS for Vite frontend (Mounted before rate limiters to handle OPTIONS preflights cleanly)
+app.use(cors({
+  origin: ['http://localhost:5173', 'https://cloud-guard-self.vercel.app', 'https://cloudguard-app.duckdns.org', 'https://cloudguard.site', 'https://www.cloudguard.site'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+  credentials: true
+}));
 
 // Enforce dynamic freshness on all API routes
 app.use('/api', (req, res, next) => {
@@ -56,23 +75,6 @@ app.use('/api', (req, res, next) => {
 app.use('/api', apiLimiter);
 
 const JWT_SECRET = process.env.JWT_SECRET;
-
-const helmet = require('helmet');
-
-// Security Headers (Configured to permit cross-origin S3 thumbnails and Vercel proxying)
-app.use(
-  helmet({
-    crossOriginResourcePolicy: { policy: 'cross-origin' },
-    crossOriginEmbedderPolicy: false,
-  })
-);
-
-// Configure CORS for Vite frontend
-app.use(cors({
-  origin: ['http://localhost:5173', 'https://cloud-guard-self.vercel.app', 'https://cloudguard-app.duckdns.org'],
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-  credentials: true
-}));
 
 app.use(express.json());
 

@@ -943,8 +943,9 @@ function App() {
     isRefreshingRef.current = true;
 
     const activeId = currentFolderId || null;
+    lastFetchedFolderIdRef.current = undefined;
     fetchFolders(activeId);
-    fetchFiles(activeId);
+    fetchFiles(activeId, true);
 
     setTimeout(() => {
       isRefreshingRef.current = false;
@@ -1135,8 +1136,18 @@ function App() {
       setFileToMove(null);
       clearSelection();
 
-      // 3. Trigger a single coordinated view refresh
-      refreshCurrentView();
+      // Ensure setFiles and setFolders remove the moved items whether destinationId is an ObjectId OR null (Home)
+      const movedFileIdSet = new Set(fileIds);
+      const movedFolderIdSet = new Set(folderIds);
+
+      setFiles((prevFiles) => prevFiles.filter((file) => !movedFileIdSet.has(String(file._id || file.id))));
+      setFolders((prevFolders) => prevFolders.filter((folder) => !movedFolderIdSet.has(String(folder._id || folder.id))));
+
+      // 3. Invalidate duplicate cache ref & trigger background re-sync
+      lastFetchedFolderIdRef.current = undefined;
+      if (typeof fetchFiles === 'function') fetchFiles(sourceFolderId, true);
+      if (typeof fetchFolders === 'function') fetchFolders(sourceFolderId);
+      if (typeof fetchStorageStats === 'function') fetchStorageStats();
 
       // 4. Render Google Drive Toast with Undo in Native CloudGuard Pill Style
       const toastMessage = getMoveSuccessMessage(items, destinationName);
@@ -1197,20 +1208,23 @@ function App() {
   useEffect(() => {
     const handleRefresh = () => {
       globalStorageStatsCache = null;
+      lastFetchedFolderIdRef.current = undefined;
       const params = new URLSearchParams(window.location.search);
-      const activeFolderId = params.get('folder') || null;
-      if (typeof fetchFiles === 'function') fetchFiles(activeFolderId);
+      const activeFolderId = currentFolderId || params.get('folder') || null;
+      if (typeof fetchFiles === 'function') fetchFiles(activeFolderId, true);
       if (typeof fetchStorageStats === 'function') fetchStorageStats();
       if (typeof fetchFolders === 'function') fetchFolders(activeFolderId);
     };
 
     window.addEventListener('cloudguard:files-updated', handleRefresh);
     window.addEventListener('cloudguard:storage-updated', handleRefresh);
+    window.addEventListener('cloudguard:all-uploads-completed', handleRefresh);
     return () => {
       window.removeEventListener('cloudguard:files-updated', handleRefresh);
       window.removeEventListener('cloudguard:storage-updated', handleRefresh);
+      window.removeEventListener('cloudguard:all-uploads-completed', handleRefresh);
     };
-  }, [fetchFiles, fetchStorageStats, fetchFolders]);
+  }, [fetchFiles, fetchStorageStats, fetchFolders, currentFolderId]);
 
   // Separate trigger for view mode or search query changes
   useEffect(() => {
@@ -1316,11 +1330,19 @@ function App() {
                 { headers }
               );
               showPillToast({ message: 'Deletion undone', duration: 3000 });
-              const params = new URLSearchParams(window.location.search);
-              fetchFolders(params.get('folder') || null);
-              fetchFiles(params.get('folder') || null);
-              fetchStorageStats();
+              lastFetchedFolderIdRef.current = undefined;
+              const activeFolderId = currentFolderId || new URLSearchParams(window.location.search).get('folder') || null;
+              if (typeof fetchFiles === 'function') {
+                await fetchFiles(activeFolderId, true);
+              }
+              if (typeof fetchFolders === 'function') {
+                await fetchFolders(activeFolderId);
+              }
+              if (typeof fetchStorageStats === 'function') {
+                fetchStorageStats();
+              }
             } catch (e) {
+              console.error('Failed to undo deletion:', e);
               toast.error('Could not undo deletion');
             }
           },
@@ -1328,9 +1350,10 @@ function App() {
       } catch (err) {
         console.error('Delete failed:', err);
         toast.error('Failed to delete item');
-        const params = new URLSearchParams(window.location.search);
-        fetchFolders(params.get('folder') || null);
-        fetchFiles(params.get('folder') || null);
+        const activeFolderId = currentFolderId || new URLSearchParams(window.location.search).get('folder') || null;
+        lastFetchedFolderIdRef.current = undefined;
+        fetchFolders(activeFolderId);
+        fetchFiles(activeFolderId, true);
       }
       return;
     }
@@ -1376,11 +1399,19 @@ function App() {
                 { headers }
               );
               showPillToast({ message: 'Deletion undone', duration: 3000 });
-              const params = new URLSearchParams(window.location.search);
-              fetchFolders(params.get('folder') || null);
-              fetchFiles(params.get('folder') || null);
-              fetchStorageStats();
+              lastFetchedFolderIdRef.current = undefined;
+              const activeFolderId = currentFolderId || new URLSearchParams(window.location.search).get('folder') || null;
+              if (typeof fetchFiles === 'function') {
+                await fetchFiles(activeFolderId, true);
+              }
+              if (typeof fetchFolders === 'function') {
+                await fetchFolders(activeFolderId);
+              }
+              if (typeof fetchStorageStats === 'function') {
+                fetchStorageStats();
+              }
             } catch (e) {
+              console.error('Failed to undo deletion:', e);
               toast.error('Could not undo deletion');
             }
           },
@@ -1388,9 +1419,10 @@ function App() {
       } catch (err) {
         console.error('Bulk delete failed:', err);
         toast.error('Failed to delete items');
-        const params = new URLSearchParams(window.location.search);
-        fetchFolders(params.get('folder') || null);
-        fetchFiles(params.get('folder') || null);
+        const activeFolderId = currentFolderId || new URLSearchParams(window.location.search).get('folder') || null;
+        lastFetchedFolderIdRef.current = undefined;
+        fetchFolders(activeFolderId);
+        fetchFiles(activeFolderId, true);
       }
     }
   };
@@ -1557,7 +1589,8 @@ function App() {
 
       if (remainingQueued === 0) {
         try {
-          await fetchFiles();
+          lastFetchedFolderIdRef.current = undefined;
+          await fetchFiles(currentFolderId || null, true);
           await fetchStorageStats();
         } catch (err) {
           console.error("Failed to fetch updates:", err);

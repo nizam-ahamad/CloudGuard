@@ -42,6 +42,13 @@ try:
 except Exception as e:
     print(f"[AI-Service] Warning loading model: {e}")
 
+# Verified SHA-256 hash signatures for Antigravity executables
+ANTIGRAVITY_HASH_WHITELIST = {
+    "9b0c8e42758f48c426a39c1919281322381a77d7e526d5b7be7cdb63e1d2873a",  # Antigravity.exe
+    "df765a8ae84a673ae9e8c8e60eca8e7e839351029c58803a107b8f010ce7b736",  # Antigravity IDE.exe
+    os.getenv("ANTIGRAVITY_SHA256", "").lower().strip()
+} - {""}
+
 class ScanRequest(BaseModel):
     s3Key: str = None
     fileKey: str = None
@@ -190,7 +197,17 @@ async def scan_file(payload: ScanRequest):
     raw_name = payload.fileName or payload.filename or ""
     file_name = raw_name.lower().strip()
     s3_key = payload.s3Key or payload.fileKey
-    sha256 = (payload.sha256 or "").strip().lower()
+    sha256 = (payload.sha256 or "").lower().strip()
+
+    # 0. Strict Cryptographic Whitelist: Antigravity Binaries
+    if sha256 and sha256 in ANTIGRAVITY_HASH_WHITELIST:
+        return {
+            "isMalicious": False,
+            "status": "safe",
+            "threatVerdict": "clean",
+            "reason": "Whitelisted via verified Antigravity SHA-256 signature",
+            "confidenceScore": 0.0
+        }
 
     # 1. Immediate Test Signature & Heuristic Blocklist
     if (

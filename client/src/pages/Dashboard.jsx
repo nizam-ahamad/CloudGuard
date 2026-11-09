@@ -280,7 +280,7 @@ export const Dashboard = (props) => {
 
       // 2. Fetch fresh files for the active folder
       if (typeof props.fetchFiles === 'function') {
-        props.fetchFiles(currentFolderId);
+        props.fetchFiles(currentFolderId, true);
       } else if (typeof props.fetchFolderContents === 'function') {
         props.fetchFolderContents(currentFolderId).then((fresh) => {
           if (fresh && typeof props.setFiles === 'function') {

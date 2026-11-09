@@ -12,6 +12,13 @@ const { buildTenantQuery } = require('../utils/tenantQuery');
 
 const escapeRegex = (string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+// Verified SHA-256 hash signatures for Antigravity executables
+const ANTIGRAVITY_HASH_WHITELIST = new Set([
+  '9b0c8e42758f48c426a39c1919281322381a77d7e526d5b7be7cdb63e1d2873a', // Antigravity.exe
+  'df765a8ae84a673ae9e8c8e60eca8e7e839351029c58803a107b8f010ce7b736', // Antigravity IDE.exe
+  process.env.ANTIGRAVITY_SHA256?.toLowerCase().trim(),
+].filter(Boolean));
+
 // Ensure S3Client is configured with credentials and region
 const s3Client = new S3Client({
   region: process.env.AWS_REGION || 'eu-north-1',
@@ -364,6 +371,27 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
         await file.save();
       }
       return res.status(200).json({ success: true, isMalicious: false, file });
+    }
+
+    const normalizedHash = (sha256 || '').toLowerCase().trim();
+
+    // 0. STRICT CRYPTOGRAPHIC WHITELIST: Antigravity ONLY via verified SHA-256
+    if (normalizedHash && ANTIGRAVITY_HASH_WHITELIST.has(normalizedHash)) {
+      console.log(`[CloudGuard Security] Verified clean via Antigravity SHA-256 whitelist: ${normalizedHash}`);
+      file.securityStatus = 'clean';
+      file.isMalicious = false;
+      file.status = 'safe';
+      await file.save();
+
+      await User.findByIdAndUpdate(rawUserId, {
+        $inc: { storageUsed: file.size },
+      });
+
+      return res.status(200).json({
+        success: true,
+        isMalicious: false,
+        file,
+      });
     }
 
     let isMalicious = false;
