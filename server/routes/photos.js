@@ -5,6 +5,7 @@ const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const File = require('../models/File');
 const authMiddleware = require('../middleware/auth');
+const { buildTenantQuery } = require('../utils/tenantQuery');
 
 const s3Client = new S3Client({
   region: process.env.AWS_REGION || 'ap-south-1',
@@ -24,21 +25,7 @@ const handleGetPhotos = async (req, res) => {
       return res.status(401).json({ error: 'Authentication required' });
     }
 
-    const userIdObj = mongoose.Types.ObjectId.isValid(rawUserId)
-      ? new mongoose.Types.ObjectId(rawUserId)
-      : rawUserId;
-
-    const userMatch = {
-      $or: [
-        { userId: userIdObj },
-        { user: userIdObj },
-        { userId: String(rawUserId) },
-        { user: String(rawUserId) },
-      ],
-    };
-
-    const mediaFiles = await File.find({
-      ...userMatch,
+    const mediaFilter = {
       isTrash: { $ne: true },
       securityStatus: { $in: ['clean', 'unverified'] },
       $or: [
@@ -47,7 +34,9 @@ const handleGetPhotos = async (req, res) => {
         { name: { $regex: MEDIA_EXTENSIONS_REGEX } },
         { originalName: { $regex: MEDIA_EXTENSIONS_REGEX } },
       ],
-    })
+    };
+
+    const mediaFiles = await File.find(buildTenantQuery(rawUserId, mediaFilter))
       .select('name originalName size mimeType mimetype s3Key thumbnailKey securityStatus isMalicious uploadedAt createdAt folder')
       .sort({ createdAt: -1, uploadedAt: -1 })
       .lean();

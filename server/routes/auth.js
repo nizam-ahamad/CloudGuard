@@ -6,6 +6,7 @@ const jwt = require('jsonwebtoken');
 const { OAuth2Client } = require('google-auth-library');
 const User = require('../models/User');
 const { sendNotificationEmail } = require('../utils/emailService');
+const { authLimiter, otpLimiter } = require('../middleware/rateLimiter');
 
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
@@ -17,7 +18,7 @@ const verifyToken = async (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1] || req.query.token;
   if (!token) return res.status(401).json({ error: 'Access denied. Please log in.' });
   try {
-    const verified = jwt.verify(token, process.env.JWT_SECRET);
+    const verified = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
     req.user = verified;
     next();
   } catch (err) {
@@ -115,7 +116,7 @@ router.post('/google', async (req, res) => {
 // ==========================================
 // 2. EMAIL SIGNUP -> SENDS ACTIVATION OTP
 // ==========================================
-router.post('/register', async (req, res) => {
+router.post('/register', authLimiter, async (req, res) => {
   try {
     const { name, email, password } = req.body;
     if (!name || !email || !password) return res.status(400).json({ error: 'All fields are required' });
@@ -193,7 +194,7 @@ router.post('/register', async (req, res) => {
 // ==========================================
 // 3. VERIFY ACTIVATION OTP -> WELCOME EMAIL
 // ==========================================
-router.post('/verify-activation-otp', async (req, res) => {
+router.post('/verify-activation-otp', otpLimiter, async (req, res) => {
   try {
     const { email, otp } = req.body;
     if (!email || !otp) {
@@ -239,7 +240,7 @@ router.post('/verify-activation-otp', async (req, res) => {
 });
 
 // Alias: /verify-otp (supports both reset code validation and activation verification)
-router.post('/verify-otp', async (req, res) => {
+router.post('/verify-otp', otpLimiter, async (req, res) => {
   try {
     const { email, otp, type } = req.body;
     if (!email || !otp) return res.status(400).json({ error: 'Email and OTP are required' });
@@ -293,7 +294,7 @@ router.post('/verify-otp', async (req, res) => {
 });
 
 // Resend OTP endpoint
-router.post('/resend-otp', async (req, res) => {
+router.post('/resend-otp', otpLimiter, async (req, res) => {
   try {
     const { email, type } = req.body;
     if (!email) return res.status(400).json({ error: 'Email is required' });
@@ -328,7 +329,7 @@ router.post('/resend-otp', async (req, res) => {
 // ==========================================
 // 4. MANUAL LOGIN CHECK VERIFICATION
 // ==========================================
-router.post('/login', async (req, res) => {
+router.post('/login', authLimiter, async (req, res) => {
   try {
     const { email, password } = req.body;
 
@@ -418,7 +419,7 @@ router.post('/login', async (req, res) => {
 // ==========================================
 // 5. FORGOT PASSWORD -> SENDS RESET OTP
 // ==========================================
-router.post('/forgot-password', async (req, res) => {
+router.post('/forgot-password', otpLimiter, async (req, res) => {
   try {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: 'Email is required' });
@@ -455,7 +456,7 @@ router.post('/forgot-password', async (req, res) => {
 // ==========================================
 // 6. RESET PASSWORD WITH OTP (POST /reset-password)
 // ==========================================
-router.post('/reset-password', async (req, res) => {
+router.post('/reset-password', otpLimiter, async (req, res) => {
   try {
     const { email, otp, newPassword } = req.body;
     if (!email || !otp || !newPassword) {
@@ -497,7 +498,7 @@ router.post('/reset-password', async (req, res) => {
 });
 
 // PUT /reset-password/:token (for component compatibility)
-router.put('/reset-password/:token', async (req, res) => {
+router.put('/reset-password/:token', otpLimiter, async (req, res) => {
   try {
     const token = req.params.token;
     const { password, email } = req.body;

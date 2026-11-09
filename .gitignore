@@ -29,3 +29,6 @@ credentials.json
 *API.txt
 *secret*
 malware_history.txt
+
+# Security: Local user backups
+server/data/

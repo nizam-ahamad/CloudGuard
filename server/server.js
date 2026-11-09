@@ -21,6 +21,7 @@ const crypto = require('crypto');
 const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand, ListObjectsV2Command, DeleteObjectsCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { buildTenantQuery } = require('./utils/tenantQuery');
+const { apiLimiter } = require('./middleware/rateLimiter');
 
 // Multer in-memory storage configuration (prevent EC2 disk space exhaustion)
 const multer = require('multer');
@@ -36,6 +37,9 @@ const WHITELISTED_HASHES = [
 
 const app = express();
 
+// Trust first proxy hop (Nginx reverse proxy on EC2 / Vercel rewrite)
+app.set('trust proxy', 1);
+
 // Disable 304 Not Modified generation
 app.set('etag', false);
 
@@ -48,7 +52,20 @@ app.use('/api', (req, res, next) => {
   next();
 });
 
+// Baseline API rate limiter to protect against DDoS and aggressive scraping
+app.use('/api', apiLimiter);
+
 const JWT_SECRET = process.env.JWT_SECRET;
+
+const helmet = require('helmet');
+
+// Security Headers (Configured to permit cross-origin S3 thumbnails and Vercel proxying)
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    crossOriginEmbedderPolicy: false,
+  })
+);
 
 // Configure CORS for Vite frontend
 app.use(cors({
@@ -2223,11 +2240,15 @@ const handleServerBatchDelete = async (req, res) => {
       );
       await FileModel.updateMany(
         {
-          $or: [
-            { folder: { $in: folderIds } },
-            { folderId: { $in: folderIds } },
+          $and: [
+            userMatch,
+            {
+              $or: [
+                { folder: { $in: folderIds } },
+                { folderId: { $in: folderIds } },
+              ],
+            },
           ],
-          ...userMatch,
         },
         { $set: { isTrash: true, trashedAt: new Date() } }
       );
@@ -2278,11 +2299,15 @@ const handleServerBatchRestore = async (req, res) => {
       );
       await FileModel.updateMany(
         {
-          $or: [
-            { folder: { $in: folderIds } },
-            { folderId: { $in: folderIds } },
+          $and: [
+            userMatch,
+            {
+              $or: [
+                { folder: { $in: folderIds } },
+                { folderId: { $in: folderIds } },
+              ],
+            },
           ],
-          ...userMatch,
         },
         { $set: { isTrash: false, trashedAt: null } }
       );
@@ -2300,6 +2325,20 @@ const handleServerBatchRestore = async (req, res) => {
 
 app.post(['/api/files/restore-batch', '/api/files/batch-restore', '/api/folders/restore-batch', '/api/folders/batch-restore'], verifyToken, handleServerBatchRestore);
 
+
+// Centralized Global Error Handler
+app.use((err, req, res, next) => {
+  console.error('Unhandled Application Error:', err.message);
+  if (res.headersSent) {
+    return next(err);
+  }
+  const isProd = process.env.NODE_ENV === 'production';
+  res.status(err.status || 500).json({
+    success: false,
+    error: isProd ? 'Internal server error. Please try again later.' : err.message,
+    ...(isProd ? {} : { stack: err.stack }),
+  });
+});
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, '0.0.0.0', () => {

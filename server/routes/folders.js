@@ -26,6 +26,15 @@ router.post('/', authMiddleware, async (req, res) => {
         ? new mongoose.Types.ObjectId(parentId)
         : null;
 
+    if (parent) {
+      const parentFolder = await Folder.findOne(
+        buildTenantQuery(rawUserId, { _id: parent, isTrash: { $ne: true } })
+      );
+      if (!parentFolder) {
+        return res.status(404).json({ success: false, error: 'Target parent folder not found or unauthorized' });
+      }
+    }
+
     // Query strictly for ACTIVE (non-trashed) folders with the same name in this directory
     const duplicateQuery = buildTenantQuery(rawUserId, {
       parentId: parent || null,
@@ -393,13 +402,17 @@ async function getDescendantFolderIds(folderId, userMatch) {
     const stringIds = currentLevelIds.map((id) => String(id));
 
     const children = await Folder.find({
-      isTrash: { $ne: true },
-      ...userMatch,
-      $or: [
-        { parentId: { $in: objectIds } },
-        { parentFolder: { $in: objectIds } },
-        { parentId: { $in: stringIds } },
-        { parentFolder: { $in: stringIds } },
+      $and: [
+        userMatch,
+        {
+          isTrash: { $ne: true },
+          $or: [
+            { parentId: { $in: objectIds } },
+            { parentFolder: { $in: objectIds } },
+            { parentId: { $in: stringIds } },
+            { parentFolder: { $in: stringIds } },
+          ],
+        },
       ],
     })
       .select('_id')
@@ -459,13 +472,17 @@ const handleFolderDetails = async (req, res) => {
 
     // 1. Direct Immediate Subfolder Count (Only 1 level down)
     const directFolderCount = await Folder.countDocuments({
-      isTrash: { $ne: true },
-      ...userMatch,
-      $or: [
-        { parentId: folderObjectId },
-        { parentFolder: folderObjectId },
-        { parentId: folderId },
-        { parentFolder: folderId },
+      $and: [
+        userMatch,
+        {
+          isTrash: { $ne: true },
+          $or: [
+            { parentId: folderObjectId },
+            { parentFolder: folderObjectId },
+            { parentId: folderId },
+            { parentFolder: folderId },
+          ],
+        },
       ],
     });
 

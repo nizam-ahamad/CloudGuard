@@ -3,12 +3,14 @@ const router = express.Router();
 const crypto = require('crypto');
 const axios = require('axios');
 const mongoose = require('mongoose');
-const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const User = require('../models/User');
 const File = require('../models/File');
 const Folder = require('../models/Folder');
 const { buildTenantQuery } = require('../utils/tenantQuery');
+
+const escapeRegex = (string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // Ensure S3Client is configured with credentials and region
 const s3Client = new S3Client({
@@ -20,19 +22,7 @@ const s3Client = new S3Client({
 });
 
 // Auth Middleware for modular files route
-const authMiddleware = (req, res, next) => {
-  if (req.user) return next();
-  const token = req.headers.authorization?.split(' ')[1] || req.query.token;
-  if (!token) return res.status(401).json({ error: 'Access denied. Please log in.' });
-  try {
-    const jwt = require('jsonwebtoken');
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'cloudguard-super-secret-jwt-key-2024');
-    req.user = decoded;
-    next();
-  } catch (err) {
-    return res.status(401).json({ error: 'Invalid or expired token.' });
-  }
-};
+const authMiddleware = require('../middleware/auth');
 
 // Helper for direct Node-level MalwareBazaar check
 async function checkMalwareBazaarNode(sha256) {
@@ -142,7 +132,7 @@ router.get('/', authMiddleware, async (req, res) => {
 
     const targetFolderId = req.query.folderId || req.query.folder || null;
     const isRecent = req.query.recent === 'true';
-    const searchQuery = req.query.search || '';
+    const searchQuery = (req.query.search || '').trim();
 
     const query = {
       $or: [{ userId: userId }, { user: userId }],
@@ -151,11 +141,12 @@ router.get('/', authMiddleware, async (req, res) => {
     };
 
     if (searchQuery) {
+      const safeSearch = escapeRegex(searchQuery);
       query.$and = [
         {
           $or: [
-            { name: { $regex: searchQuery, $options: 'i' } },
-            { originalName: { $regex: searchQuery, $options: 'i' } }
+            { name: { $regex: safeSearch, $options: 'i' } },
+            { originalName: { $regex: safeSearch, $options: 'i' } }
           ],
         },
       ];
@@ -315,6 +306,34 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
 
     const file = await File.findOne(buildTenantQuery(rawUserId, { _id: fileId }));
     if (!file) return res.status(404).json({ error: 'File record not found' });
+
+    const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
+
+    let actualBytes;
+    try {
+      const headResult = await s3Client.send(
+        new HeadObjectCommand({
+          Bucket: bucket,
+          Key: file.s3Key,
+        })
+      );
+      actualBytes = headResult.ContentLength;
+    } catch (headErr) {
+      console.error('[S3 HeadObject Error]:', headErr.message);
+      return res.status(400).json({ success: false, error: 'Uploaded object not found in storage.' });
+    }
+
+    // Enforce storage quota against actual S3 bytes
+    const user = await User.findById(rawUserId);
+    if (user && user.storageUsed + actualBytes > user.storageLimit) {
+      try {
+        await s3Client.send(new DeleteObjectCommand({ Bucket: bucket, Key: file.s3Key }));
+      } catch (delErr) {}
+      await File.deleteOne({ _id: file._id });
+      return res.status(403).json({ success: false, error: 'Storage limit exceeded by uploaded file.' });
+    }
+
+    file.size = actualBytes;
 
     if (thumbnail && typeof thumbnail === 'string' && thumbnail.startsWith('data:image/')) {
       try {
@@ -881,7 +900,8 @@ router.get('/:id/download-url', authMiddleware, async (req, res) => {
 // -------------------------------------------------------------
 const handleFileMove = async (req, res) => {
   try {
-    const userId = req.user.id || req.user._id;
+    const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
+    const userId = rawUserId;
     const userMatch = mongoose.Types.ObjectId.isValid(userId)
       ? { $in: [String(userId), new mongoose.Types.ObjectId(userId)] }
       : String(userId);
@@ -889,6 +909,15 @@ const handleFileMove = async (req, res) => {
     const { folderId, folder, parentId, targetFolderId } = req.body;
     const rawTarget = folderId !== undefined ? folderId : (folder !== undefined ? folder : (parentId !== undefined ? parentId : targetFolderId));
     const targetParentId = !rawTarget || rawTarget === 'null' || rawTarget === 'undefined' || rawTarget === 'root' ? null : rawTarget;
+
+    if (targetParentId) {
+      const destFolder = await Folder.findOne(
+        buildTenantQuery(rawUserId, { _id: targetParentId, isTrash: { $ne: true } })
+      );
+      if (!destFolder) {
+        return res.status(404).json({ success: false, error: 'Destination folder not found or unauthorized' });
+      }
+    }
 
     const file = await File.findOne({
       _id: req.params.id,
@@ -933,6 +962,14 @@ const handleFolderRenameInFiles = async (req, res) => {
       const targetParentId = dest === 'null' || dest === 'root' || !dest ? null : dest;
       if (id === targetParentId) {
         return res.status(400).json({ error: 'Cannot move a folder into itself' });
+      }
+      if (targetParentId) {
+        const destFolder = await Folder.findOne(
+          buildTenantQuery(userId, { _id: targetParentId, isTrash: { $ne: true } })
+        );
+        if (!destFolder) {
+          return res.status(404).json({ success: false, error: 'Destination folder not found or unauthorized' });
+        }
       }
       const targetFolder = await Folder.findOne({ _id: id, $or: [{ userId: userMatch }, { user: userMatch }] });
       if (!targetFolder) return res.status(404).json({ error: 'Folder not found' });
@@ -982,8 +1019,8 @@ const handleFolderRenameInFiles = async (req, res) => {
   }
 };
 
-router.put('/folder/:id', handleFolderRenameInFiles);
-router.patch('/folder/:id', handleFolderRenameInFiles);
+router.put('/folder/:id', authMiddleware, handleFolderRenameInFiles);
+router.patch('/folder/:id', authMiddleware, handleFolderRenameInFiles);
 
 // Mount Universal Batch Move on files router for route path compatibility
 router.post('/move-batch', authMiddleware, (req, res, next) => require('./folders').handleBatchMove(req, res, next));
