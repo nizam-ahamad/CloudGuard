@@ -133,18 +133,18 @@ async function autoRecoverVaultData() {
   }
 }
 
-// Connect to MongoDB
+// Scaled Connection Pool for High Concurrency
 let isDbConnected = false;
 const mongoURI = process.env.MONGO_URI || 'mongodb://localhost:27017/cloudguard';
 console.log("[DB] MONGO_URI loaded:", !!process.env.MONGO_URI);
 mongoose.connect(mongoURI, {
-  maxPoolSize: 20,
-  minPoolSize: 5,
-  serverSelectionTimeoutMS: 5000,
-  connectTimeoutMS: 10000
+  maxPoolSize: 100,                 // Scales connection pool from 20 to 100 concurrent sockets
+  minPoolSize: 10,                  // Keeps 10 warm connections ready for instant execution
+  serverSelectionTimeoutMS: 5000,   // Fail-fast timeout (5s) to prevent hanging requests
+  socketTimeoutMS: 45000,           // Drops dead sockets after 45s of inactivity
 })
   .then(async () => {
-    console.log('Connected to MongoDB');
+    console.log('[CloudGuard] Connected to MongoDB (Pool Size: 100)');
     isDbConnected = true;
     
     // DB Cleanup: Clear pending files from earlier crashes

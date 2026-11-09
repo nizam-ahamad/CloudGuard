@@ -3,7 +3,6 @@ require('dotenv').config({ path: require('path').resolve(__dirname, '../.env') }
 const autocannon = require('autocannon');
 const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
-const File = require('../models/File');
 
 const API_PORT = process.env.PORT || 5000;
 const BASE_URL = `http://localhost:${API_PORT}`;
@@ -31,24 +30,24 @@ async function runScenario(name, config) {
 
       const totalRequests = (result['2xx'] || 0) + (result['4xx'] || 0) + (result['5xx'] || 0);
       const success2xx = result['2xx'] || 0;
-      const rateLimited4xx = result['4xx'] || 0;
+      const rejections4xx = result['4xx'] || 0;
       const serverErrors5xx = result['5xx'] || 0;
-      const rps = (result.requests && typeof result.requests.average === 'number') ? result.requests.average : 0;
-      const avgLatency = (result.latency && typeof result.latency.average === 'number') ? result.latency.average : 0;
-      const p95Latency = (result.latency && (result.latency.p95 || result.latency.p97_5 || result.latency.average)) || 0;
-      const p99Latency = (result.latency && (result.latency.p99 || result.latency.average)) || 0;
-      const throughputMB = (result.throughput && typeof result.throughput.average === 'number') ? (result.throughput.average / 1024 / 1024).toFixed(2) : '0.00';
+      const rps = (result.requests?.average || result.requests?.mean || 0);
+      const avgLatency = (result.latency?.average || result.latency?.mean || 0);
+      const p95Latency = (result.latency?.p95 || result.latency?.p97_5 || 0);
+      const p99Latency = (result.latency?.p99 || 0);
+      const throughputMB = ((result.throughput?.average || 0) / 1024 / 1024).toFixed(2);
       const successRate = totalRequests > 0 ? ((success2xx / totalRequests) * 100).toFixed(1) + '%' : '0.0%';
 
       console.log(`\n--- ${name} Results ---`);
       console.log(`* Total Requests Completed: ${totalRequests}`);
       console.log(`* 2xx Successes          : ${success2xx}`);
-      console.log(`* 4xx Rejections (429/400): ${rateLimited4xx}`);
+      console.log(`* 4xx Rejections         : ${rejections4xx}`);
       console.log(`* 5xx Server Errors      : ${serverErrors5xx}`);
-      console.log(`* Req / Second (Average) : ${rps}`);
-      console.log(`* Latency (Average)      : ${typeof avgLatency === 'number' ? avgLatency.toFixed(1) : avgLatency} ms`);
-      console.log(`* Latency (p95/p97.5)    : ${typeof p95Latency === 'number' ? p95Latency.toFixed(1) : p95Latency} ms`);
-      console.log(`* Latency (p99)          : ${typeof p99Latency === 'number' ? p99Latency.toFixed(1) : p99Latency} ms`);
+      console.log(`* Req / Second (Average) : ${typeof rps === 'number' ? rps.toFixed(2) : rps}`);
+      console.log(`* Latency (Average)      : ${typeof avgLatency === 'number' ? avgLatency.toFixed(2) : avgLatency} ms`);
+      console.log(`* Latency (p95/p97.5)    : ${typeof p95Latency === 'number' ? p95Latency.toFixed(2) : p95Latency} ms`);
+      console.log(`* Latency (p99)          : ${typeof p99Latency === 'number' ? p99Latency.toFixed(2) : p99Latency} ms`);
       console.log(`* Throughput (Bytes/sec) : ${throughputMB} MB/s`);
 
       summaryResults.push({
@@ -61,7 +60,7 @@ async function runScenario(name, config) {
         p99Latency: `${typeof p99Latency === 'number' ? p99Latency.toFixed(1) : p99Latency} ms`,
         successRate,
         success2xx,
-        rateLimited4xx,
+        rejections4xx,
         serverErrors5xx,
       });
 
@@ -72,104 +71,116 @@ async function runScenario(name, config) {
   });
 }
 
+async function cleanupBenchmarkArtifacts() {
+  try {
+    const mongoUri = process.env.MONGO_URI || process.env.MONGODB_URI;
+    if (!mongoUri) return;
+
+    await mongoose.connect(mongoUri);
+    const File = mongoose.models.File || require('../models/File');
+    const deleteResult = await File.deleteMany({
+      name: { $regex: /^benchmark_/i },
+    });
+    console.log(`[Cleanup] Purged ${deleteResult.deletedCount} temporary benchmark records from MongoDB.`);
+    await mongoose.disconnect();
+  } catch (err) {
+    console.warn('[Cleanup Notice]:', err.message);
+  }
+}
+
 async function runAllLoadTests() {
   try {
-    // Scenario 1: Authenticated Read Throughput (Concurrency & DB Connection Pool)
-    // Uses distinct client IPs via setupClient so connections simulate distributed users
-    let clientCounter = 0;
-    await runScenario('1. Vault Read Throughput (GET /api/files)', {
+    // 1. Vault Read Throughput at Scale (50 concurrent connections)
+    let clientCounter1 = 0;
+    await runScenario('1. Vault Read Throughput (50 Concurrency)', {
       url: `${BASE_URL}/api/files`,
-      connections: 20,
+      connections: 50,
       duration: 15,
       headers: {
         Authorization: `Bearer ${testToken}`,
       },
       setupClient: (client) => {
-        clientCounter++;
+        clientCounter1++;
         client.setHeaders({
           Authorization: `Bearer ${testToken}`,
-          'X-Forwarded-For': `10.200.1.${clientCounter % 250}`,
+          'X-Forwarded-For': `10.150.1.${clientCounter1 % 250}`,
         });
       },
     });
 
-    // Scenario 2: Global Rate Limiter & Proxy Saturation (429 Enforcement)
-    // Floods all 50 connections under a single client IP to saturate the 300 req/15m limit
-    await runScenario('2. Rate-Limiting Burst Saturation (GET /api/folders)', {
-      url: `${BASE_URL}/api/folders`,
-      connections: 50,
-      duration: 10,
+    // 2. Maximum Pool Saturation Test (100 concurrent connections)
+    let clientCounter2 = 0;
+    await runScenario('2. Pool Saturation Test (100 Concurrency)', {
+      url: `${BASE_URL}/api/files`,
+      connections: 100,
+      duration: 15,
       headers: {
         Authorization: `Bearer ${testToken}`,
-        'X-Forwarded-For': '198.51.100.42',
+      },
+      setupClient: (client) => {
+        clientCounter2++;
+        client.setHeaders({
+          Authorization: `Bearer ${testToken}`,
+          'X-Forwarded-For': `10.150.2.${clientCounter2 % 250}`,
+        });
       },
     });
 
-    // Scenario 3: Presigned URL Generation Pipeline (S3 SDK HMAC & DB Throughput)
-    let presignClientCounter = 0;
-    await runScenario('3. Presigned URL Pipeline (POST /api/files/presigned-url)', {
+    // 3. Presigned URL Generation Pipeline (25 concurrent connections)
+    let clientCounter3 = 0;
+    await runScenario('3. Presigned URL Pipeline (25 Concurrency)', {
       url: `${BASE_URL}/api/files/presigned-url`,
       method: 'POST',
-      connections: 10,
+      connections: 25,
       duration: 10,
       headers: {
-        'Content-Type': 'application/json',
         Authorization: `Bearer ${testToken}`,
+        'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        fileName: 'loadtest_temp_file.bin',
-        fileSize: 1024,
+        fileName: 'benchmark_loadtest.dat',
+        fileSize: 1048576,
         mimeType: 'application/octet-stream',
       }),
       setupClient: (client) => {
-        presignClientCounter++;
+        clientCounter3++;
         client.setHeaders({
-          'Content-Type': 'application/json',
           Authorization: `Bearer ${testToken}`,
-          'X-Forwarded-For': `10.201.2.${presignClientCounter % 250}`,
+          'Content-Type': 'application/json',
+          'X-Forwarded-For': `10.150.3.${clientCounter3 % 250}`,
         });
       },
     });
 
-    // Scenario 4: AI Microservice Direct Stress Test (:8000)
-    await runScenario('4. AI Microservice Scan Throughput (POST /scan)', {
+    // 4. AI Microservice High Concurrency Stress Test (:8000)
+    await runScenario('4. AI Microservice Stress Test (30 Concurrency)', {
       url: `${AI_URL}/scan`,
       method: 'POST',
-      connections: 15,
+      connections: 30,
       duration: 10,
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        fileName: 'benchmark_file.exe',
+        fileName: 'benchmark_binary.exe',
         sha256: 'df765a8ae84a673ae9e8c8e60eca8e7e839351029c58803a107b8f010ce7b736',
       }),
     });
 
-    // Post-Test Non-Destructive Cleanup: Purge any temporary benchmark entries
-    if (process.env.MONGO_URI) {
-      try {
-        console.log('\n[Cleanup] Connecting to database to purge temporary benchmark records...');
-        await mongoose.connect(process.env.MONGO_URI);
-        const delRes = await File.deleteMany({ name: 'loadtest_temp_file.bin' });
-        console.log(`[Cleanup] Successfully purged ${delRes.deletedCount} temporary load-test file records.`);
-        await mongoose.disconnect();
-      } catch (cleanErr) {
-        console.warn('[Cleanup Notice]:', cleanErr.message);
-      }
-    }
+    await cleanupBenchmarkArtifacts();
 
     console.log('\n========================================================================================');
-    console.log('                          FINAL LOAD TEST BENCHMARK SUMMARY                             ');
+    console.log('              POST-ADJUSTMENT LOAD TEST BENCHMARK SUMMARY (POOL: 100)                   ');
     console.log('========================================================================================');
     console.table(summaryResults);
 
+    console.log('\nAll post-adjustment load testing scenarios completed successfully.');
     process.exit(0);
   } catch (err) {
     console.error('Load testing execution error:', err);
+    await cleanupBenchmarkArtifacts();
     process.exit(1);
   }
 }
 
 runAllLoadTests();
-
