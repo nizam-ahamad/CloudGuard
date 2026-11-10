@@ -735,7 +735,7 @@ app.post('/api/presign', verifyToken, async (req, res) => {
     if (!filename) return res.status(400).json({ error: 'Filename is required' });
 
     const userId = req.user?._id || req.user?.id || req.userId || 'anonymous';
-    const fileKey = `${userId}/${Date.now()}-${filename}`;
+    const fileKey = `uploads/${userId}/${Date.now()}-${filename}`;
     
     const command = new PutObjectCommand({
       Bucket: process.env.AWS_BUCKET_NAME,

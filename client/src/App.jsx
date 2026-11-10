@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Routes, Route, Navigate, useSearchParams, useLocation, useNavigate, NavLink } from 'react-router-dom';
+import { Routes, Route, Navigate, useSearchParams, useLocation, useNavigate, NavLink, Link } from 'react-router-dom';
 import axios from 'axios';
 import ResetPassword from './ResetPassword';
 import CloudGuardLogo from './CloudGuardLogo';
@@ -2352,6 +2352,90 @@ function App() {
               addToast={addToast} 
               onClose={handleCloseSettings} 
             />
+
+            {/* Legal & Policies Card */}
+            <div className="bg-white dark:bg-[#141414] border border-neutral-200 dark:border-[#262626] rounded-xl p-6 transition-colors shadow-sm dark:shadow-none">
+              <div className="mb-4">
+                <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-100">
+                  Legal & Policies
+                </h3>
+                <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+                  Review our terms of service, privacy disclosures, and subscription policies.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <Link className="flex items-center justify-between p-3 rounded-lg border border-neutral-200/80 dark:border-[#222222] bg-neutral-50/50 dark:bg-[#0d0d0d] hover:bg-neutral-100 dark:hover:bg-[#181818] transition-colors group" to="/pricing">
+                  <div>
+                    <div className="text-xs font-medium text-neutral-800 dark:text-neutral-200 group-hover:text-cyan-600 dark:group-hover:text-cyan-400 transition-colors">
+                      Subscription & Pricing
+                    </div>
+                    <div className="text-[11px] text-neutral-400 dark:text-neutral-500">
+                      Storage quotas & upgrade tiers
+                    </div>
+                  </div>
+                  <span className="text-neutral-400 dark:text-neutral-500 group-hover:translate-x-0.5 transition-transform text-xs">
+                    →
+                  </span>
+                </Link>
+
+                <Link className="flex items-center justify-between p-3 rounded-lg border border-neutral-200/80 dark:border-[#222222] bg-neutral-50/50 dark:bg-[#0d0d0d] hover:bg-neutral-100 dark:hover:bg-[#181818] transition-colors group" to="/terms">
+                  <div>
+                    <div className="text-xs font-medium text-neutral-800 dark:text-neutral-200 group-hover:text-cyan-600 dark:group-hover:text-cyan-400 transition-colors">
+                      Terms of Service
+                    </div>
+                    <div className="text-[11px] text-neutral-400 dark:text-neutral-500">
+                      Usage terms & Zero-Parking policy
+                    </div>
+                  </div>
+                  <span className="text-neutral-400 dark:text-neutral-500 group-hover:translate-x-0.5 transition-transform text-xs">
+                    →
+                  </span>
+                </Link>
+
+                <Link className="flex items-center justify-between p-3 rounded-lg border border-neutral-200/80 dark:border-[#222222] bg-neutral-50/50 dark:bg-[#0d0d0d] hover:bg-neutral-100 dark:hover:bg-[#181818] transition-colors group" to="/privacy">
+                  <div>
+                    <div className="text-xs font-medium text-neutral-800 dark:text-neutral-200 group-hover:text-cyan-600 dark:group-hover:text-cyan-400 transition-colors">
+                      Privacy Policy
+                    </div>
+                    <div className="text-[11px] text-neutral-400 dark:text-neutral-500">
+                      DPDP Act compliance & data erasure
+                    </div>
+                  </div>
+                  <span className="text-neutral-400 dark:text-neutral-500 group-hover:translate-x-0.5 transition-transform text-xs">
+                    →
+                  </span>
+                </Link>
+
+                <Link className="flex items-center justify-between p-3 rounded-lg border border-neutral-200/80 dark:border-[#222222] bg-neutral-50/50 dark:bg-[#0d0d0d] hover:bg-neutral-100 dark:hover:bg-[#181818] transition-colors group" to="/refund-policy">
+                  <div>
+                    <div className="text-xs font-medium text-neutral-800 dark:text-neutral-200 group-hover:text-cyan-600 dark:group-hover:text-cyan-400 transition-colors">
+                      Refund Policy
+                    </div>
+                    <div className="text-[11px] text-neutral-400 dark:text-neutral-500">
+                      5–7 day settlement & cancellations
+                    </div>
+                  </div>
+                  <span className="text-neutral-400 dark:text-neutral-500 group-hover:translate-x-0.5 transition-transform text-xs">
+                    →
+                  </span>
+                </Link>
+
+                <Link className="sm:col-span-2 flex items-center justify-between p-3 rounded-lg border border-neutral-200/80 dark:border-[#222222] bg-neutral-50/50 dark:bg-[#0d0d0d] hover:bg-neutral-100 dark:hover:bg-[#181818] transition-colors group" to="/contact">
+                  <div>
+                    <div className="text-xs font-medium text-neutral-800 dark:text-neutral-200 group-hover:text-cyan-600 dark:group-hover:text-cyan-400 transition-colors">
+                      Contact Support & Grievances
+                    </div>
+                    <div className="text-[11px] text-neutral-400 dark:text-neutral-500">
+                      support@cloudguard.site • Shaktifarm, Uttarakhand
+                    </div>
+                  </div>
+                  <span className="text-neutral-400 dark:text-neutral-500 group-hover:translate-x-0.5 transition-transform text-xs">
+                    →
+                  </span>
+                </Link>
+              </div>
+            </div>
 
             <div className="border border-red-200 dark:border-red-500/50 bg-red-50/50 dark:bg-transparent px-6 py-4 dark:text-red-200 shadow-sm dark:shadow-none">
               <h3 className="font-title-md text-error dark:text-red-200 mb-2">Danger Zone</h3>

@@ -5,7 +5,6 @@ import {
   Mail, 
   MapPin, 
   Clock, 
-  Phone, 
   ShieldCheck, 
   Building2, 
   FileText 
@@ -52,7 +51,7 @@ export default function ContactUs() {
             Contact &amp; Corporate Details
           </h1>
           <p className="text-sm sm:text-base text-neutral-400 leading-relaxed">
-            Reach our customer operations desk, grievance redressal officer, or verify our legal merchant registration.
+            Reach our customer operations desk, grievance redressal officer, or corporate office.
           </p>
         </div>
 
@@ -110,27 +109,23 @@ export default function ContactUs() {
             </div>
           </div>
 
-          {/* Business Hours & Helpline */}
+          {/* Business Hours */}
           <div className="bg-[#141414] border border-[#262626] rounded-2xl p-6 lg:p-8 space-y-4">
             <div className="w-10 h-10 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400">
               <Clock size={20} />
             </div>
             <div>
               <span className="text-xs font-mono uppercase text-neutral-500 tracking-wider">Availability</span>
-              <h2 className="text-xl font-bold text-white tracking-tight mt-1">Operating Hours</h2>
+              <h2 className="text-xl font-bold text-white tracking-tight mt-1">Support Desk Hours</h2>
             </div>
             <div className="space-y-3 text-sm text-neutral-300">
               <div className="flex items-center justify-between py-1 border-b border-[#262626]">
-                <span className="text-neutral-400">Support Desk</span>
+                <span className="text-neutral-400">Working Days</span>
                 <span className="font-mono text-white">Monday – Friday</span>
               </div>
-              <div className="flex items-center justify-between py-1 border-b border-[#262626]">
-                <span className="text-neutral-400">Standard Timings</span>
-                <span className="font-mono text-white">9:00 AM – 6:00 PM IST</span>
-              </div>
               <div className="flex items-center justify-between py-1">
-                <span className="text-neutral-400">Helpline</span>
-                <span className="font-mono text-neutral-400">+91-XXXXXXXXXX</span>
+                <span className="text-neutral-400">Operating Hours</span>
+                <span className="font-mono text-white">9:00 AM – 6:00 PM IST</span>
               </div>
             </div>
           </div>
@@ -150,9 +145,6 @@ export default function ContactUs() {
               <p>Shaktifarm, Udham Singh Nagar,</p>
               <p>Uttarakhand - 263151, India</p>
             </div>
-            <p className="text-xs text-neutral-500 pt-2 font-mono">
-              Official merchant registration address for Razorpay &amp; Stripe compliance.
-            </p>
           </div>
         </div>
 
