@@ -419,6 +419,57 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
       }
     }
 
+    // 2.5 EICAR Content Inspection (Fetch initial 1 KB payload from S3)
+    if (!isMalicious && actualBytes > 0) {
+      try {
+        const getCmd = new GetObjectCommand({
+          Bucket: bucket,
+          Key: file.s3Key,
+          ...(actualBytes > 1024 ? { Range: 'bytes=0-1023' } : {}),
+        });
+        const s3Obj = await s3Client.send(getCmd);
+        const streamChunks = [];
+        for await (const chunk of s3Obj.Body) {
+          streamChunks.push(chunk);
+        }
+        const sampleBuffer = Buffer.concat(streamChunks);
+        const sampleText = sampleBuffer.toString('utf8');
+
+        const EICAR_STANDARD_STRING = 'X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*';
+        if (
+          sampleText.includes(EICAR_STANDARD_STRING) ||
+          sampleText.includes('EICAR-STANDARD-ANTIVIRUS-TEST-FILE')
+        ) {
+          console.log(`[CloudGuard Security] Threat intercepted: EICAR content signature detected in ${file.s3Key}`);
+          try {
+            await s3Client.send(new DeleteObjectCommand({
+              Bucket: bucket,
+              Key: file.s3Key,
+            }));
+            if (file.thumbnailKey) {
+              await s3Client.send(new DeleteObjectCommand({
+                Bucket: bucket,
+                Key: file.thumbnailKey,
+              }));
+            }
+          } catch (delErr) {
+            console.error('[S3 Delete Error on EICAR]:', delErr.message);
+          }
+
+          // Permanently remove the database record
+          await File.deleteOne({ _id: file._id });
+
+          return res.status(200).json({
+            success: false,
+            isMalicious: true,
+            message: 'Threat intercepted (EICAR signature). File automatically deleted.',
+          });
+        }
+      } catch (eicarErr) {
+        console.warn('[EICAR Content Check Notice]:', eicarErr.message);
+      }
+    }
+
     // 3. AI Service Deep Scan (Extended 15s timeout for large binaries like AC4BFSP.exe)
     if (!isMalicious) {
       try {
@@ -474,6 +525,15 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
         }
       } catch (delErr) {
         console.error('[S3 Delete Error]:', delErr.message);
+      }
+
+      if (threatReason.toLowerCase().includes('eicar')) {
+        await File.deleteOne({ _id: file._id });
+        return res.status(200).json({
+          success: false,
+          isMalicious: true,
+          message: 'Threat intercepted (EICAR signature). File automatically deleted.',
+        });
       }
 
       file.isMalicious = true;

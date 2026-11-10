@@ -135,17 +135,35 @@ def stream_inspect_pe_headers(s3_key: str) -> dict:
     Fetches only the initial 2MB header range instead of downloading entire binary,
     preventing timeouts and unverified aborts.
     """
-    if not s3_client or not AWS_BUCKET_NAME or not s3_key or not rf_model:
+    if not s3_client or not AWS_BUCKET_NAME or not s3_key:
         return None
 
     try:
-        # Fetch the first 2MB of the binary using HTTP Range request
-        response = s3_client.get_object(
-            Bucket=AWS_BUCKET_NAME,
-            Key=s3_key,
-            Range='bytes=0-2097151'
-        )
+        head_res = s3_client.head_object(Bucket=AWS_BUCKET_NAME, Key=s3_key)
+        total_size = head_res.get('ContentLength', 0)
+
+        if total_size <= 2097152:
+            # File is smaller than 2 MB: fetch full binary without out-of-bounds Range header
+            response = s3_client.get_object(Bucket=AWS_BUCKET_NAME, Key=s3_key)
+        else:
+            # File is larger than 2 MB: stream only the first 2 MB
+            response = s3_client.get_object(
+                Bucket=AWS_BUCKET_NAME,
+                Key=s3_key,
+                Range='bytes=0-2097151'
+            )
         header_bytes = response['Body'].read()
+
+        # Content-level EICAR fallback check
+        if b"EICAR-STANDARD-ANTIVIRUS-TEST-FILE" in header_bytes:
+            return {
+                "status": "malicious",
+                "isMalicious": True,
+                "threatVerdict": "malicious",
+                "reason": "EICAR standard test virus signature detected in payload",
+                "confidenceScore": 1.0
+            }
+
         if not header_bytes or len(header_bytes) < 512:
             return None
 
@@ -241,14 +259,33 @@ async def scan_file(payload: ScanRequest):
     # 3. Stream-Safe PE Header / Random Forest Model Check for Executables
     if (file_name.endswith(".exe") or file_name.endswith(".dll")) and s3_key:
         pe_result = stream_inspect_pe_headers(s3_key)
-        if pe_result and pe_result.get("status") == "malicious":
+        if pe_result and (pe_result.get("status") == "malicious" or pe_result.get("isMalicious")):
             return {
                 "isMalicious": True,
                 "status": "malicious",
                 "threatVerdict": "malicious",
                 "reason": pe_result.get("reason", "Heuristic threat detected in executable headers"),
-                "confidenceScore": pe_result.get("probability", 0.95)
+                "confidenceScore": pe_result.get("probability", pe_result.get("confidenceScore", 0.95))
             }
+    elif s3_key and s3_client and AWS_BUCKET_NAME:
+        try:
+            head_res = s3_client.head_object(Bucket=AWS_BUCKET_NAME, Key=s3_key)
+            total_size = head_res.get('ContentLength', 0)
+            if total_size <= 2097152:
+                resp = s3_client.get_object(Bucket=AWS_BUCKET_NAME, Key=s3_key)
+            else:
+                resp = s3_client.get_object(Bucket=AWS_BUCKET_NAME, Key=s3_key, Range='bytes=0-2097151')
+            content_bytes = resp['Body'].read()
+            if b"EICAR-STANDARD-ANTIVIRUS-TEST-FILE" in content_bytes:
+                return {
+                    "isMalicious": True,
+                    "status": "malicious",
+                    "threatVerdict": "malicious",
+                    "reason": "EICAR standard test virus signature detected in payload",
+                    "confidenceScore": 1.0
+                }
+        except Exception as e:
+            print(f"[AI-Service] Content inspection notice: {e}")
 
     return {
         "isMalicious": False,
