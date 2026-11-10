@@ -31,6 +31,168 @@ const s3Client = new S3Client({
 // Auth Middleware for modular files route
 const authMiddleware = require('../middleware/auth');
 
+// Helper to recursively collect all descendant subfolder IDs
+async function getDescendantFolderIds(folderId, userMatch) {
+  const visited = new Set([String(folderId)]);
+  let currentLevelIds = [folderId];
+  const allDescendants = [];
+
+  while (currentLevelIds.length > 0) {
+    const objectIds = currentLevelIds
+      .filter((id) => mongoose.Types.ObjectId.isValid(String(id)))
+      .map((id) => new mongoose.Types.ObjectId(String(id)));
+    const stringIds = currentLevelIds.map((id) => String(id));
+
+    const children = await Folder.find({
+      $and: [
+        userMatch,
+        {
+          isTrash: { $ne: true },
+          $or: [
+            { parentId: { $in: objectIds } },
+            { parentFolder: { $in: objectIds } },
+            { parentId: { $in: stringIds } },
+            { parentFolder: { $in: stringIds } },
+          ],
+        },
+      ],
+    })
+      .select('_id')
+      .lean();
+
+    const nextLevelIds = [];
+    for (const child of children) {
+      const childIdStr = String(child._id);
+      if (!visited.has(childIdStr)) {
+        visited.add(childIdStr);
+        allDescendants.push(child._id);
+        nextLevelIds.push(child._id);
+      }
+    }
+    currentLevelIds = nextLevelIds;
+  }
+
+  return allDescendants;
+}
+
+// Purge a single file from S3 & DB if not restored
+const scheduleFilePurge = (fileId, rawUserId, delayMs = 12000) => {
+  setTimeout(async () => {
+    try {
+      const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || 'cloudguard-vault-mumbai-2026';
+      const userMatch = { $or: [{ userId: rawUserId }, { user: rawUserId }] };
+      const file = await File.findOne({ _id: fileId, isTrash: true, ...userMatch });
+      if (!file) return; // Restored via Undo or already removed
+
+      if (file.s3Key) {
+        await s3Client.send(new DeleteObjectCommand({
+          Bucket: bucket,
+          Key: file.s3Key,
+        })).catch(e => console.warn(`[S3 Purge Warning] ${e.message}`));
+      }
+      if (file.thumbnailKey) {
+        await s3Client.send(new DeleteObjectCommand({
+          Bucket: bucket,
+          Key: file.thumbnailKey,
+        })).catch(e => console.warn(`[S3 Thumb Purge Warning] ${e.message}`));
+      }
+
+      await File.deleteOne({ _id: file._id });
+      console.log(`[Auto-Purge] Un-restored file "${file.name}" permanently deleted from S3 & DB.`);
+    } catch (err) {
+      console.error('[Deferred File Purge Error]:', err);
+    }
+  }, delayMs);
+};
+
+// Purge batch files & folders from S3 & DB if not restored
+const scheduleBatchPurge = (fileIds = [], folderIds = [], rawUserId, delayMs = 12000) => {
+  setTimeout(async () => {
+    try {
+      const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || 'cloudguard-vault-mumbai-2026';
+      const userMatch = { $or: [{ userId: rawUserId }, { user: rawUserId }] };
+
+      // A. Purge un-restored files
+      if (fileIds.length > 0) {
+        const trashedFiles = await File.find({
+          _id: { $in: fileIds },
+          isTrash: true,
+          ...userMatch,
+        });
+
+        const keys = [];
+        for (const f of trashedFiles) {
+          if (f.s3Key) keys.push({ Key: f.s3Key });
+          if (f.thumbnailKey) keys.push({ Key: f.thumbnailKey });
+        }
+
+        if (keys.length > 0) {
+          for (let i = 0; i < keys.length; i += 1000) {
+            await s3Client.send(new DeleteObjectsCommand({
+              Bucket: bucket,
+              Delete: { Objects: keys.slice(i, i + 1000), Quiet: true },
+            })).catch(e => console.warn(`[S3 Batch Purge Warning] ${e.message}`));
+          }
+        }
+
+        await File.deleteMany({
+          _id: { $in: trashedFiles.map(f => f._id) },
+          ...userMatch,
+        });
+      }
+
+      // B. Purge un-restored folders & their child files
+      if (folderIds.length > 0) {
+        const trashedFolders = await Folder.find({
+          _id: { $in: folderIds },
+          isTrash: true,
+          ...userMatch,
+        });
+
+        if (trashedFolders.length > 0) {
+          const allFolderIds = trashedFolders.map(f => f._id);
+          if (typeof getDescendantFolderIds === 'function') {
+            for (const f of trashedFolders) {
+              const desc = await getDescendantFolderIds(f._id, userMatch);
+              allFolderIds.push(...desc);
+            }
+          }
+
+          const childFiles = await File.find({
+            $or: [{ folder: { $in: allFolderIds } }, { folderId: { $in: allFolderIds } }],
+            isTrash: true,
+            ...userMatch,
+          });
+
+          const childKeys = [];
+          for (const cf of childFiles) {
+            if (cf.s3Key) childKeys.push({ Key: cf.s3Key });
+            if (cf.thumbnailKey) childKeys.push({ Key: cf.thumbnailKey });
+          }
+
+          if (childKeys.length > 0) {
+            for (let i = 0; i < childKeys.length; i += 1000) {
+              await s3Client.send(new DeleteObjectsCommand({
+                Bucket: bucket,
+                Delete: { Objects: childKeys.slice(i, i + 1000), Quiet: true },
+              })).catch(e => console.warn(`[S3 Folder Child Purge Warning] ${e.message}`));
+            }
+          }
+
+          await File.deleteMany({
+            $or: [{ folder: { $in: allFolderIds } }, { folderId: { $in: allFolderIds } }],
+            ...userMatch,
+          });
+
+          await Folder.deleteMany({ _id: { $in: allFolderIds }, ...userMatch });
+        }
+      }
+    } catch (err) {
+      console.error('[Deferred Batch Purge Error]:', err);
+    }
+  }, delayMs);
+};
+
 // Helper for direct Node-level MalwareBazaar check
 async function checkMalwareBazaarNode(sha256) {
   if (!sha256 || sha256.length !== 64) return { isMalicious: false };
@@ -615,57 +777,31 @@ router.delete('/purge-test-threats', authMiddleware, async (req, res) => {
 });
 
 // -------------------------------------------------------------
-// 6. HARD-PURGE SINGLE FILE & S3 OBJECTS
+// 6. SOFT-DELETE SINGLE FILE (12-SECOND GRACE PERIOD FOR UNDO)
 // -------------------------------------------------------------
 const handleSingleFileDelete = async (req, res) => {
   try {
-    const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
-    const userIdObj = mongoose.Types.ObjectId.isValid(rawUserId)
-      ? new mongoose.Types.ObjectId(rawUserId)
-      : rawUserId;
-
+    const rawUserId = req.user.id || req.user._id || req.user.userId;
     const file = await File.findOne({
       _id: req.params.id,
-      $or: [
-        { userId: userIdObj },
-        { user: userIdObj },
-        { userId: String(rawUserId) },
-        { user: String(rawUserId) },
-      ],
+      $or: [{ userId: rawUserId }, { user: rawUserId }],
     });
 
     if (!file) return res.status(404).json({ error: 'File not found' });
 
-    const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
+    file.isTrash = true;
+    file.trashedAt = new Date();
+    await file.save();
 
-    // Purge primary binary from S3
-    if (file.s3Key) {
-      await s3Client.send(new DeleteObjectCommand({
-        Bucket: bucket,
-        Key: file.s3Key,
-      })).catch(err => console.warn(`[S3 Delete Warning] ${err.message}`));
-    }
-
-    // Purge thumbnail from S3 if present
-    if (file.thumbnailKey) {
-      await s3Client.send(new DeleteObjectCommand({
-        Bucket: bucket,
-        Key: file.thumbnailKey,
-      })).catch(err => console.warn(`[S3 Thumb Delete Warning] ${err.message}`));
-    }
-
-    await File.deleteOne({ _id: file._id });
-
+    // Deduct quota immediately
     await User.findByIdAndUpdate(rawUserId, {
       $inc: { storageUsed: -Math.abs(file.size || 0) },
     });
 
-    return res.status(200).json({
-      success: true,
-      message: 'File deleted from vault and S3',
-      fileId: file._id,
-      deletedId: file._id,
-    });
+    // Queue S3 & MongoDB purge after 12s grace window
+    scheduleFilePurge(file._id, rawUserId);
+
+    return res.status(200).json({ success: true, message: 'File deleted', fileId: file._id, deletedId: file._id });
   } catch (err) {
     console.error('Delete file error:', err);
     return res.status(500).json({ error: 'Failed to delete file' });
@@ -675,27 +811,14 @@ const handleSingleFileDelete = async (req, res) => {
 router.delete('/:id', authMiddleware, handleSingleFileDelete);
 
 // -------------------------------------------------------------
-// 7. BATCH DELETE FILES & FOLDERS (HARD PURGE FROM S3 & DB)
+// 7. BATCH DELETE FILES & FOLDERS (12-SECOND GRACE PERIOD FOR UNDO)
 // -------------------------------------------------------------
 const handleBatchDelete = async (req, res) => {
   try {
     const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
     const { fileIds = [], folderIds = [] } = req.body;
+    const userMatch = { $or: [{ userId: rawUserId }, { user: rawUserId }] };
 
-    const userIdObj = mongoose.Types.ObjectId.isValid(rawUserId)
-      ? new mongoose.Types.ObjectId(rawUserId)
-      : rawUserId;
-
-    const userMatch = {
-      $or: [
-        { userId: userIdObj },
-        { user: userIdObj },
-        { userId: String(rawUserId) },
-        { user: String(rawUserId) },
-      ],
-    };
-
-    // CRITICAL GUARD: Only keep valid 24-character hexadecimal MongoDB ObjectIds
     const validFileIds = (Array.isArray(fileIds) ? fileIds : [])
       .filter((id) => id && mongoose.Types.ObjectId.isValid(String(id)))
       .map((id) => new mongoose.Types.ObjectId(String(id)));
@@ -704,123 +827,61 @@ const handleBatchDelete = async (req, res) => {
       .filter((id) => id && mongoose.Types.ObjectId.isValid(String(id)))
       .map((id) => new mongoose.Types.ObjectId(String(id)));
 
-    // Recursively collect all descendant folder IDs if folder IDs are provided
-    let allFolderIds = [...validFolderIds];
-    if (validFolderIds.length > 0) {
-      const visited = new Set(validFolderIds.map((id) => String(id)));
-      let currentLevelIds = [...validFolderIds];
-      while (currentLevelIds.length > 0) {
-        const objectIds = currentLevelIds
-          .filter((id) => mongoose.Types.ObjectId.isValid(String(id)))
-          .map((id) => new mongoose.Types.ObjectId(String(id)));
-        const stringIds = currentLevelIds.map((id) => String(id));
+    let freedBytes = 0;
 
-        const children = await Folder.find({
-          $and: [
-            userMatch,
-            {
-              $or: [
-                { parentId: { $in: objectIds } },
-                { parentFolder: { $in: objectIds } },
-                { parentId: { $in: stringIds } },
-                { parentFolder: { $in: stringIds } },
-              ],
-            },
-          ],
-        })
-          .select('_id')
-          .lean();
-
-        const nextLevelIds = [];
-        for (const child of children) {
-          const childIdStr = String(child._id);
-          if (!visited.has(childIdStr)) {
-            visited.add(childIdStr);
-            allFolderIds.push(child._id);
-            nextLevelIds.push(child._id);
-          }
-        }
-        currentLevelIds = nextLevelIds;
-      }
-    }
-
-    const allFolderObjectIds = allFolderIds
-      .filter((id) => mongoose.Types.ObjectId.isValid(String(id)))
-      .map((id) => new mongoose.Types.ObjectId(String(id)));
-    const allFolderStringIds = allFolderIds.map((id) => String(id));
-
-    // Gather all target files and child files of target/descendant folders
-    const fileOrConditions = [];
     if (validFileIds.length > 0) {
-      fileOrConditions.push({ _id: { $in: validFileIds } });
-    }
-    if (allFolderIds.length > 0) {
-      fileOrConditions.push(
-        { folder: { $in: allFolderObjectIds } },
-        { folderId: { $in: allFolderObjectIds } },
-        { folder: { $in: allFolderStringIds } },
-        { folderId: { $in: allFolderStringIds } }
+      const files = await File.find({ _id: { $in: validFileIds }, ...userMatch });
+      for (const f of files) freedBytes += (f.size || 0);
+
+      await File.updateMany(
+        { _id: { $in: validFileIds }, ...userMatch },
+        { $set: { isTrash: true, trashedAt: new Date() } }
       );
     }
 
-    let filesToDelete = [];
-    if (fileOrConditions.length > 0) {
-      filesToDelete = await File.find({
-        $and: [
-          userMatch,
-          { $or: fileOrConditions },
-        ],
-      })
-        .select('_id s3Key thumbnailKey size')
-        .lean();
-    }
-
-    // Collect all S3 keys (s3Key and thumbnailKey) and calculate freed bytes
-    const s3KeysToDelete = [];
-    let freedBytes = 0;
-    for (const f of filesToDelete) {
-      if (f.s3Key) s3KeysToDelete.push({ Key: f.s3Key });
-      if (f.thumbnailKey) s3KeysToDelete.push({ Key: f.thumbnailKey });
-      freedBytes += (f.size || 0);
-    }
-
-    // Batch delete from S3 in chunks of up to 1000 keys
-    const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || 'cloudguard-vault-mumbai-2026';
-    if (s3KeysToDelete.length > 0) {
-      for (let i = 0; i < s3KeysToDelete.length; i += 1000) {
-        const chunk = s3KeysToDelete.slice(i, i + 1000);
-        await s3Client.send(new DeleteObjectsCommand({
-          Bucket: bucket,
-          Delete: { Objects: chunk, Quiet: true },
-        })).catch((err) => console.warn(`[S3 Batch Delete Warning] ${err.message}`));
+    if (validFolderIds.length > 0) {
+      const allFolderIds = [...validFolderIds];
+      if (typeof getDescendantFolderIds === 'function') {
+        for (const fId of validFolderIds) {
+          const descendants = await getDescendantFolderIds(fId, userMatch);
+          allFolderIds.push(...descendants);
+        }
       }
+
+      const childFiles = await File.find({
+        $or: [{ folder: { $in: allFolderIds } }, { folderId: { $in: allFolderIds } }],
+        ...userMatch,
+      });
+      for (const cf of childFiles) freedBytes += (cf.size || 0);
+
+      await Folder.updateMany(
+        { _id: { $in: allFolderIds }, ...userMatch },
+        { $set: { isTrash: true, trashedAt: new Date() } }
+      );
+
+      await File.updateMany(
+        {
+          $or: [{ folder: { $in: allFolderIds } }, { folderId: { $in: allFolderIds } }],
+          ...userMatch,
+        },
+        { $set: { isTrash: true, trashedAt: new Date() } }
+      );
     }
 
-    // Remove file and folder documents from MongoDB
-    const fileIdsToDelete = filesToDelete.map((f) => f._id);
-    if (fileIdsToDelete.length > 0) {
-      await File.deleteMany({ _id: { $in: fileIdsToDelete } });
-    }
-
-    if (allFolderObjectIds.length > 0) {
-      await Folder.deleteMany({ _id: { $in: allFolderObjectIds } });
-    }
-
-    // Deduct freed bytes from user quota
     if (freedBytes > 0) {
       await User.findByIdAndUpdate(rawUserId, {
         $inc: { storageUsed: -Math.abs(freedBytes) },
       });
     }
 
+    // Schedule permanent deletion
+    scheduleBatchPurge(validFileIds, validFolderIds, rawUserId);
+
     return res.status(200).json({
       success: true,
-      message: 'Batch items and nested contents purged from S3 and database',
-      deletedFiles: fileIdsToDelete.length,
-      deletedFolders: allFolderObjectIds.length,
-      deletedCount: fileIdsToDelete.length + allFolderObjectIds.length,
-      freedBytes,
-      purgedS3Objects: s3KeysToDelete.length,
+      deletedFiles: validFileIds.length,
+      deletedFolders: validFolderIds.length,
+      deletedCount: validFileIds.length + validFolderIds.length,
     });
   } catch (err) {
     console.error('Batch delete error:', err);
@@ -839,7 +900,6 @@ const handleBatchRestore = async (req, res) => {
   try {
     const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
     const { fileIds = [], folderIds = [] } = req.body;
-
     const userMatch = { $or: [{ userId: rawUserId }, { user: rawUserId }] };
 
     const validFileIds = (Array.isArray(fileIds) ? fileIds : [])
@@ -850,55 +910,53 @@ const handleBatchRestore = async (req, res) => {
       .filter((id) => id && mongoose.Types.ObjectId.isValid(String(id)))
       .map((id) => new mongoose.Types.ObjectId(String(id)));
 
+    let restoredBytes = 0;
+
     if (validFileIds.length > 0) {
+      const files = await File.find({ _id: { $in: validFileIds }, isTrash: true, ...userMatch });
+      for (const f of files) restoredBytes += (f.size || 0);
+
       await File.updateMany(
-        buildTenantQuery(rawUserId, { _id: { $in: validFileIds } }),
+        { _id: { $in: validFileIds }, ...userMatch },
         { $set: { isTrash: false, trashedAt: null } }
       );
     }
 
     if (validFolderIds.length > 0) {
+      const allFolderIds = [...validFolderIds];
+      if (typeof getDescendantFolderIds === 'function') {
+        for (const fId of validFolderIds) {
+          const descendants = await getDescendantFolderIds(fId, userMatch);
+          allFolderIds.push(...descendants);
+        }
+      }
+
+      const childFiles = await File.find({
+        $or: [{ folder: { $in: allFolderIds } }, { folderId: { $in: allFolderIds } }],
+        isTrash: true,
+        ...userMatch,
+      });
+      for (const cf of childFiles) restoredBytes += (cf.size || 0);
+
       await Folder.updateMany(
-        buildTenantQuery(rawUserId, { _id: { $in: validFolderIds } }),
+        { _id: { $in: allFolderIds }, ...userMatch },
         { $set: { isTrash: false, trashedAt: null } }
       );
 
       await File.updateMany(
-        buildTenantQuery(rawUserId, {
-          $or: [
-            { folder: { $in: validFolderIds } },
-            { folderId: { $in: validFolderIds } },
-          ],
-        }),
-        { $set: { isTrash: false, trashedAt: null } }
-      );
-
-      await Folder.updateMany(
-        buildTenantQuery(rawUserId, {
-          $or: [{ parentId: { $in: validFolderIds } }, { parentFolder: { $in: validFolderIds } }],
-        }),
+        {
+          $or: [{ folder: { $in: allFolderIds } }, { folderId: { $in: allFolderIds } }],
+          ...userMatch,
+        },
         { $set: { isTrash: false, trashedAt: null } }
       );
     }
 
-    // Recalculate storage for the user
-    const stats = await File.aggregate([
-      {
-        $match: {
-          isTrash: { $ne: true },
-          securityStatus: { $ne: 'threat_purged' },
-          ...userMatch,
-        },
-      },
-      {
-        $group: {
-          _id: null,
-          actualUsedBytes: { $sum: { $ifNull: ['$size', 0] } },
-        },
-      },
-    ]);
-    const actualStorageUsed = stats[0]?.actualUsedBytes || 0;
-    await User.findByIdAndUpdate(rawUserId, { storageUsed: actualStorageUsed });
+    if (restoredBytes > 0) {
+      await User.findByIdAndUpdate(rawUserId, {
+        $inc: { storageUsed: Math.abs(restoredBytes) },
+      });
+    }
 
     return res.status(200).json({
       success: true,

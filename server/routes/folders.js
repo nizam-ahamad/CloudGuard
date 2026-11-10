@@ -638,7 +638,6 @@ router.delete('/:id', authMiddleware, async (req, res) => {
     const folder = await Folder.findOne({ _id: folderId, ...userMatch });
     if (!folder) return res.status(404).json({ error: 'Folder not found' });
 
-    // 1. Gather all descendant subfolder IDs
     let allFolderIds = [folder._id];
     if (typeof getDescendantFolderIds === 'function') {
       const descendants = await getDescendantFolderIds(folderId, userMatch);
@@ -650,7 +649,6 @@ router.delete('/:id', authMiddleware, async (req, res) => {
       .map((id) => new mongoose.Types.ObjectId(String(id)));
     const allFolderStringIds = allFolderIds.map((id) => String(id));
 
-    // 2. Find all files contained in this folder hierarchy
     const files = await File.find({
       $and: [
         userMatch,
@@ -665,58 +663,94 @@ router.delete('/:id', authMiddleware, async (req, res) => {
       ],
     });
 
-    // 3. Collect S3 keys and calculate freed bytes
-    const keysToDelete = [];
     let freedBytes = 0;
-    for (const f of files) {
-      if (f.s3Key) keysToDelete.push({ Key: f.s3Key });
-      if (f.thumbnailKey) keysToDelete.push({ Key: f.thumbnailKey });
-      freedBytes += (f.size || 0);
-    }
+    for (const f of files) freedBytes += (f.size || 0);
 
-    // 4. Permanently purge binaries and thumbnails from AWS S3
-    if (keysToDelete.length > 0) {
-      const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || 'cloudguard-vault-mumbai-2026';
-      for (let i = 0; i < keysToDelete.length; i += 1000) {
-        const chunk = keysToDelete.slice(i, i + 1000);
-        await s3Client.send(new DeleteObjectsCommand({
-          Bucket: bucket,
-          Delete: { Objects: chunk, Quiet: true }
-        })).catch(err => console.warn(`[Folder S3 Delete Warning] ${err.message}`));
-      }
-    }
+    // Soft-delete
+    await Folder.updateMany(
+      { _id: { $in: allFolderObjectIds }, ...userMatch },
+      { $set: { isTrash: true, trashedAt: new Date() } }
+    );
+    await File.updateMany(
+      {
+        $and: [
+          userMatch,
+          {
+            $or: [
+              { folder: { $in: allFolderObjectIds } },
+              { folderId: { $in: allFolderObjectIds } },
+              { folder: { $in: allFolderStringIds } },
+              { folderId: { $in: allFolderStringIds } },
+            ],
+          },
+        ],
+      },
+      { $set: { isTrash: true, trashedAt: new Date() } }
+    );
 
-    // 5. Delete records from database
-    await File.deleteMany({
-      $and: [
-        userMatch,
-        {
-          $or: [
-            { folder: { $in: allFolderObjectIds } },
-            { folderId: { $in: allFolderObjectIds } },
-            { folder: { $in: allFolderStringIds } },
-            { folderId: { $in: allFolderStringIds } },
-          ],
-        },
-      ],
-    });
-
-    await Folder.deleteMany({ _id: { $in: allFolderObjectIds }, ...userMatch });
-
-    // 6. Deduct freed bytes from user quota
     if (freedBytes > 0) {
       await User.findByIdAndUpdate(rawUserId, {
-        $inc: { storageUsed: -Math.abs(freedBytes) }
+        $inc: { storageUsed: -Math.abs(freedBytes) },
       });
     }
 
-    return res.status(200).json({
-      success: true,
-      message: 'Folder and nested contents purged from S3 and database',
-      freedBytes,
-      purgedS3Objects: keysToDelete.length,
-      folderId: folder._id,
-    });
+    // Schedule S3 purge after 12s
+    setTimeout(async () => {
+      try {
+        const checkFolder = await Folder.findOne({ _id: folderId, isTrash: true, ...userMatch });
+        if (!checkFolder) return; // Restored!
+
+        const childFiles = await File.find({
+          $and: [
+            userMatch,
+            {
+              $or: [
+                { folder: { $in: allFolderObjectIds } },
+                { folderId: { $in: allFolderObjectIds } },
+                { folder: { $in: allFolderStringIds } },
+                { folderId: { $in: allFolderStringIds } },
+              ],
+            },
+            { isTrash: true },
+          ],
+        });
+
+        const keys = [];
+        for (const cf of childFiles) {
+          if (cf.s3Key) keys.push({ Key: cf.s3Key });
+          if (cf.thumbnailKey) keys.push({ Key: cf.thumbnailKey });
+        }
+
+        if (keys.length > 0) {
+          const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || 'cloudguard-vault-mumbai-2026';
+          for (let i = 0; i < keys.length; i += 1000) {
+            await s3Client.send(new DeleteObjectsCommand({
+              Bucket: bucket,
+              Delete: { Objects: keys.slice(i, i + 1000), Quiet: true },
+            })).catch((e) => console.warn(`[Folder Child Purge Warning] ${e.message}`));
+          }
+        }
+
+        await File.deleteMany({
+          $and: [
+            userMatch,
+            {
+              $or: [
+                { folder: { $in: allFolderObjectIds } },
+                { folderId: { $in: allFolderObjectIds } },
+                { folder: { $in: allFolderStringIds } },
+                { folderId: { $in: allFolderStringIds } },
+              ],
+            },
+          ],
+        });
+        await Folder.deleteMany({ _id: { $in: allFolderObjectIds }, ...userMatch });
+      } catch (err) {
+        console.error('[Deferred Folder Purge Error]:', err);
+      }
+    }, 12000);
+
+    return res.status(200).json({ success: true, message: 'Folder deleted', folderId: folder._id });
   } catch (err) {
     console.error('Folder delete error:', err);
     return res.status(500).json({ error: 'Failed to delete folder' });
