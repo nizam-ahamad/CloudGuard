@@ -1,11 +1,20 @@
 const express = require('express');
 const router = express.Router();
 const mongoose = require('mongoose');
+const { S3Client, DeleteObjectsCommand } = require('@aws-sdk/client-s3');
 const Folder = require('../models/Folder');
 const File = require('../models/File');
 const User = require('../models/User');
 const authMiddleware = require('../middleware/auth');
 const { buildTenantQuery } = require('../utils/tenantQuery');
+
+const s3Client = new S3Client({
+  region: process.env.AWS_REGION || 'ap-south-1',
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  },
+});
 
 // -------------------------------------------------------------
 // 0. FOLDER CREATION (POST /)
@@ -624,38 +633,102 @@ router.delete('/:id', authMiddleware, async (req, res) => {
 
     const folderObjectId = new mongoose.Types.ObjectId(folderId);
 
-    // 1. Delete or trash the targeted folder
-    const folder = await Folder.findOne(
-      buildTenantQuery(rawUserId, { _id: folderObjectId })
-    );
+    const userIdObj = mongoose.Types.ObjectId.isValid(rawUserId)
+      ? new mongoose.Types.ObjectId(rawUserId)
+      : rawUserId;
+
+    const userMatch = {
+      $or: [
+        { userId: userIdObj },
+        { user: userIdObj },
+        { userId: String(rawUserId) },
+        { user: String(rawUserId) },
+      ],
+    };
+
+    const folder = await Folder.findOne({
+      _id: folderObjectId,
+      ...userMatch,
+    });
     if (!folder) {
       return res.status(404).json({ error: 'Folder not found' });
     }
 
-    // Mark folder as trashed
-    folder.isTrash = true;
-    folder.trashedAt = new Date();
-    await folder.save();
+    // Recursively collect all descendant folder IDs using getDescendantFolderIds
+    const descendantFolderIds = await getDescendantFolderIds(folderObjectId, userMatch);
+    const allFolderIds = [folder._id, ...descendantFolderIds];
+    const allFolderObjectIds = allFolderIds
+      .filter((id) => mongoose.Types.ObjectId.isValid(String(id)))
+      .map((id) => new mongoose.Types.ObjectId(String(id)));
+    const allFolderStringIds = allFolderIds.map((id) => String(id));
 
-    // 2. Cascade ONLY to children of THIS SPECIFIC folder (guarded with buildTenantQuery)
-    await File.updateMany(
-      buildTenantQuery(rawUserId, {
-        $or: [{ folder: folderObjectId }, { folderId: folderObjectId }],
-      }),
-      { $set: { isTrash: true, trashedAt: new Date() } }
-    );
+    // Query all child files under those folders
+    const childFiles = await File.find({
+      $and: [
+        userMatch,
+        {
+          $or: [
+            { folder: { $in: allFolderObjectIds } },
+            { folderId: { $in: allFolderObjectIds } },
+            { folder: { $in: allFolderStringIds } },
+            { folderId: { $in: allFolderStringIds } },
+          ],
+        },
+      ],
+    }).select('_id s3Key thumbnailKey size').lean();
 
-    await Folder.updateMany(
-      buildTenantQuery(rawUserId, {
-        $or: [{ parentId: folderObjectId }, { parentFolder: folderObjectId }],
-      }),
-      { $set: { isTrash: true, trashedAt: new Date() } }
-    );
+    // Collect all S3 keys to delete
+    const s3KeysToDelete = [];
+    for (const f of childFiles) {
+      if (f.s3Key) s3KeysToDelete.push({ Key: f.s3Key });
+      if (f.thumbnailKey) s3KeysToDelete.push({ Key: f.thumbnailKey });
+    }
+
+    // Batch delete from S3 in chunks of 1000
+    const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
+    if (s3KeysToDelete.length > 0) {
+      for (let i = 0; i < s3KeysToDelete.length; i += 1000) {
+        const chunk = s3KeysToDelete.slice(i, i + 1000);
+        await s3Client.send(new DeleteObjectsCommand({
+          Bucket: bucket,
+          Delete: { Objects: chunk, Quiet: true },
+        })).catch((err) => console.warn(`[S3 Folder Delete Warning] ${err.message}`));
+      }
+    }
+
+    // Remove file and folder records from MongoDB
+    const childFileIds = childFiles.map((f) => f._id);
+    if (childFileIds.length > 0) {
+      await File.deleteMany({ _id: { $in: childFileIds } });
+    }
+    await Folder.deleteMany({ _id: { $in: allFolderObjectIds } });
+
+    // Decrement / resync user storage quota
+    const stats = await File.aggregate([
+      {
+        $match: {
+          isTrash: { $ne: true },
+          securityStatus: { $ne: 'threat_purged' },
+          ...userMatch,
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          actualUsedBytes: { $sum: { $ifNull: ['$size', 0] } },
+        },
+      },
+    ]);
+    const actualStorageUsed = stats[0]?.actualUsedBytes || 0;
+    await User.findByIdAndUpdate(rawUserId, { storageUsed: actualStorageUsed });
 
     return res.status(200).json({
       success: true,
       message: 'Folder and contents deleted successfully',
       folderId: folder._id,
+      deletedFilesCount: childFiles.length,
+      deletedFoldersCount: allFolderIds.length,
+      storageUsed: actualStorageUsed,
     });
   } catch (err) {
     console.error('Delete folder error:', err);

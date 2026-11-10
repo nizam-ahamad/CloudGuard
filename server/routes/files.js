@@ -3,7 +3,7 @@ const router = express.Router();
 const crypto = require('crypto');
 const axios = require('axios');
 const mongoose = require('mongoose');
-const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, DeleteObjectsCommand, HeadObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const User = require('../models/User');
 const File = require('../models/File');
@@ -562,7 +562,7 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
 
     // Only increment quota if the file was not already clean
     if (previousSecurityStatus !== 'clean') {
-      await User.findByIdAndUpdate(file.userId, {
+      await User.findByIdAndUpdate(rawUserId || file.userId, {
         $inc: { storageUsed: file.size },
       });
     }
@@ -615,11 +615,73 @@ router.delete('/purge-test-threats', authMiddleware, async (req, res) => {
 });
 
 // -------------------------------------------------------------
-// 6. SOFT-DELETE SINGLE FILE (Appears permanently deleted to user)
+// 6. HARD-PURGE SINGLE FILE & S3 OBJECTS
 // -------------------------------------------------------------
 const handleSingleFileDelete = async (req, res) => {
   try {
-    const rawUserId = req.user.id || req.user._id || req.user.userId;
+    const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
+    const userIdObj = mongoose.Types.ObjectId.isValid(rawUserId)
+      ? new mongoose.Types.ObjectId(rawUserId)
+      : rawUserId;
+
+    const file = await File.findOne({
+      _id: req.params.id,
+      $or: [
+        { userId: userIdObj },
+        { user: userIdObj },
+        { userId: String(rawUserId) },
+        { user: String(rawUserId) },
+      ],
+    });
+
+    if (!file) return res.status(404).json({ error: 'File not found' });
+
+    const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
+
+    // Purge primary binary from S3
+    if (file.s3Key) {
+      await s3Client.send(new DeleteObjectCommand({
+        Bucket: bucket,
+        Key: file.s3Key,
+      })).catch(err => console.warn(`[S3 Delete Warning] ${err.message}`));
+    }
+
+    // Purge thumbnail from S3 if present
+    if (file.thumbnailKey) {
+      await s3Client.send(new DeleteObjectCommand({
+        Bucket: bucket,
+        Key: file.thumbnailKey,
+      })).catch(err => console.warn(`[S3 Thumb Delete Warning] ${err.message}`));
+    }
+
+    await File.deleteOne({ _id: file._id });
+
+    await User.findByIdAndUpdate(rawUserId, {
+      $inc: { storageUsed: -Math.abs(file.size || 0) },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'File deleted from vault and S3',
+      fileId: file._id,
+      deletedId: file._id,
+    });
+  } catch (err) {
+    console.error('Delete file error:', err);
+    return res.status(500).json({ error: 'Failed to delete file' });
+  }
+};
+
+router.delete('/:id', authMiddleware, handleSingleFileDelete);
+
+// -------------------------------------------------------------
+// 7. BATCH DELETE FILES & FOLDERS (HARD PURGE FROM S3 & DB)
+// -------------------------------------------------------------
+const handleBatchDelete = async (req, res) => {
+  try {
+    const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
+    const { fileIds = [], folderIds = [] } = req.body;
+
     const userIdObj = mongoose.Types.ObjectId.isValid(rawUserId)
       ? new mongoose.Types.ObjectId(rawUserId)
       : rawUserId;
@@ -633,48 +695,6 @@ const handleSingleFileDelete = async (req, res) => {
       ],
     };
 
-    const file = await File.findOne({
-      _id: req.params.id,
-      ...userMatch,
-    });
-
-    if (!file) return res.status(404).json({ error: 'File not found' });
-
-    file.isTrash = true;
-    file.trashedAt = new Date();
-    await file.save();
-
-    // Deduct from user storage quota immediately
-    if (file.size > 0 && file.securityStatus !== 'threat_purged') {
-      await User.findByIdAndUpdate(rawUserId, {
-        $inc: { storageUsed: -Math.abs(file.size || 0) },
-      });
-    }
-
-    return res.status(200).json({
-      success: true,
-      message: 'File deleted',
-      fileId: file._id,
-      deletedId: file._id
-    });
-  } catch (err) {
-    console.error('Delete file error:', err);
-    return res.status(500).json({ error: 'Failed to delete file' });
-  }
-};
-
-router.delete('/:id', authMiddleware, handleSingleFileDelete);
-
-// -------------------------------------------------------------
-// 7. BATCH DELETE FILES & FOLDERS
-// -------------------------------------------------------------
-const handleBatchDelete = async (req, res) => {
-  try {
-    const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
-    const { fileIds = [], folderIds = [] } = req.body;
-
-    const userMatch = { $or: [{ userId: rawUserId }, { user: rawUserId }] };
-
     // CRITICAL GUARD: Only keep valid 24-character hexadecimal MongoDB ObjectIds
     const validFileIds = (Array.isArray(fileIds) ? fileIds : [])
       .filter((id) => id && mongoose.Types.ObjectId.isValid(String(id)))
@@ -684,42 +704,107 @@ const handleBatchDelete = async (req, res) => {
       .filter((id) => id && mongoose.Types.ObjectId.isValid(String(id)))
       .map((id) => new mongoose.Types.ObjectId(String(id)));
 
-    // 1. Delete files ONLY if valid file IDs exist
-    if (validFileIds.length > 0) {
-      await File.updateMany(
-        buildTenantQuery(rawUserId, { _id: { $in: validFileIds } }),
-        { $set: { isTrash: true, trashedAt: new Date() } }
-      );
-    }
-
-    // 2. Delete folders ONLY if valid folder IDs exist
+    // Recursively collect all descendant folder IDs if folder IDs are provided
+    let allFolderIds = [...validFolderIds];
     if (validFolderIds.length > 0) {
-      await Folder.updateMany(
-        buildTenantQuery(rawUserId, { _id: { $in: validFolderIds } }),
-        { $set: { isTrash: true, trashedAt: new Date() } }
-      );
+      const visited = new Set(validFolderIds.map((id) => String(id)));
+      let currentLevelIds = [...validFolderIds];
+      while (currentLevelIds.length > 0) {
+        const objectIds = currentLevelIds
+          .filter((id) => mongoose.Types.ObjectId.isValid(String(id)))
+          .map((id) => new mongoose.Types.ObjectId(String(id)));
+        const stringIds = currentLevelIds.map((id) => String(id));
 
-      // Cascade to child files with strict $and scoping
-      await File.updateMany(
-        buildTenantQuery(rawUserId, {
-          $or: [
-            { folder: { $in: validFolderIds } },
-            { folderId: { $in: validFolderIds } },
+        const children = await Folder.find({
+          $and: [
+            userMatch,
+            {
+              $or: [
+                { parentId: { $in: objectIds } },
+                { parentFolder: { $in: objectIds } },
+                { parentId: { $in: stringIds } },
+                { parentFolder: { $in: stringIds } },
+              ],
+            },
           ],
-        }),
-        { $set: { isTrash: true, trashedAt: new Date() } }
-      );
+        })
+          .select('_id')
+          .lean();
 
-      // Cascade to child folders with strict $and scoping
-      await Folder.updateMany(
-        buildTenantQuery(rawUserId, {
-          $or: [{ parentId: { $in: validFolderIds } }, { parentFolder: { $in: validFolderIds } }],
-        }),
-        { $set: { isTrash: true, trashedAt: new Date() } }
+        const nextLevelIds = [];
+        for (const child of children) {
+          const childIdStr = String(child._id);
+          if (!visited.has(childIdStr)) {
+            visited.add(childIdStr);
+            allFolderIds.push(child._id);
+            nextLevelIds.push(child._id);
+          }
+        }
+        currentLevelIds = nextLevelIds;
+      }
+    }
+
+    const allFolderObjectIds = allFolderIds
+      .filter((id) => mongoose.Types.ObjectId.isValid(String(id)))
+      .map((id) => new mongoose.Types.ObjectId(String(id)));
+    const allFolderStringIds = allFolderIds.map((id) => String(id));
+
+    // Gather all target files and child files of target/descendant folders
+    const fileOrConditions = [];
+    if (validFileIds.length > 0) {
+      fileOrConditions.push({ _id: { $in: validFileIds } });
+    }
+    if (allFolderIds.length > 0) {
+      fileOrConditions.push(
+        { folder: { $in: allFolderObjectIds } },
+        { folderId: { $in: allFolderObjectIds } },
+        { folder: { $in: allFolderStringIds } },
+        { folderId: { $in: allFolderStringIds } }
       );
     }
 
-    // Recalculate storage for the user to be 100% accurate
+    let filesToDelete = [];
+    if (fileOrConditions.length > 0) {
+      filesToDelete = await File.find({
+        $and: [
+          userMatch,
+          { $or: fileOrConditions },
+        ],
+      })
+        .select('_id s3Key thumbnailKey size')
+        .lean();
+    }
+
+    // Collect all S3 keys (s3Key and thumbnailKey)
+    const s3KeysToDelete = [];
+    for (const f of filesToDelete) {
+      if (f.s3Key) s3KeysToDelete.push({ Key: f.s3Key });
+      if (f.thumbnailKey) s3KeysToDelete.push({ Key: f.thumbnailKey });
+    }
+
+    // Batch delete from S3 in chunks of up to 1000 keys
+    const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
+    if (s3KeysToDelete.length > 0) {
+      for (let i = 0; i < s3KeysToDelete.length; i += 1000) {
+        const chunk = s3KeysToDelete.slice(i, i + 1000);
+        await s3Client.send(new DeleteObjectsCommand({
+          Bucket: bucket,
+          Delete: { Objects: chunk, Quiet: true },
+        })).catch((err) => console.warn(`[S3 Batch Delete Warning] ${err.message}`));
+      }
+    }
+
+    // Remove file and folder documents from MongoDB
+    const fileIdsToDelete = filesToDelete.map((f) => f._id);
+    if (fileIdsToDelete.length > 0) {
+      await File.deleteMany({ _id: { $in: fileIdsToDelete } });
+    }
+
+    if (allFolderObjectIds.length > 0) {
+      await Folder.deleteMany({ _id: { $in: allFolderObjectIds } });
+    }
+
+    // Recalculate true storage quota for the user
     const stats = await File.aggregate([
       {
         $match: {
@@ -740,9 +825,10 @@ const handleBatchDelete = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      deletedFiles: validFileIds.length,
-      deletedFolders: validFolderIds.length,
-      deletedCount: validFileIds.length + validFolderIds.length,
+      deletedFiles: fileIdsToDelete.length,
+      deletedFolders: allFolderObjectIds.length,
+      deletedCount: fileIdsToDelete.length + allFolderObjectIds.length,
+      storageUsed: actualStorageUsed,
     });
   } catch (err) {
     console.error('Batch delete error:', err);
