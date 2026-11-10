@@ -1,7 +1,7 @@
 require('node:dns/promises').setServers(['1.1.1.1', '8.8.8.8']);
 require('dotenv').config();
 
-const requiredEnv = ['JWT_SECRET', 'GAS_SECRET', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_REGION', 'AWS_BUCKET_NAME', 'MONGO_URI'];
+const requiredEnv = ['JWT_SECRET', 'RESEND_API_KEY', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_REGION', 'AWS_BUCKET_NAME', 'MONGO_URI'];
 const missing = requiredEnv.filter(k => !process.env[k]);
 if (missing.length > 0) {
   console.error(`FATAL ERROR: Missing critical environment variables: ${missing.join(', ')}`);
@@ -22,6 +22,7 @@ const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, HeadO
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { buildTenantQuery } = require('./utils/tenantQuery');
 const { apiLimiter } = require('./middleware/rateLimiter');
+const { sendActivationOtp, sendResetOtp, sendWelcomeEmail } = require('./utils/emailService');
 
 // Multer in-memory storage configuration (prevent EC2 disk space exhaustion)
 const multer = require('multer');
@@ -342,19 +343,7 @@ app.post('/api/auth/register', async (req, res) => {
     }
   
 
-    const scriptUrl = "https://script.google.com/macros/s/AKfycbwUtMYORet8Y6mkUtoNJ1ofJRr0Iq8UrGeYcIOjAVnXiVR2sSRSTdmVJ19cc7q3yS79/exec";
-    fetch(scriptUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ 
-        to: email, 
-        otp: otp,
-        type: 'otp',
-        secret: process.env.GAS_SECRET 
-      })
-    }).catch(fetchErr => {
-      console.error('Error sending OTP webhook:', fetchErr);
-    });
+    sendActivationOtp(email, otp);
     
     res.json({ message: 'User created. Please verify your email.' });
   } catch (err) {
@@ -446,19 +435,7 @@ app.post('/api/auth/resend-otp', async (req, res) => {
     await user.save();
   
 
-    const scriptUrl = "https://script.google.com/macros/s/AKfycbwUtMYORet8Y6mkUtoNJ1ofJRr0Iq8UrGeYcIOjAVnXiVR2sSRSTdmVJ19cc7q3yS79/exec";
-    fetch(scriptUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ 
-        to: email, 
-        otp: otp,
-        type: 'otp',
-        secret: process.env.GAS_SECRET 
-      })
-    }).catch(fetchErr => {
-      console.error('Error sending OTP webhook:', fetchErr);
-    });
+    sendActivationOtp(email, otp);
 
     res.json({ message: 'A new verification code has been sent to your email.' });
   } catch (err) {
@@ -529,19 +506,7 @@ app.post('/api/auth/forgot-password', async (req, res) => {
       }
     }
     
-    const scriptUrl = "https://script.google.com/macros/s/AKfycbwUtMYORet8Y6mkUtoNJ1ofJRr0Iq8UrGeYcIOjAVnXiVR2sSRSTdmVJ19cc7q3yS79/exec";
-    fetch(scriptUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ 
-        to: email, 
-        otp: resetOtp,
-        type: 'reset',
-        secret: process.env.GAS_SECRET 
-      })
-    }).catch(fetchErr => {
-      console.error('Error sending reset webhook:', fetchErr);
-    });
+    sendResetOtp(email, resetOtp);
 
     return res.status(200).json({ message: "Reset code sent" });
   } catch (error) {

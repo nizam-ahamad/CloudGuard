@@ -18,12 +18,14 @@ export default function PrivacyPolicy() {
   };
 
   const navItems = [
-    { id: 'section-1', num: '01', title: 'Overview' },
-    { id: 'section-2', num: '02', title: 'Data Collected' },
-    { id: 'section-3', num: '03', title: 'Third-Party Processing' },
-    { id: 'section-4', num: '04', title: 'Data Ownership & Retention' },
-    { id: 'section-5', num: '05', title: 'Security Architecture' },
-    { id: 'section-6', num: '06', title: 'Contact & Inquiries' },
+    { id: 'section-1', num: '01', title: 'Overview & Commitment' },
+    { id: 'section-2', num: '02', title: 'Information We Collect' },
+    { id: 'section-3', num: '03', title: 'How We Use Information' },
+    { id: 'section-4', num: '04', title: 'Storage & Security' },
+    { id: 'section-5', num: '05', title: 'Third-Party Providers' },
+    { id: 'section-6', num: '06', title: 'Cookies & Storage' },
+    { id: 'section-7', num: '07', title: 'Data Rights & Retention' },
+    { id: 'section-8', num: '08', title: 'Grievance & Contact' },
   ];
 
   return (
@@ -60,7 +62,7 @@ export default function PrivacyPolicy() {
             Privacy Policy
           </h1>
           <p className="text-sm md:text-base font-mono text-neutral-500">
-            Last Updated: October 2026
+            Last Updated: November 2026
           </p>
         </div>
 
@@ -119,10 +121,10 @@ export default function PrivacyPolicy() {
                 <span className="text-xs font-mono font-semibold px-2.5 py-1 rounded-md bg-neutral-800 text-neutral-300 border border-neutral-700">
                   01
                 </span>
-                <h2 className="text-xl lg:text-2xl font-bold text-white tracking-tight">Overview</h2>
+                <h2 className="text-xl lg:text-2xl font-bold text-white tracking-tight">Overview &amp; Commitment</h2>
               </div>
               <p className="text-neutral-300 text-sm sm:text-base leading-relaxed">
-                CloudGuard Vault (&ldquo;CloudGuard&rdquo;, &ldquo;we&rdquo;, &ldquo;our&rdquo;, or &ldquo;us&rdquo;) is an encrypted cloud storage demonstration platform featuring real-time AI threat scanning and zero-trust file management. We are committed to protecting your personal data and ensuring transparent practices regarding the collection, use, and security of information processed through our service.
+                CloudGuard (&ldquo;we&rdquo;, &ldquo;our&rdquo;) respects your digital privacy. This Privacy Policy outlines what information we collect, how it is secured, and how your personal data and files are processed when using <code className="text-xs font-mono px-1.5 py-0.5 rounded bg-neutral-800 text-emerald-300">cloudguard.site</code>.
               </p>
             </section>
 
@@ -132,20 +134,20 @@ export default function PrivacyPolicy() {
                 <span className="text-xs font-mono font-semibold px-2.5 py-1 rounded-md bg-neutral-800 text-neutral-300 border border-neutral-700">
                   02
                 </span>
-                <h2 className="text-xl lg:text-2xl font-bold text-white tracking-tight">Data Collected</h2>
+                <h2 className="text-xl lg:text-2xl font-bold text-white tracking-tight">Information We Collect</h2>
               </div>
-              <p className="text-neutral-300 text-sm sm:text-base leading-relaxed">
-                We collect and process minimal data necessary to provide and secure our storage platform:
-              </p>
               <ul className="list-disc list-inside space-y-2.5 pl-2 text-neutral-400 text-sm sm:text-base">
                 <li>
-                  <strong className="text-neutral-200">Account Credentials:</strong> Your email address and securely hashed authentication credentials (passwords are processed with bcrypt and never stored in plain text). Stateless JWT tokens are utilized for session verification.
+                  <strong className="text-neutral-200">Account Information:</strong> Name, email address, password hash (salted bcrypt/argon2), and OAuth profile identifiers (when authenticating via Google).
                 </li>
                 <li>
-                  <strong className="text-neutral-200">File Payloads &amp; Metadata:</strong> Uploaded file contents, file names, file sizes, MIME types, parent folder associations, and upload timestamps needed to organize and present your vault.
+                  <strong className="text-neutral-200">Billing &amp; Transaction Data:</strong> Payment status, transaction ID, plan type, and billing address provided during checkout. All credit card, UPI, and net-banking transactions are processed directly by certified payment gateways; CloudGuard never stores card numbers or CVVs.
                 </li>
                 <li>
-                  <strong className="text-neutral-200">Security Inspection Logs:</strong> High-level heuristic scan summaries, PE static analysis scores, and entropy evaluation flags generated during pre-ingestion screening.
+                  <strong className="text-neutral-200">Vault Metadata:</strong> File names, file sizes, MIME types, directory structures, and storage utilization counters necessary to organize your vault.
+                </li>
+                <li>
+                  <strong className="text-neutral-200">Security &amp; Telemetry Logs:</strong> IP addresses, browser user-agent strings, access timestamps, and session tokens used for rate limiting, threat prevention, and session validation.
                 </li>
               </ul>
             </section>
@@ -156,34 +158,15 @@ export default function PrivacyPolicy() {
                 <span className="text-xs font-mono font-semibold px-2.5 py-1 rounded-md bg-neutral-800 text-neutral-300 border border-neutral-700">
                   03
                 </span>
-                <h2 className="text-xl lg:text-2xl font-bold text-white tracking-tight">Third-Party Processing &amp; Infrastructure</h2>
+                <h2 className="text-xl lg:text-2xl font-bold text-white tracking-tight">How We Use Your Information</h2>
               </div>
-              <p className="text-neutral-300 text-sm sm:text-base leading-relaxed">
-                To maintain high-assurance isolation and threat detection, CloudGuard integrates with dedicated cloud infrastructure:
-              </p>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-4">
-                <div className="p-4 md:p-5 bg-neutral-950/80 border border-neutral-800/80 rounded-xl space-y-2">
-                  <Database size={20} className="text-blue-400 mb-1" />
-                  <h3 className="text-sm font-semibold text-white">Amazon Web Services (AWS)</h3>
-                  <p className="text-xs text-neutral-400 leading-normal">
-                    Encrypted object persistence in isolated S3 buckets accessible only via ephemeral, short-lived pre-signed URLs.
-                  </p>
-                </div>
-                <div className="p-4 md:p-5 bg-neutral-950/80 border border-neutral-800/80 rounded-xl space-y-2">
-                  <Server size={20} className="text-purple-400 mb-1" />
-                  <h3 className="text-sm font-semibold text-white">Python ML Microservice</h3>
-                  <p className="text-xs text-neutral-400 leading-normal">
-                    Pre-ingestion static inspection with optional automated VirusTotal API fallback verification for suspicious binary hashes.
-                  </p>
-                </div>
-                <div className="p-4 md:p-5 bg-neutral-950/80 border border-neutral-800/80 rounded-xl space-y-2">
-                  <Lock size={20} className="text-emerald-400 mb-1" />
-                  <h3 className="text-sm font-semibold text-white">Google Apps Script</h3>
-                  <p className="text-xs text-neutral-400 leading-normal">
-                    Outbound transactional email delivery for one-time verification passwords (OTP) and password reset authorization tokens.
-                  </p>
-                </div>
-              </div>
+              <ul className="list-disc list-inside space-y-2.5 pl-2 text-neutral-400 text-sm sm:text-base">
+                <li>To provision, maintain, and scale your personal cloud storage vault.</li>
+                <li>To authenticate user sessions and prevent unauthorized access.</li>
+                <li>To process subscription upgrades and generate verifiable payment invoices.</li>
+                <li>To run automated anti-malware and cryptographic threat verification on uploaded files to protect system stability.</li>
+                <li>We <strong className="text-neutral-200">never</strong> sell, rent, monetize, or broker your personal data or uploaded files to third-party data brokers or advertising networks.</li>
+              </ul>
             </section>
 
             {/* Section 4 */}
@@ -192,11 +175,19 @@ export default function PrivacyPolicy() {
                 <span className="text-xs font-mono font-semibold px-2.5 py-1 rounded-md bg-neutral-800 text-neutral-300 border border-neutral-700">
                   04
                 </span>
-                <h2 className="text-xl lg:text-2xl font-bold text-white tracking-tight">Data Ownership &amp; Retention</h2>
+                <h2 className="text-xl lg:text-2xl font-bold text-white tracking-tight">File Storage &amp; Security Architecture</h2>
               </div>
-              <p className="text-neutral-300 text-sm sm:text-base leading-relaxed">
-                You maintain complete ownership and intellectual property rights over all files and documents you upload to CloudGuard Vault. When you delete a file or folder from your dashboard, the corresponding object is permanently purged from our AWS S3 bucket and database indices without lingering residual copies.
-              </p>
+              <ul className="list-disc list-inside space-y-2.5 pl-2 text-neutral-400 text-sm sm:text-base">
+                <li>
+                  <strong className="text-neutral-200">Encryption in Transit:</strong> All communication between your client browser, our Node.js gateway, and storage clusters is enforced via Transport Layer Security (TLS 1.3).
+                </li>
+                <li>
+                  <strong className="text-neutral-200">Storage Encryption:</strong> Files are stored using AES-256 server-side encryption across distributed, redundant object storage repositories (Backblaze B2 / AWS S3).
+                </li>
+                <li>
+                  <strong className="text-neutral-200">Access Control:</strong> File access is restricted via short-lived, cryptographically signed URLs (HMAC SHA-256). Files cannot be indexed or crawled by search engine bots unless explicitly shared via public link.
+                </li>
+              </ul>
             </section>
 
             {/* Section 5 */}
@@ -205,17 +196,34 @@ export default function PrivacyPolicy() {
                 <span className="text-xs font-mono font-semibold px-2.5 py-1 rounded-md bg-neutral-800 text-neutral-300 border border-neutral-700">
                   05
                 </span>
-                <h2 className="text-xl lg:text-2xl font-bold text-white tracking-tight">Security Architecture</h2>
+                <h2 className="text-xl lg:text-2xl font-bold text-white tracking-tight">Third-Party Service Providers</h2>
               </div>
               <p className="text-neutral-300 text-sm sm:text-base leading-relaxed">
-                We enforce modern zero-trust security controls across the application lifecycle:
+                We partner with specialized infrastructure providers to deliver our services:
               </p>
-              <ul className="list-disc list-inside space-y-2.5 pl-2 text-neutral-400 text-sm sm:text-base">
-                <li>End-to-end HTTPS/TLS encryption for all client-to-server and server-to-S3 communications.</li>
-                <li>No plain-text storage of user passwords or cloud provider master credentials.</li>
-                <li>Strict tenant isolation ensuring accounts cannot query or access unauthorized object keys.</li>
-                <li>Automatic quarantine of files exhibiting malicious static signatures before S3 persistence.</li>
-              </ul>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-4">
+                <div className="p-4 md:p-5 bg-neutral-950/80 border border-neutral-800/80 rounded-xl space-y-2">
+                  <Database size={20} className="text-blue-400 mb-1" />
+                  <h3 className="text-sm font-semibold text-white">Storage &amp; Edge CDN</h3>
+                  <p className="text-xs text-neutral-400 leading-normal">
+                    Backblaze B2, AWS, and Cloudflare for global caching, zero-egress delivery, and distributed asset storage.
+                  </p>
+                </div>
+                <div className="p-4 md:p-5 bg-neutral-950/80 border border-neutral-800/80 rounded-xl space-y-2">
+                  <Lock size={20} className="text-emerald-400 mb-1" />
+                  <h3 className="text-sm font-semibold text-white">Payment Gateways</h3>
+                  <p className="text-xs text-neutral-400 leading-normal">
+                    PCI-DSS Level 1 compliant processors (such as Razorpay / Stripe) to securely process payments without storing sensitive card data.
+                  </p>
+                </div>
+                <div className="p-4 md:p-5 bg-neutral-950/80 border border-neutral-800/80 rounded-xl space-y-2">
+                  <Server size={20} className="text-purple-400 mb-1" />
+                  <h3 className="text-sm font-semibold text-white">Database &amp; Compute</h3>
+                  <p className="text-xs text-neutral-400 leading-normal">
+                    MongoDB Atlas (encrypted at rest) and dedicated Tier-IV data center instances for backend computing.
+                  </p>
+                </div>
+              </div>
             </section>
 
             {/* Section 6 */}
@@ -224,11 +232,54 @@ export default function PrivacyPolicy() {
                 <span className="text-xs font-mono font-semibold px-2.5 py-1 rounded-md bg-neutral-800 text-neutral-300 border border-neutral-700">
                   06
                 </span>
-                <h2 className="text-xl lg:text-2xl font-bold text-white tracking-tight">Contact &amp; Inquiries</h2>
+                <h2 className="text-xl lg:text-2xl font-bold text-white tracking-tight">Cookies &amp; Client-Side Storage</h2>
               </div>
               <p className="text-neutral-300 text-sm sm:text-base leading-relaxed">
-                If you have questions regarding this Privacy Policy or wish to request complete deletion of your account and associated objects, please submit an issue or inquiry via our official GitHub repository.
+                CloudGuard uses local browser storage (<code className="text-xs font-mono px-1.5 py-0.5 rounded bg-neutral-800 text-emerald-300">localStorage</code> / secure cookies) strictly for:
               </p>
+              <ul className="list-disc list-inside space-y-2.5 pl-2 text-neutral-400 text-sm sm:text-base">
+                <li>Preserving your active JWT authentication token across sessions.</li>
+                <li>Storing theme preferences (Light/Dark mode) and interface layout states.</li>
+                <li>We do not use third-party tracking or advertising cookies.</li>
+              </ul>
+            </section>
+
+            {/* Section 7 */}
+            <section id="section-7" className="scroll-mt-28 bg-neutral-900/30 border border-neutral-800/80 rounded-2xl p-6 lg:p-8 backdrop-blur-sm hover:border-neutral-700/80 transition-colors space-y-4">
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-mono font-semibold px-2.5 py-1 rounded-md bg-neutral-800 text-neutral-300 border border-neutral-700">
+                  07
+                </span>
+                <h2 className="text-xl lg:text-2xl font-bold text-white tracking-tight">User Data Rights &amp; Data Retention</h2>
+              </div>
+              <ul className="list-disc list-inside space-y-2.5 pl-2 text-neutral-400 text-sm sm:text-base">
+                <li>
+                  <strong className="text-neutral-200">Data Access &amp; Export:</strong> You may view, download, and manage your stored files at any time through your dashboard.
+                </li>
+                <li>
+                  <strong className="text-neutral-200">Account Deletion &amp; Data Purge:</strong> When you delete a file or trash folder, it is marked for immediate de-referencing and permanently pruned from storage repositories. If you request account closure, all associated records, metadata, and files are permanently purged within 30 days.
+                </li>
+              </ul>
+            </section>
+
+            {/* Section 8 */}
+            <section id="section-8" className="scroll-mt-28 bg-neutral-900/30 border border-neutral-800/80 rounded-2xl p-6 lg:p-8 backdrop-blur-sm hover:border-neutral-700/80 transition-colors space-y-4">
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-mono font-semibold px-2.5 py-1 rounded-md bg-neutral-800 text-neutral-300 border border-neutral-700">
+                  08
+                </span>
+                <h2 className="text-xl lg:text-2xl font-bold text-white tracking-tight">Grievance Officer &amp; Contact Details</h2>
+              </div>
+              <p className="text-neutral-300 text-sm sm:text-base leading-relaxed">
+                In accordance with Information Technology rules and applicable privacy regulations, our designated contact for privacy concerns, data inquiries, or billing disputes is:
+              </p>
+              <ul className="list-disc list-inside space-y-2.5 pl-2 text-neutral-400 text-sm sm:text-base">
+                <li><strong className="text-neutral-200">Grievance Officer / DPO:</strong> Privacy &amp; Security Desk</li>
+                <li><strong className="text-neutral-200">Privacy &amp; Grievance Email:</strong> <a href="mailto:privacy@cloudguard.site" className="text-emerald-400 hover:underline"><code className="text-xs font-mono px-1.5 py-0.5 rounded bg-neutral-800 text-emerald-300">privacy@cloudguard.site</code></a></li>
+                <li><strong className="text-neutral-200">General Support:</strong> <a href="mailto:support@cloudguard.site" className="text-emerald-400 hover:underline"><code className="text-xs font-mono px-1.5 py-0.5 rounded bg-neutral-800 text-emerald-300">support@cloudguard.site</code></a></li>
+                <li><strong className="text-neutral-200">Registered Business Address:</strong> House No. 120, Main Market, Ward No. 3, Shaktifarm, Udham Singh Nagar, Uttarakhand - 263151</li>
+                <li><strong className="text-neutral-200">Resolution Window:</strong> Privacy grievances are investigated and resolved within 15 business days.</li>
+              </ul>
             </section>
           </main>
         </div>
@@ -236,7 +287,7 @@ export default function PrivacyPolicy() {
 
       {/* Footer */}
       <footer className="w-full py-8 border-t border-neutral-900 bg-black text-center text-xs font-mono text-neutral-600">
-        &copy; 2026 CloudGuard Vault. All rights reserved.
+        &copy; 2026 CloudGuard. All rights reserved.
       </footer>
     </div>
   );

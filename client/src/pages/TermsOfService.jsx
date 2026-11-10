@@ -19,11 +19,16 @@ export default function TermsOfService() {
 
   const navItems = [
     { id: 'section-1', num: '01', title: 'Acceptance of Terms' },
-    { id: 'section-2', num: '02', title: 'Acceptable Use Policy' },
-    { id: 'section-3', num: '03', title: 'Disclaimer of Warranties' },
-    { id: 'section-4', num: '04', title: 'Limitation of Liability' },
-    { id: 'section-5', num: '05', title: 'Account Termination' },
-    { id: 'section-6', num: '06', title: 'Modifications to Terms' },
+    { id: 'section-2', num: '02', title: 'Service & Digital Delivery' },
+    { id: 'section-3', num: '03', title: 'User Accounts & Responsibilities' },
+    { id: 'section-4', num: '04', title: 'Acceptable Use & Content' },
+    { id: 'section-5', num: '05', title: 'Security Scanning & Threats' },
+    { id: 'section-6', num: '06', title: 'Subscription Billing & Pricing' },
+    { id: 'section-7', num: '07', title: 'Cancellation & Refund Policy' },
+    { id: 'section-8', num: '08', title: 'Data Loss & Liability' },
+    { id: 'section-9', num: '09', title: 'Account Suspension' },
+    { id: 'section-10', num: '10', title: 'Governing Law & Disputes' },
+    { id: 'section-11', num: '11', title: 'Contact Information' },
   ];
 
   return (
@@ -60,7 +65,7 @@ export default function TermsOfService() {
             Terms of Service
           </h1>
           <p className="text-sm md:text-base font-mono text-neutral-500">
-            Last Updated: October 2026
+            Last Updated: November 2026
           </p>
         </div>
 
@@ -122,7 +127,7 @@ export default function TermsOfService() {
                 <h2 className="text-xl lg:text-2xl font-bold text-white tracking-tight">Acceptance of Terms</h2>
               </div>
               <p className="text-neutral-300 text-sm sm:text-base leading-relaxed">
-                By accessing or using CloudGuard Vault (&ldquo;the Service&rdquo;), you acknowledge that you have read, understood, and agree to be bound by these Terms of Service. CloudGuard Vault is engineered and provided primarily as an advanced demonstration and portfolio architecture showcasing real-time AI malware scanning and zero-trust cloud file storage. If you do not agree to these terms, do not access or use the application.
+                By accessing or using CloudGuard (&ldquo;CloudGuard&rdquo;, &ldquo;we&rdquo;, &ldquo;our&rdquo;, or &ldquo;us&rdquo;) via <code className="text-xs font-mono px-1.5 py-0.5 rounded bg-neutral-800 text-purple-300">cloudguard.site</code> and associated APIs, you agree to be bound by these Terms and Conditions. If you do not agree to these terms, do not access or use our services. These terms constitute a legally binding agreement between you and CloudGuard.
               </p>
             </section>
 
@@ -132,16 +137,15 @@ export default function TermsOfService() {
                 <span className="text-xs font-mono font-semibold px-2.5 py-1 rounded-md bg-neutral-800 text-neutral-300 border border-neutral-700">
                   02
                 </span>
-                <h2 className="text-xl lg:text-2xl font-bold text-white tracking-tight">Acceptable Use Policy</h2>
+                <h2 className="text-xl lg:text-2xl font-bold text-white tracking-tight">Service Description &amp; Digital Delivery</h2>
               </div>
               <p className="text-neutral-300 text-sm sm:text-base leading-relaxed">
-                You agree to use CloudGuard strictly for legitimate file management, streaming, and testing purposes. You expressly agree not to:
+                CloudGuard provides high-performance cloud storage, file synchronization, automated cryptographic threat detection, and media management services.
               </p>
               <ul className="list-disc list-inside space-y-2.5 pl-2 text-neutral-400 text-sm sm:text-base">
-                <li>Intentionally upload, store, or distribute illegal content, unlawful material, or zero-day weaponized exploits.</li>
-                <li>Deploy automated bots, denial-of-service vectors, or brute-force scripts intended to degrade or impair the host servers or S3 infrastructure.</li>
-                <li>Attempt to reverse-engineer, bypass, or tamper with API authentication, token validation, or S3 pre-signed security constraints.</li>
-                <li>Circumvent storage quota limitations or abuse server-side scanning services.</li>
+                <li>
+                  <strong className="text-neutral-200">Instant Digital Fulfillment:</strong> Upon successful payment confirmation for any upgraded subscription tier or storage allocation, access to additional storage quotas and premium features is provisioned immediately to your account dashboard with zero shipping or handling delay.
+                </li>
               </ul>
             </section>
 
@@ -151,20 +155,11 @@ export default function TermsOfService() {
                 <span className="text-xs font-mono font-semibold px-2.5 py-1 rounded-md bg-neutral-800 text-neutral-300 border border-neutral-700">
                   03
                 </span>
-                <h2 className="text-xl lg:text-2xl font-bold text-white tracking-tight">Disclaimer of Warranties (&ldquo;As Is&rdquo;)</h2>
+                <h2 className="text-xl lg:text-2xl font-bold text-white tracking-tight">User Accounts &amp; Responsibilities</h2>
               </div>
-              <div className="p-5 md:p-6 bg-amber-500/10 border border-amber-500/30 rounded-xl text-amber-200/90 text-sm lg:text-base leading-relaxed space-y-3">
-                <div className="flex items-center gap-2 text-amber-400 font-mono text-xs md:text-sm uppercase tracking-wider font-semibold">
-                  <AlertTriangle size={16} />
-                  <span>Notice to Users</span>
-                </div>
-                <p className="font-medium text-amber-100">
-                  THE SERVICE AND ITS INTEGRATED MACHINE LEARNING MALWARE DETECTION HEURISTICS ARE PROVIDED STRICTLY ON AN &ldquo;AS IS&rdquo; AND &ldquo;AS AVAILABLE&rdquo; BASIS WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED.
-                </p>
-                <p className="text-amber-200/80 text-xs sm:text-sm">
-                  While our static analysis models and threat checks significantly reduce exposure to malicious binaries, CloudGuard does NOT guarantee 100% detection of all zero-day malware, sophisticated evasion techniques, or uncorrupted storage persistence, nor does it guarantee uninterrupted uptime.
-                </p>
-              </div>
+              <p className="text-neutral-300 text-sm sm:text-base leading-relaxed">
+                You must be at least 18 years of age or possess legal parental/guardian consent to use CloudGuard. You are solely responsible for maintaining the confidentiality of your account credentials, multi-factor authentication devices, and all activities that occur under your account.
+              </p>
             </section>
 
             {/* Section 4 */}
@@ -173,11 +168,17 @@ export default function TermsOfService() {
                 <span className="text-xs font-mono font-semibold px-2.5 py-1 rounded-md bg-neutral-800 text-neutral-300 border border-neutral-700">
                   04
                 </span>
-                <h2 className="text-xl lg:text-2xl font-bold text-white tracking-tight">Limitation of Liability</h2>
+                <h2 className="text-xl lg:text-2xl font-bold text-white tracking-tight">Acceptable Use &amp; Prohibited Content</h2>
               </div>
               <p className="text-neutral-300 text-sm sm:text-base leading-relaxed">
-                Under no circumstances shall CloudGuard, its maintainers, or its affiliates be liable for any direct, indirect, incidental, special, consequential, or punitive damages resulting from the use of, or inability to use, this demonstration service. This includes, without limitation, loss of data, file corruption, transmission interruptions, or business disruptions. Users are strongly advised to maintain secondary offline backups of all essential documents.
+                You retain all ownership rights to the files, media, and data you upload to CloudGuard. However, you agree not to upload, store, share, or transmit:
               </p>
+              <ul className="list-disc list-inside space-y-2.5 pl-2 text-neutral-400 text-sm sm:text-base">
+                <li>Malware, viruses, trojans, ransomware, spyware, or malicious payloads.</li>
+                <li>Material that infringes on any third party’s intellectual property, patent, trademark, or copyright.</li>
+                <li>Child Sexual Abuse Material (CSAM), non-consensual sexual content, or violent extremist material.</li>
+                <li>Content intended to perpetrate phishing, denial of service attacks, or unauthorized penetration testing against CloudGuard infrastructure or third parties.</li>
+              </ul>
             </section>
 
             {/* Section 5 */}
@@ -186,11 +187,16 @@ export default function TermsOfService() {
                 <span className="text-xs font-mono font-semibold px-2.5 py-1 rounded-md bg-neutral-800 text-neutral-300 border border-neutral-700">
                   05
                 </span>
-                <h2 className="text-xl lg:text-2xl font-bold text-white tracking-tight">Account Termination &amp; Payload Quarantine</h2>
+                <h2 className="text-xl lg:text-2xl font-bold text-white tracking-tight">Automated Security Scanning &amp; Threat Enforcement</h2>
               </div>
               <p className="text-neutral-300 text-sm sm:text-base leading-relaxed">
-                We reserve the right to immediately suspend, throttle, or terminate any user account, delete suspicious file objects, or restrict upload capabilities at our sole discretion, without prior notice, if abusive upload behaviors, automated spamming, or attacks against the platform infrastructure are detected.
+                To maintain platform integrity and prevent the distribution of malicious software:
               </p>
+              <ul className="list-disc list-inside space-y-2.5 pl-2 text-neutral-400 text-sm sm:text-base">
+                <li>CloudGuard employs automated hashing (SHA-256) and heuristic static analysis microservices on uploaded binary artifacts.</li>
+                <li>If a file is determined to contain known malware signatures or harmful payloads, CloudGuard reserves the right to automatically quarantine, restrict public access to, or purge the infected artifact without prior liability.</li>
+                <li>Automated scanning does not grant CloudGuard any proprietary license or ownership over your legitimate personal data.</li>
+              </ul>
             </section>
 
             {/* Section 6 */}
@@ -199,11 +205,110 @@ export default function TermsOfService() {
                 <span className="text-xs font-mono font-semibold px-2.5 py-1 rounded-md bg-neutral-800 text-neutral-300 border border-neutral-700">
                   06
                 </span>
-                <h2 className="text-xl lg:text-2xl font-bold text-white tracking-tight">Modifications to Terms</h2>
+                <h2 className="text-xl lg:text-2xl font-bold text-white tracking-tight">Subscription Billing, Pricing &amp; Renewals</h2>
+              </div>
+              <ul className="list-disc list-inside space-y-2.5 pl-2 text-neutral-400 text-sm sm:text-base">
+                <li>
+                  <strong className="text-neutral-200">Paid Tiers:</strong> Pricing for storage upgrades and premium bandwidth tiers is displayed on our billing page in the specified billing currency (e.g., INR / USD) inclusive of applicable taxes.
+                </li>
+                <li>
+                  <strong className="text-neutral-200">Payment Processing:</strong> Payment processing is handled by certified, PCI-DSS compliant third-party payment gateways (e.g., Razorpay, Stripe). CloudGuard does not collect, store, or process full credit/debit card numbers or sensitive banking PINs on its servers.
+                </li>
+                <li>
+                  <strong className="text-neutral-200">Automatic Renewal:</strong> Recurring subscriptions renew automatically at the end of each billing cycle unless cancelled prior to the renewal date via your account settings.
+                </li>
+              </ul>
+            </section>
+
+            {/* Section 7 */}
+            <section id="section-7" className="scroll-mt-28 bg-neutral-900/30 border border-neutral-800/80 rounded-2xl p-6 lg:p-8 backdrop-blur-sm hover:border-neutral-700/80 transition-colors space-y-4">
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-mono font-semibold px-2.5 py-1 rounded-md bg-neutral-800 text-neutral-300 border border-neutral-700">
+                  07
+                </span>
+                <h2 className="text-xl lg:text-2xl font-bold text-white tracking-tight">Cancellation &amp; Refund Policy</h2>
+              </div>
+              <ul className="list-disc list-inside space-y-2.5 pl-2 text-neutral-400 text-sm sm:text-base">
+                <li>
+                  <strong className="text-neutral-200">Subscription Cancellation:</strong> You may cancel your paid subscription at any time via your account dashboard. Upon cancellation, your account will remain active at the paid tier until the conclusion of the current prepaid billing period.
+                </li>
+                <li>
+                  <strong className="text-neutral-200">Refund Eligibility:</strong> Because CloudGuard provisions digital storage allocations immediately upon payment:
+                  <ul className="list-circle list-inside space-y-1.5 pl-6 mt-1.5 text-neutral-400 text-sm sm:text-base">
+                    <li>First-time annual subscription purchases are eligible for a full refund within seven (7) calendar days of initial purchase if you have utilized less than 5% of your upgraded quota.</li>
+                    <li>Monthly recurring charges, consumed storage overages, and renewal billing cycles are non-refundable once activated.</li>
+                    <li>To request a refund review under exceptional technical failures, contact <a href="mailto:support@cloudguard.site" className="text-purple-400 hover:underline"><code className="text-xs font-mono px-1.5 py-0.5 rounded bg-neutral-800 text-purple-300">support@cloudguard.site</code></a> within 7 days of the charge with your transaction ID.</li>
+                    <li>Approved refunds are processed and credited back to the customer's original payment method within 5 to 7 business days, subject to the issuing bank's clearing cycle.</li>
+                  </ul>
+                </li>
+              </ul>
+            </section>
+
+            {/* Section 8 */}
+            <section id="section-8" className="scroll-mt-28 bg-neutral-900/30 border border-neutral-800/80 rounded-2xl p-6 lg:p-8 backdrop-blur-sm hover:border-neutral-700/80 transition-colors space-y-4">
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-mono font-semibold px-2.5 py-1 rounded-md bg-neutral-800 text-neutral-300 border border-neutral-700">
+                  08
+                </span>
+                <h2 className="text-xl lg:text-2xl font-bold text-white tracking-tight">Data Loss, Backups &amp; Limitation of Liability</h2>
               </div>
               <p className="text-neutral-300 text-sm sm:text-base leading-relaxed">
-                We may revise these Terms of Service periodically to reflect infrastructure modifications, new capabilities, or legal compliance updates. Continued use of CloudGuard Vault following any posted changes constitutes full acceptance of the updated terms.
+                While CloudGuard utilizes redundant cloud object storage and automated failover pipelines:
               </p>
+              <div className="p-5 md:p-6 bg-amber-500/10 border border-amber-500/30 rounded-xl text-amber-200/90 text-sm lg:text-base leading-relaxed space-y-3">
+                <div className="flex items-center gap-2 text-amber-400 font-mono text-xs md:text-sm uppercase tracking-wider font-semibold">
+                  <AlertTriangle size={16} />
+                  <span>Important Disclaimer</span>
+                </div>
+                <ul className="list-disc list-inside space-y-2 text-amber-200/90 text-sm sm:text-base">
+                  <li>The service is provided on an &ldquo;AS IS&rdquo; and &ldquo;AS AVAILABLE&rdquo; basis. You are encouraged to maintain independent local backups of mission-critical data.</li>
+                  <li>To the maximum extent permitted by applicable law, CloudGuard and its affiliates shall not be liable for any indirect, incidental, punitive, or consequential damages, including loss of data, loss of business profits, or system downtime resulting from network interruptions or third-party cloud provider outages.</li>
+                </ul>
+              </div>
+            </section>
+
+            {/* Section 9 */}
+            <section id="section-9" className="scroll-mt-28 bg-neutral-900/30 border border-neutral-800/80 rounded-2xl p-6 lg:p-8 backdrop-blur-sm hover:border-neutral-700/80 transition-colors space-y-4">
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-mono font-semibold px-2.5 py-1 rounded-md bg-neutral-800 text-neutral-300 border border-neutral-700">
+                  09
+                </span>
+                <h2 className="text-xl lg:text-2xl font-bold text-white tracking-tight">Account Suspension &amp; Termination</h2>
+              </div>
+              <p className="text-neutral-300 text-sm sm:text-base leading-relaxed">
+                CloudGuard reserves the right to temporarily suspend or permanently terminate accounts that violate these terms, engage in chargeback fraud, or attempt to compromise server infrastructure. Upon termination for cause, access to stored files may be permanently revoked.
+              </p>
+            </section>
+
+            {/* Section 10 */}
+            <section id="section-10" className="scroll-mt-28 bg-neutral-900/30 border border-neutral-800/80 rounded-2xl p-6 lg:p-8 backdrop-blur-sm hover:border-neutral-700/80 transition-colors space-y-4">
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-mono font-semibold px-2.5 py-1 rounded-md bg-neutral-800 text-neutral-300 border border-neutral-700">
+                  10
+                </span>
+                <h2 className="text-xl lg:text-2xl font-bold text-white tracking-tight">Governing Law &amp; Dispute Resolution</h2>
+              </div>
+              <p className="text-neutral-300 text-sm sm:text-base leading-relaxed">
+                These Terms shall be governed by and construed in accordance with the laws of India. Any disputes arising out of or related to these terms shall be subject to the exclusive jurisdiction of the competent courts in Udham Singh Nagar / Nainital, Uttarakhand, India.
+              </p>
+            </section>
+
+            {/* Section 11 */}
+            <section id="section-11" className="scroll-mt-28 bg-neutral-900/30 border border-neutral-800/80 rounded-2xl p-6 lg:p-8 backdrop-blur-sm hover:border-neutral-700/80 transition-colors space-y-4">
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-mono font-semibold px-2.5 py-1 rounded-md bg-neutral-800 text-neutral-300 border border-neutral-700">
+                  11
+                </span>
+                <h2 className="text-xl lg:text-2xl font-bold text-white tracking-tight">Contact Information &amp; Customer Support</h2>
+              </div>
+              <p className="text-neutral-300 text-sm sm:text-base leading-relaxed">
+                For inquiries, billing disputes, or technical assistance:
+              </p>
+              <ul className="list-disc list-inside space-y-2.5 pl-2 text-neutral-400 text-sm sm:text-base">
+                <li><strong className="text-neutral-200">Support Email:</strong> <a href="mailto:support@cloudguard.site" className="text-purple-400 hover:underline"><code className="text-xs font-mono px-1.5 py-0.5 rounded bg-neutral-800 text-purple-300">support@cloudguard.site</code></a></li>
+                <li><strong className="text-neutral-200">Registered Business Address:</strong> House No. 120, Main Market, Ward No. 3, Shaktifarm, Udham Singh Nagar, Uttarakhand - 263151</li>
+                <li><strong className="text-neutral-200">Response SLA:</strong> Inquiries are acknowledged within 24 to 48 business hours.</li>
+              </ul>
             </section>
           </main>
         </div>
@@ -211,7 +316,7 @@ export default function TermsOfService() {
 
       {/* Footer */}
       <footer className="w-full py-8 border-t border-neutral-900 bg-black text-center text-xs font-mono text-neutral-600">
-        &copy; 2026 CloudGuard Vault. All rights reserved.
+        &copy; 2026 CloudGuard. All rights reserved.
       </footer>
     </div>
   );

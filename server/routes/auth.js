@@ -5,7 +5,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { OAuth2Client } = require('google-auth-library');
 const User = require('../models/User');
-const { sendNotificationEmail } = require('../utils/emailService');
+const { sendActivationOtp, sendResetOtp, sendWelcomeEmail, sendNotificationEmail } = require('../utils/emailService');
 const { authLimiter, otpLimiter } = require('../middleware/rateLimiter');
 
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
@@ -94,11 +94,7 @@ router.post('/google', async (req, res) => {
       });
 
       // Send wholesome welcome email for brand new Google signups
-      sendNotificationEmail({
-        type: 'welcome',
-        to: user.email,
-        name: user.name,
-      });
+      sendWelcomeEmail(user.email, user.name);
     }
 
     const token = jwt.sign(
@@ -141,12 +137,7 @@ router.post('/register', authLimiter, async (req, res) => {
       existingUser.otpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
       await existingUser.save();
 
-      sendNotificationEmail({
-        type: 'activation',
-        to: existingUser.email,
-        name: existingUser.name,
-        otp: existingUser.otp,
-      });
+      sendActivationOtp(existingUser.email, existingUser.otp, existingUser.name);
 
       return res.status(200).json({
         message: 'Verification code resent. Please verify your email.',
@@ -173,12 +164,7 @@ router.post('/register', authLimiter, async (req, res) => {
     });
 
     // Send Activation OTP email
-    sendNotificationEmail({
-      type: 'activation',
-      to: newUser.email,
-      name: newUser.name,
-      otp,
-    });
+    sendActivationOtp(newUser.email, otp, newUser.name);
 
     return res.status(201).json({
       message: 'Verification code sent to your email.',
@@ -218,11 +204,7 @@ router.post('/verify-activation-otp', otpLimiter, async (req, res) => {
     await user.save();
 
     // Send Wholesome Welcome Email upon successful activation
-    sendNotificationEmail({
-      type: 'welcome',
-      to: user.email,
-      name: user.name,
-    });
+    sendWelcomeEmail(user.email, user.name);
 
     const token = jwt.sign(
       { id: user._id, _id: user._id, email: user.email, name: user.name, isAdmin: user.isAdmin || false },
@@ -271,11 +253,7 @@ router.post('/verify-otp', otpLimiter, async (req, res) => {
     user.otpExpires = null;
     await user.save();
 
-    sendNotificationEmail({
-      type: 'welcome',
-      to: user.email,
-      name: user.name,
-    });
+    sendWelcomeEmail(user.email, user.name);
 
     const token = jwt.sign(
       { id: user._id, _id: user._id, email: user.email, name: user.name, isAdmin: user.isAdmin || false },
@@ -312,12 +290,11 @@ router.post('/resend-otp', otpLimiter, async (req, res) => {
     }
     await user.save();
 
-    sendNotificationEmail({
-      type: type === 'reset' ? 'reset' : 'activation',
-      to: user.email,
-      name: user.name,
-      otp,
-    });
+    if (type === 'reset') {
+      sendResetOtp(user.email, otp, user.name);
+    } else {
+      sendActivationOtp(user.email, otp, user.name);
+    }
 
     return res.status(200).json({ message: 'A new code has been sent.' });
   } catch (err) {
@@ -365,12 +342,7 @@ router.post('/login', authLimiter, async (req, res) => {
       user.otpExpires = new Date(Date.now() + 10 * 60 * 1000);
       await user.save();
 
-      sendNotificationEmail({
-        type: 'activation',
-        to: user.email,
-        name: user.name,
-        otp,
-      });
+      sendActivationOtp(user.email, otp, user.name);
 
       return res.status(403).json({
         error: 'Please verify your email before logging in. A new OTP has been sent.',
@@ -439,12 +411,7 @@ router.post('/forgot-password', otpLimiter, async (req, res) => {
     user.resetPasswordExpire = user.otpExpires;
     await user.save();
 
-    sendNotificationEmail({
-      type: 'reset',
-      to: user.email,
-      name: user.name,
-      otp,
-    });
+    sendResetOtp(user.email, otp, user.name);
 
     return res.status(200).json({ message: 'Password reset code sent to your email.' });
   } catch (err) {

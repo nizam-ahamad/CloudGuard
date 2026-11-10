@@ -318,15 +318,6 @@ export default function LandingPage() {
             <Link className="hover:text-white transition-colors" to="/terms">
               Terms of Service
             </Link>
-            <span className="text-neutral-700 select-none">•</span>
-            <a 
-              href="https://github.com/nizam-ahamad/CloudGuard" 
-              target="_blank" 
-              rel="noreferrer" 
-              className="hover:text-white transition-colors"
-            >
-              GitHub
-            </a>
           </div>
 
           {/* Copyright Note */}
