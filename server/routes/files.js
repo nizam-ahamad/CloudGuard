@@ -899,8 +899,20 @@ router.post('/bulk-delete', authMiddleware, handleBatchDelete);
 const handleBatchRestore = async (req, res) => {
   try {
     const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
+    const userIdObj = mongoose.Types.ObjectId.isValid(rawUserId)
+      ? new mongoose.Types.ObjectId(rawUserId)
+      : rawUserId;
+
+    const userMatch = {
+      $or: [
+        { userId: userIdObj },
+        { userId: String(rawUserId) },
+        { user: userIdObj },
+        { user: String(rawUserId) },
+      ],
+    };
+
     const { fileIds = [], folderIds = [] } = req.body;
-    const userMatch = { $or: [{ userId: rawUserId }, { user: rawUserId }] };
 
     const validFileIds = (Array.isArray(fileIds) ? fileIds : [])
       .filter((id) => id && mongoose.Types.ObjectId.isValid(String(id)))
@@ -912,46 +924,61 @@ const handleBatchRestore = async (req, res) => {
 
     let restoredBytes = 0;
 
+    // 1. Restore specific files
     if (validFileIds.length > 0) {
-      const files = await File.find({ _id: { $in: validFileIds }, isTrash: true, ...userMatch });
-      for (const f of files) restoredBytes += (f.size || 0);
-
-      await File.updateMany(
-        { _id: { $in: validFileIds }, ...userMatch },
-        { $set: { isTrash: false, trashedAt: null } }
-      );
-    }
-
-    if (validFolderIds.length > 0) {
-      const allFolderIds = [...validFolderIds];
-      if (typeof getDescendantFolderIds === 'function') {
-        for (const fId of validFolderIds) {
-          const descendants = await getDescendantFolderIds(fId, userMatch);
-          allFolderIds.push(...descendants);
-        }
+      const filesToRestore = await File.find({ _id: { $in: validFileIds }, ...userMatch });
+      for (const f of filesToRestore) {
+        restoredBytes += (f.size || 0);
       }
 
-      const childFiles = await File.find({
-        $or: [{ folder: { $in: allFolderIds } }, { folderId: { $in: allFolderIds } }],
-        isTrash: true,
-        ...userMatch,
-      });
-      for (const cf of childFiles) restoredBytes += (cf.size || 0);
+      // Check if parent folders still exist; if not, reattach to root
+      const parentFolderIds = filesToRestore.map((f) => f.folderId || f.folder).filter(Boolean);
+      const existingFolders = await Folder.find({ _id: { $in: parentFolderIds }, isTrash: { $ne: true } }).select('_id');
+      const existingFolderIdSet = new Set(existingFolders.map((f) => String(f._id)));
 
+      for (const f of filesToRestore) {
+        const pId = String(f.folderId || f.folder || '');
+        const shouldResetToRoot = pId && !existingFolderIdSet.has(pId);
+
+        await File.updateOne(
+          { _id: f._id },
+          {
+            $set: {
+              isTrash: false,
+              trashedAt: null,
+              ...(shouldResetToRoot ? { folder: null, folderId: null } : {}),
+            },
+          }
+        );
+      }
+    }
+
+    // 2. Restore folders and nested contents
+    if (validFolderIds.length > 0) {
       await Folder.updateMany(
-        { _id: { $in: allFolderIds }, ...userMatch },
+        { _id: { $in: validFolderIds }, ...userMatch },
         { $set: { isTrash: false, trashedAt: null } }
       );
+
+      const childFiles = await File.find({
+        $or: [{ folder: { $in: validFolderIds } }, { folderId: { $in: validFolderIds } }],
+        ...userMatch,
+      });
+
+      for (const cf of childFiles) {
+        restoredBytes += (cf.size || 0);
+      }
 
       await File.updateMany(
         {
-          $or: [{ folder: { $in: allFolderIds } }, { folderId: { $in: allFolderIds } }],
+          $or: [{ folder: { $in: validFolderIds } }, { folderId: { $in: validFolderIds } }],
           ...userMatch,
         },
         { $set: { isTrash: false, trashedAt: null } }
       );
     }
 
+    // 3. Increment quota back
     if (restoredBytes > 0) {
       await User.findByIdAndUpdate(rawUserId, {
         $inc: { storageUsed: Math.abs(restoredBytes) },
@@ -960,9 +987,8 @@ const handleBatchRestore = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      restoredFiles: validFileIds.length,
-      restoredFolders: validFolderIds.length,
       restoredCount: validFileIds.length + validFolderIds.length,
+      restoredBytes,
     });
   } catch (err) {
     console.error('Restore error:', err);
