@@ -8,6 +8,7 @@ import pefile
 import boto3
 import pandas as pd
 from collections import Counter
+from typing import Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -50,11 +51,11 @@ ANTIGRAVITY_HASH_WHITELIST = {
 } - {""}
 
 class ScanRequest(BaseModel):
-    s3Key: str = None
-    fileKey: str = None
-    fileName: str = None
-    filename: str = None
-    sha256: str = None
+    s3Key: Optional[str] = None
+    fileKey: Optional[str] = None
+    fileName: Optional[str] = None
+    filename: Optional[str] = None
+    sha256: Optional[str] = None
 
 def calculate_entropy(data: bytes) -> float:
     """Calculate Shannon entropy of a byte buffer."""
@@ -160,7 +161,7 @@ def stream_inspect_pe_headers(s3_key: str) -> dict:
                 "status": "malicious",
                 "isMalicious": True,
                 "threatVerdict": "malicious",
-                "reason": "EICAR standard test virus signature detected in payload",
+                "reason": "EICAR test signature in payload",
                 "confidenceScore": 1.0
             }
 
@@ -281,7 +282,7 @@ async def scan_file(payload: ScanRequest):
                     "isMalicious": True,
                     "status": "malicious",
                     "threatVerdict": "malicious",
-                    "reason": "EICAR standard test virus signature detected in payload",
+                    "reason": "EICAR test signature in payload",
                     "confidenceScore": 1.0
                 }
         except Exception as e:

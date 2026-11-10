@@ -462,7 +462,7 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
           return res.status(200).json({
             success: false,
             isMalicious: true,
-            message: 'Threat intercepted (EICAR signature). File automatically deleted.',
+            message: `Threat detected: "${file.name}" was automatically deleted from vault.`,
           });
         }
       } catch (eicarErr) {
@@ -532,7 +532,7 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
         return res.status(200).json({
           success: false,
           isMalicious: true,
-          message: 'Threat intercepted (EICAR signature). File automatically deleted.',
+          message: `Threat detected: "${file.name}" was automatically deleted from vault.`,
         });
       }
 
