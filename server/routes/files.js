@@ -376,14 +376,17 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
     // 0. STRICT CRYPTOGRAPHIC WHITELIST: Antigravity ONLY via verified SHA-256
     if (normalizedHash && ANTIGRAVITY_HASH_WHITELIST.has(normalizedHash)) {
       console.log(`[CloudGuard Security] Verified clean via Antigravity SHA-256 whitelist: ${normalizedHash}`);
+      const previousSecurityStatus = file.securityStatus;
       file.securityStatus = 'clean';
       file.isMalicious = false;
       file.status = 'safe';
       await file.save();
 
-      await User.findByIdAndUpdate(rawUserId, {
-        $inc: { storageUsed: file.size },
-      });
+      if (previousSecurityStatus !== 'clean') {
+        await User.findByIdAndUpdate(rawUserId, {
+          $inc: { storageUsed: file.size },
+        });
+      }
 
       return res.status(200).json({
         success: true,
@@ -551,14 +554,18 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
     }
 
     // 5. Commit Clean File
+    const previousSecurityStatus = file.securityStatus;
     file.securityStatus = 'clean';
     file.isMalicious = false;
     file.status = 'safe';
     await file.save();
 
-    await User.findByIdAndUpdate(file.userId, {
-      $inc: { storageUsed: file.size },
-    });
+    // Only increment quota if the file was not already clean
+    if (previousSecurityStatus !== 'clean') {
+      await User.findByIdAndUpdate(file.userId, {
+        $inc: { storageUsed: file.size },
+      });
+    }
 
     return res.status(200).json({
       success: true,
@@ -831,100 +838,63 @@ router.post('/restore-batch', authMiddleware, handleBatchRestore);
 router.post('/batch-restore', authMiddleware, handleBatchRestore);
 
 // -------------------------------------------------------------
-// 9. STORAGE STATS RECALCULATION (ROBUST ObjectId CASTING & FALLBACK)
+// 9. DYNAMIC LIVE STORAGE AGGREGATION
 // -------------------------------------------------------------
 const getStorageStats = async (req, res) => {
   try {
-    const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
-    if (!rawUserId) {
-      return res.status(401).json({ error: 'Unauthorized: User ID missing from session' });
-    }
-
+    const rawUserId = req.user.id || req.user._id;
     const userIdObj = mongoose.Types.ObjectId.isValid(rawUserId)
       ? new mongoose.Types.ObjectId(rawUserId)
-      : null;
+      : rawUserId;
 
-    // Support both String and ObjectId query matching for legacy compatibility
-    const userMatchConditions = [
-      { userId: rawUserId },
-      { user: rawUserId },
-    ];
-    if (userIdObj) {
-      userMatchConditions.push({ userId: userIdObj }, { user: userIdObj });
-    }
+    const userMatch = {
+      $or: [
+        { userId: userIdObj },
+        { user: userIdObj },
+        { userId: String(rawUserId) },
+        { user: String(rawUserId) },
+      ],
+    };
 
-    // 1. Calculate actual active storage used using Aggregation
-    let actualStorageUsed = 0;
-    try {
-      const stats = await File.aggregate([
-        {
-          $match: {
-            isTrash: { $ne: true },
-            securityStatus: { $ne: 'threat_purged' },
-            $or: userMatchConditions,
-          },
+    // Calculate real active storage
+    const stats = await File.aggregate([
+      {
+        $match: {
+          isTrash: { $ne: true },
+          securityStatus: { $ne: 'threat_purged' },
+          ...userMatch,
         },
-        {
-          $group: {
-            _id: null,
-            totalBytes: { $sum: { $ifNull: ['$size', 0] } },
-          },
+      },
+      {
+        $group: {
+          _id: null,
+          actualUsedBytes: { $sum: { $ifNull: ['$size', 0] } },
         },
-      ]);
-      actualStorageUsed = stats[0]?.totalBytes || 0;
-    } catch (aggErr) {
-      console.warn('Aggregation fallback triggered:', aggErr.message);
-      // Fallback: simple sum via find if aggregation pipeline encounters driver issues
-      const activeFiles = await File.find({
-        isTrash: { $ne: true },
-        securityStatus: { $ne: 'threat_purged' },
-        $or: userMatchConditions,
-      }).select('size').lean();
-      actualStorageUsed = activeFiles.reduce((acc, curr) => acc + (curr.size || 0), 0);
-    }
+      },
+    ]);
 
-    // 2. Fetch User Quota Limit & Sync storageUsed
-    const defaultLimit = 5368709120; // 5 GB default
-    let storageLimit = defaultLimit;
+    const actualStorageUsed = stats[0]?.actualUsedBytes || 0;
 
-    if (userIdObj) {
-      const user = await User.findById(userIdObj).select('storageLimit').lean();
-      if (user?.storageLimit) {
-        storageLimit = user.storageLimit;
-      }
-      // Update user document asynchronously (non-blocking)
-      User.findByIdAndUpdate(userIdObj, { storageUsed: actualStorageUsed }).exec();
-    }
+    // Synchronize user record in background
+    await User.findByIdAndUpdate(rawUserId, { storageUsed: actualStorageUsed });
 
-    const percentage = storageLimit > 0
-      ? Math.min(100, (actualStorageUsed / storageLimit) * 100).toFixed(1)
-      : '0.0';
+    const user = await User.findById(rawUserId).select('storageLimit').lean();
+    const storageLimit = user?.storageLimit || 5368709120; // 5 GB
 
     return res.status(200).json({
-      success: true,
       storageUsed: actualStorageUsed,
       used: actualStorageUsed,
       usedBytes: actualStorageUsed,
       storageLimit,
       limit: storageLimit,
       totalLimitBytes: storageLimit,
-      percentage,
-      usedPercentage: percentage,
+      percentage: Math.min(100, (actualStorageUsed / storageLimit) * 100).toFixed(1),
+      usedPercentage: Math.min(100, (actualStorageUsed / storageLimit) * 100).toFixed(1),
+      success: true,
     });
   } catch (err) {
-    console.error('Fatal error in getStorageStats:', err);
-    // Never crash the entire dashboard UI with a 500: return safe defaults
-    return res.status(200).json({
-      success: true,
-      storageUsed: 0,
-      used: 0,
-      usedBytes: 0,
-      storageLimit: 5368709120,
-      limit: 5368709120,
-      totalLimitBytes: 5368709120,
-      percentage: '0.0',
-      usedPercentage: '0.0',
-    });
+    console.error('Storage stats error:', err);
+    return res.status(500).json({ error: 'Failed to retrieve storage stats' });
   }
 };
 
