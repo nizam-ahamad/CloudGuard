@@ -259,6 +259,9 @@ export default function PrivacyPolicy() {
                 <li>
                   <strong className="text-neutral-200">Account Deletion &amp; Data Purge:</strong> When you delete a file or trash folder, it is marked for immediate de-referencing and permanently pruned from storage repositories. If you request account closure, all associated records, metadata, and files are permanently purged within 30 days.
                 </li>
+                <li>
+                  <strong className="text-neutral-200">Zero-Parking Retention &amp; DPDP Minimization:</strong> In accordance with statutory data minimization principles under the Digital Personal Data Protection (DPDP) Act, CloudGuard does not retain unmonetized personal storage indefinitely. Vaults that conclude their 14-day evaluation trial without an active subscription upgrade, or cancelled subscriptions that reach the conclusion of their prepaid term, receive a 7-day read-only grace period solely to allow users to export stored assets. Upon expiration of this 7-day grace window, all stored files, encryption keys, and metadata are permanently and irreversibly purged from our object storage repositories to maintain zero unmonetized data liability.
+                </li>
               </ul>
             </section>
 
@@ -285,9 +288,20 @@ export default function PrivacyPolicy() {
         </div>
       </div>
 
-      {/* Footer */}
-      <footer className="w-full py-8 border-t border-neutral-900 bg-black text-center text-xs font-mono text-neutral-600">
-        &copy; 2026 CloudGuard. All rights reserved.
+      {/* Universal Footer */}
+      <footer className="w-full py-8 border-t border-neutral-900 bg-black text-center text-xs">
+        <div className="flex flex-wrap justify-center gap-6 text-xs text-neutral-400 mb-4">
+          <Link className="hover:text-white transition-colors" to="/pricing">Pricing</Link>
+          <span>•</span>
+          <Link className="hover:text-white transition-colors" to="/terms">Terms of Service</Link>
+          <span>•</span>
+          <Link className="hover:text-white transition-colors" to="/privacy">Privacy Policy</Link>
+          <span>•</span>
+          <Link className="hover:text-white transition-colors" to="/refund-policy">Refund Policy</Link>
+          <span>•</span>
+          <Link className="hover:text-white transition-colors" to="/contact">Contact Us</Link>
+        </div>
+        <p className="text-xs text-neutral-500">© 2026 CloudGuard. All rights reserved.</p>
       </footer>
     </div>
   );

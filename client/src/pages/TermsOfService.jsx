@@ -146,6 +146,9 @@ export default function TermsOfService() {
                 <li>
                   <strong className="text-neutral-200">Instant Digital Fulfillment:</strong> Upon successful payment confirmation for any upgraded subscription tier or storage allocation, access to additional storage quotas and premium features is provisioned immediately to your account dashboard with zero shipping or handling delay.
                 </li>
+                <li>
+                  <strong className="text-neutral-200">14-Day Evaluation Trial (Zero Forever-Free Policy):</strong> New accounts are provisioned with a 14-day evaluation trial including 5 GB of storage to evaluate platform performance, zero-knowledge encryption, and automated malware analysis. CloudGuard does not provide a permanent, unmonetized forever-free storage tier. Unpaid vaults are never parked or held indefinitely; accounts that do not upgrade prior to trial expiration transition to a 7-day read-only grace period before permanent cryptographic deletion.
+                </li>
               </ul>
             </section>
 
@@ -209,7 +212,18 @@ export default function TermsOfService() {
               </div>
               <ul className="list-disc list-inside space-y-2.5 pl-2 text-neutral-400 text-sm sm:text-base">
                 <li>
-                  <strong className="text-neutral-200">Paid Tiers:</strong> Pricing for storage upgrades and premium bandwidth tiers is displayed on our billing page in the specified billing currency (e.g., INR / USD) inclusive of applicable taxes.
+                  <strong className="text-neutral-200">Declared Capacity Tiers:</strong> Paid storage tiers are provisioned at the following rates:
+                  <ul className="list-circle list-inside space-y-1.5 pl-6 mt-1.5 text-neutral-400 text-sm sm:text-base">
+                    <li><strong className="text-neutral-300">Essential Vault (50 GB):</strong> ₹49 / month OR ₹499 / year (~₹41.58/mo).</li>
+                    <li><strong className="text-neutral-300">Pro Vault (100 GB):</strong> ₹99 / month OR ₹999 / year (~₹83.25/mo).</li>
+                    <li><strong className="text-neutral-300">Ultra Vault (200 GB):</strong> ₹189 / month OR ₹1,899 / year (~₹158.25/mo).</li>
+                  </ul>
+                </li>
+                <li>
+                  <strong className="text-neutral-200">Mid-Cycle Upgrades &amp; Co-Terming:</strong> Users may upgrade capacity at any point during an active term. Annual-to-annual tier upgrades are calculated using daily co-terming (paying the rate delta for remaining days with an unchanged anniversary date). Monthly-to-annual upgrades add 365 days directly to the remaining cycle.
+                </li>
+                <li>
+                  <strong className="text-neutral-200">Plan Downgrades:</strong> Downgrades take effect strictly at the conclusion of the active prepaid billing cycle. To complete a downgrade, current aggregate stored volume must be less than or equal to the target tier quota.
                 </li>
                 <li>
                   <strong className="text-neutral-200">Payment Processing:</strong> Payment processing is handled by certified, PCI-DSS compliant third-party payment gateways (e.g., Razorpay, Stripe). CloudGuard does not collect, store, or process full credit/debit card numbers or sensitive banking PINs on its servers.
@@ -263,6 +277,7 @@ export default function TermsOfService() {
                 <ul className="list-disc list-inside space-y-2 text-amber-200/90 text-sm sm:text-base">
                   <li>The service is provided on an &ldquo;AS IS&rdquo; and &ldquo;AS AVAILABLE&rdquo; basis. You are encouraged to maintain independent local backups of mission-critical data.</li>
                   <li>To the maximum extent permitted by applicable law, CloudGuard and its affiliates shall not be liable for any indirect, incidental, punitive, or consequential damages, including loss of data, loss of business profits, or system downtime resulting from network interruptions or third-party cloud provider outages.</li>
+                  <li><strong className="text-amber-200">Zero-Parking Policy &amp; Automated Cryptographic Purge:</strong> Accounts that reach trial expiration without upgrading, or cancelled subscriptions reaching term-end, enter a 7-day read-only grace period solely to allow users to export stored assets. Upon conclusion of this 7-day grace window, all files, cryptographic keys, and metadata are permanently and irreversibly purged from object storage clusters. CloudGuard explicitly disclaims all liability for data loss arising from automated purges of unpaid or expired accounts.</li>
                 </ul>
               </div>
             </section>
@@ -273,10 +288,13 @@ export default function TermsOfService() {
                 <span className="text-xs font-mono font-semibold px-2.5 py-1 rounded-md bg-neutral-800 text-neutral-300 border border-neutral-700">
                   09
                 </span>
-                <h2 className="text-xl lg:text-2xl font-bold text-white tracking-tight">Account Suspension &amp; Termination</h2>
+                <h2 className="text-xl lg:text-2xl font-bold text-white tracking-tight">Account Suspension, Termination &amp; Zero-Parking Purge</h2>
               </div>
               <p className="text-neutral-300 text-sm sm:text-base leading-relaxed">
                 CloudGuard reserves the right to temporarily suspend or permanently terminate accounts that violate these terms, engage in chargeback fraud, or attempt to compromise server infrastructure. Upon termination for cause, access to stored files may be permanently revoked.
+              </p>
+              <p className="text-neutral-300 text-sm sm:text-base leading-relaxed">
+                <strong className="text-neutral-200">Zero-Parking Lifecycle:</strong> CloudGuard strictly prohibits unmonetized permanent data parking. If an evaluation trial is not upgraded within 14 days, or if an active subscription lapses and is not renewed, the account immediately enters a 7-day read-only grace period during which file downloads are permitted but new uploads are disabled. Following this 7-day grace period, all uploaded files, cryptographic keys, and directory structures are automatically, permanently, and irreversibly purged from our storage infrastructure to maintain ₹0.00 unmonetized storage costs. CloudGuard disclaims all liability for data destroyed under this automated policy.
               </p>
             </section>
 
@@ -314,9 +332,20 @@ export default function TermsOfService() {
         </div>
       </div>
 
-      {/* Footer */}
-      <footer className="w-full py-8 border-t border-neutral-900 bg-black text-center text-xs font-mono text-neutral-600">
-        &copy; 2026 CloudGuard. All rights reserved.
+      {/* Universal Footer */}
+      <footer className="w-full py-8 border-t border-neutral-900 bg-black text-center text-xs">
+        <div className="flex flex-wrap justify-center gap-6 text-xs text-neutral-400 mb-4">
+          <Link className="hover:text-white transition-colors" to="/pricing">Pricing</Link>
+          <span>•</span>
+          <Link className="hover:text-white transition-colors" to="/terms">Terms of Service</Link>
+          <span>•</span>
+          <Link className="hover:text-white transition-colors" to="/privacy">Privacy Policy</Link>
+          <span>•</span>
+          <Link className="hover:text-white transition-colors" to="/refund-policy">Refund Policy</Link>
+          <span>•</span>
+          <Link className="hover:text-white transition-colors" to="/contact">Contact Us</Link>
+        </div>
+        <p className="text-xs text-neutral-500">© 2026 CloudGuard. All rights reserved.</p>
       </footer>
     </div>
   );

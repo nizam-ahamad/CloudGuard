@@ -109,6 +109,9 @@ export default function LandingPage() {
           <span className="text-2xl font-semibold tracking-tight text-[#e3e3e3]">CloudGuard</span>
         </div>
         <div className="flex items-center gap-6">
+          <Link to="/pricing" className="text-xs font-mono uppercase tracking-widest text-slate-300 hover:text-white transition-colors">
+            Pricing
+          </Link>
           <Link to="/login" className="px-6 py-2 text-xs font-mono uppercase tracking-widest text-slate-400 transition-all duration-300 border border-slate-700 rounded hover:border-white hover:text-white hover:bg-white/5">
             LOGIN
           </Link>
@@ -308,22 +311,18 @@ export default function LandingPage() {
       {/* Footer */}
       <footer className="border-t border-neutral-900 bg-black/60 py-8 px-4">
         <div className="max-w-7xl mx-auto flex flex-col items-center justify-center gap-4 text-center text-xs text-neutral-400">
-          
-          {/* Navigation Links: Balanced Row with subtle dots */}
-          <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 font-normal">
-            <Link className="hover:text-white transition-colors" to="/privacy">
-              Privacy Policy
-            </Link>
-            <span className="text-neutral-700 select-none">•</span>
-            <Link className="hover:text-white transition-colors" to="/terms">
-              Terms of Service
-            </Link>
+          <div className="flex flex-wrap justify-center gap-6 text-xs text-neutral-400 mb-4">
+            <Link className="hover:text-white transition-colors" to="/pricing">Pricing</Link>
+            <span>•</span>
+            <Link className="hover:text-white transition-colors" to="/terms">Terms of Service</Link>
+            <span>•</span>
+            <Link className="hover:text-white transition-colors" to="/privacy">Privacy Policy</Link>
+            <span>•</span>
+            <Link className="hover:text-white transition-colors" to="/refund-policy">Refund Policy</Link>
+            <span>•</span>
+            <Link className="hover:text-white transition-colors" to="/contact">Contact Us</Link>
           </div>
-
-          {/* Copyright Note */}
-          <p className="text-neutral-500 font-light tracking-wide">
-            © {new Date().getFullYear()} CloudGuard Vault. All rights reserved.
-          </p>
+          <p className="text-xs text-neutral-500">© 2026 CloudGuard. All rights reserved.</p>
         </div>
       </footer>
 

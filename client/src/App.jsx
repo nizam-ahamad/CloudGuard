@@ -15,6 +15,9 @@ import LandingPage from './pages/LandingPage';
 import AuthPage from './pages/AuthPage';
 import PrivacyPolicy from './pages/PrivacyPolicy';
 import TermsOfService from './pages/TermsOfService';
+import Pricing from './pages/Pricing';
+import RefundPolicy from './pages/RefundPolicy';
+import ContactUs from './pages/ContactUs';
 import PhotosView, { invalidatePhotosCache } from './pages/PhotosView';
 import { computeSHA256 } from './pages/Dashboard';
 import { generateMediaThumbnail } from './utils/thumbnailHelper';
@@ -2050,8 +2053,11 @@ function App() {
         <Routes>
           <Route path="/" element={<LandingPage />} />
           <Route path="/login" element={<AuthPage />} />
+          <Route path="/pricing" element={<Pricing />} />
           <Route path="/privacy" element={<PrivacyPolicy />} />
           <Route path="/terms" element={<TermsOfService />} />
+          <Route path="/refund-policy" element={<RefundPolicy />} />
+          <Route path="/contact" element={<ContactUs />} />
           <Route path="/reset-password/:token" element={authContent} />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
@@ -3389,8 +3395,11 @@ function App() {
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={dashboardContent} />
         <Route path="/dashboard/photos" element={dashboardContent} />
+        <Route path="/pricing" element={<Pricing />} />
         <Route path="/privacy" element={<PrivacyPolicy />} />
         <Route path="/terms" element={<TermsOfService />} />
+        <Route path="/refund-policy" element={<RefundPolicy />} />
+        <Route path="/contact" element={<ContactUs />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
       <CookieConsent />
