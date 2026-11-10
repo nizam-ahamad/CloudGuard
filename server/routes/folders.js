@@ -620,19 +620,8 @@ router.get('/', authMiddleware, async (req, res) => {
 // DELETE /api/folders/:id
 router.delete('/:id', authMiddleware, async (req, res) => {
   try {
-    const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
-    if (!rawUserId || !mongoose.Types.ObjectId.isValid(String(rawUserId))) {
-      return res.status(401).json({ error: 'Unauthorized: Valid session required' });
-    }
+    const rawUserId = req.user.id || req.user._id || req.user.userId;
     const folderId = req.params.id;
-
-    // Strict validation: reject non-ObjectIds immediately
-    if (!folderId || !mongoose.Types.ObjectId.isValid(folderId)) {
-      return res.status(400).json({ error: 'Invalid folder ID' });
-    }
-
-    const folderObjectId = new mongoose.Types.ObjectId(folderId);
-
     const userIdObj = mongoose.Types.ObjectId.isValid(rawUserId)
       ? new mongoose.Types.ObjectId(rawUserId)
       : rawUserId;
@@ -646,24 +635,23 @@ router.delete('/:id', authMiddleware, async (req, res) => {
       ],
     };
 
-    const folder = await Folder.findOne({
-      _id: folderObjectId,
-      ...userMatch,
-    });
-    if (!folder) {
-      return res.status(404).json({ error: 'Folder not found' });
+    const folder = await Folder.findOne({ _id: folderId, ...userMatch });
+    if (!folder) return res.status(404).json({ error: 'Folder not found' });
+
+    // 1. Gather all descendant subfolder IDs
+    let allFolderIds = [folder._id];
+    if (typeof getDescendantFolderIds === 'function') {
+      const descendants = await getDescendantFolderIds(folderId, userMatch);
+      allFolderIds.push(...descendants);
     }
 
-    // Recursively collect all descendant folder IDs using getDescendantFolderIds
-    const descendantFolderIds = await getDescendantFolderIds(folderObjectId, userMatch);
-    const allFolderIds = [folder._id, ...descendantFolderIds];
     const allFolderObjectIds = allFolderIds
       .filter((id) => mongoose.Types.ObjectId.isValid(String(id)))
       .map((id) => new mongoose.Types.ObjectId(String(id)));
     const allFolderStringIds = allFolderIds.map((id) => String(id));
 
-    // Query all child files under those folders
-    const childFiles = await File.find({
+    // 2. Find all files contained in this folder hierarchy
+    const files = await File.find({
       $and: [
         userMatch,
         {
@@ -675,63 +663,62 @@ router.delete('/:id', authMiddleware, async (req, res) => {
           ],
         },
       ],
-    }).select('_id s3Key thumbnailKey size').lean();
+    });
 
-    // Collect all S3 keys to delete
-    const s3KeysToDelete = [];
-    for (const f of childFiles) {
-      if (f.s3Key) s3KeysToDelete.push({ Key: f.s3Key });
-      if (f.thumbnailKey) s3KeysToDelete.push({ Key: f.thumbnailKey });
+    // 3. Collect S3 keys and calculate freed bytes
+    const keysToDelete = [];
+    let freedBytes = 0;
+    for (const f of files) {
+      if (f.s3Key) keysToDelete.push({ Key: f.s3Key });
+      if (f.thumbnailKey) keysToDelete.push({ Key: f.thumbnailKey });
+      freedBytes += (f.size || 0);
     }
 
-    // Batch delete from S3 in chunks of 1000
-    const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
-    if (s3KeysToDelete.length > 0) {
-      for (let i = 0; i < s3KeysToDelete.length; i += 1000) {
-        const chunk = s3KeysToDelete.slice(i, i + 1000);
+    // 4. Permanently purge binaries and thumbnails from AWS S3
+    if (keysToDelete.length > 0) {
+      const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || 'cloudguard-vault-mumbai-2026';
+      for (let i = 0; i < keysToDelete.length; i += 1000) {
+        const chunk = keysToDelete.slice(i, i + 1000);
         await s3Client.send(new DeleteObjectsCommand({
           Bucket: bucket,
-          Delete: { Objects: chunk, Quiet: true },
-        })).catch((err) => console.warn(`[S3 Folder Delete Warning] ${err.message}`));
+          Delete: { Objects: chunk, Quiet: true }
+        })).catch(err => console.warn(`[Folder S3 Delete Warning] ${err.message}`));
       }
     }
 
-    // Remove file and folder records from MongoDB
-    const childFileIds = childFiles.map((f) => f._id);
-    if (childFileIds.length > 0) {
-      await File.deleteMany({ _id: { $in: childFileIds } });
-    }
-    await Folder.deleteMany({ _id: { $in: allFolderObjectIds } });
+    // 5. Delete records from database
+    await File.deleteMany({
+      $and: [
+        userMatch,
+        {
+          $or: [
+            { folder: { $in: allFolderObjectIds } },
+            { folderId: { $in: allFolderObjectIds } },
+            { folder: { $in: allFolderStringIds } },
+            { folderId: { $in: allFolderStringIds } },
+          ],
+        },
+      ],
+    });
 
-    // Decrement / resync user storage quota
-    const stats = await File.aggregate([
-      {
-        $match: {
-          isTrash: { $ne: true },
-          securityStatus: { $ne: 'threat_purged' },
-          ...userMatch,
-        },
-      },
-      {
-        $group: {
-          _id: null,
-          actualUsedBytes: { $sum: { $ifNull: ['$size', 0] } },
-        },
-      },
-    ]);
-    const actualStorageUsed = stats[0]?.actualUsedBytes || 0;
-    await User.findByIdAndUpdate(rawUserId, { storageUsed: actualStorageUsed });
+    await Folder.deleteMany({ _id: { $in: allFolderObjectIds }, ...userMatch });
+
+    // 6. Deduct freed bytes from user quota
+    if (freedBytes > 0) {
+      await User.findByIdAndUpdate(rawUserId, {
+        $inc: { storageUsed: -Math.abs(freedBytes) }
+      });
+    }
 
     return res.status(200).json({
       success: true,
-      message: 'Folder and contents deleted successfully',
+      message: 'Folder and nested contents purged from S3 and database',
+      freedBytes,
+      purgedS3Objects: keysToDelete.length,
       folderId: folder._id,
-      deletedFilesCount: childFiles.length,
-      deletedFoldersCount: allFolderIds.length,
-      storageUsed: actualStorageUsed,
     });
   } catch (err) {
-    console.error('Delete folder error:', err);
+    console.error('Folder delete error:', err);
     return res.status(500).json({ error: 'Failed to delete folder' });
   }
 });

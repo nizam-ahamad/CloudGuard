@@ -775,15 +775,17 @@ const handleBatchDelete = async (req, res) => {
         .lean();
     }
 
-    // Collect all S3 keys (s3Key and thumbnailKey)
+    // Collect all S3 keys (s3Key and thumbnailKey) and calculate freed bytes
     const s3KeysToDelete = [];
+    let freedBytes = 0;
     for (const f of filesToDelete) {
       if (f.s3Key) s3KeysToDelete.push({ Key: f.s3Key });
       if (f.thumbnailKey) s3KeysToDelete.push({ Key: f.thumbnailKey });
+      freedBytes += (f.size || 0);
     }
 
     // Batch delete from S3 in chunks of up to 1000 keys
-    const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
+    const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || 'cloudguard-vault-mumbai-2026';
     if (s3KeysToDelete.length > 0) {
       for (let i = 0; i < s3KeysToDelete.length; i += 1000) {
         const chunk = s3KeysToDelete.slice(i, i + 1000);
@@ -804,31 +806,21 @@ const handleBatchDelete = async (req, res) => {
       await Folder.deleteMany({ _id: { $in: allFolderObjectIds } });
     }
 
-    // Recalculate true storage quota for the user
-    const stats = await File.aggregate([
-      {
-        $match: {
-          isTrash: { $ne: true },
-          securityStatus: { $ne: 'threat_purged' },
-          ...userMatch,
-        },
-      },
-      {
-        $group: {
-          _id: null,
-          actualUsedBytes: { $sum: { $ifNull: ['$size', 0] } },
-        },
-      },
-    ]);
-    const actualStorageUsed = stats[0]?.actualUsedBytes || 0;
-    await User.findByIdAndUpdate(rawUserId, { storageUsed: actualStorageUsed });
+    // Deduct freed bytes from user quota
+    if (freedBytes > 0) {
+      await User.findByIdAndUpdate(rawUserId, {
+        $inc: { storageUsed: -Math.abs(freedBytes) },
+      });
+    }
 
     return res.status(200).json({
       success: true,
+      message: 'Batch items and nested contents purged from S3 and database',
       deletedFiles: fileIdsToDelete.length,
       deletedFolders: allFolderObjectIds.length,
       deletedCount: fileIdsToDelete.length + allFolderObjectIds.length,
-      storageUsed: actualStorageUsed,
+      freedBytes,
+      purgedS3Objects: s3KeysToDelete.length,
     });
   } catch (err) {
     console.error('Batch delete error:', err);
