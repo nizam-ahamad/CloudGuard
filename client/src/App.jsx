@@ -2578,52 +2578,54 @@ function App() {
                             <MoreVertical size={16} />
                           </button>
 
-                          <div className={`absolute right-0 top-8 w-48 bg-white dark:bg-[#1e1f20] rounded-xl shadow-xl border border-neutral-200 dark:border-zinc-800 z-[60] flex flex-col py-1 transition-all duration-200 ease-out origin-top-right transform ${activeFolderMenuId === folder._id ? 'opacity-100 scale-100 translate-y-0 pointer-events-auto' : 'opacity-0 scale-95 translate-y-[-10px] pointer-events-none'}`}>
-                            <button 
-                              onClick={(e) => { 
-                                e.stopPropagation(); 
-                                openMoveModal({ ...folder, isFolder: true });
-                                setActiveFolderMenuId(null); 
-                              }} 
-                              className="w-full text-left px-4 py-2 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors flex items-center gap-2 cursor-pointer"
-                            >
-                              <FolderInput size={16} strokeWidth={2} /> Move
-                            </button>
-                            <button 
-                              onClick={(e) => { 
-                                e.stopPropagation(); 
-                                setFolderToRename(folder);
-                                setNewRenameFolderName(folder.name);
-                                setShowRenameFolderModal(true);
-                                setActiveFolderMenuId(null); 
-                              }} 
-                              className="w-full text-left px-4 py-2 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors flex items-center gap-2 cursor-pointer"
-                            >
-                              <Pencil size={16} strokeWidth={2} /> Rename
-                            </button>
-                            <button 
-                              onClick={(e) => { 
-                                e.stopPropagation(); 
-                                setFolderToView(folder);
-                                setShowFolderDetailsModal(true);
-                                setActiveFolderMenuId(null); 
-                              }} 
-                              className="w-full text-left px-4 py-2 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors flex items-center gap-2 cursor-pointer"
-                            >
-                              <Info size={16} strokeWidth={2} /> Folder Details
-                            </button>
-                            <div className="border-t border-neutral-200 dark:border-neutral-700 my-1"></div>
-                            <button 
-                              onClick={(e) => { 
-                                e.stopPropagation(); 
-                                setFolderToDelete(folder); 
-                                setActiveFolderMenuId(null); 
-                              }} 
-                              className="w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors flex items-center gap-2 cursor-pointer"
-                            >
-                              <span className="material-symbols-outlined text-[18px]">delete</span> Delete
-                            </button>
-                          </div>
+                          {activeFolderMenuId === folder._id && (
+                            <div className="absolute left-0 sm:left-auto sm:right-0 top-full mt-1.5 w-44 sm:w-48 rounded-xl bg-white/95 dark:bg-neutral-900/95 backdrop-blur-md border border-neutral-200 dark:border-neutral-800 shadow-2xl p-1.5 z-50 animate-in fade-in zoom-in-95">
+                              <button 
+                                onClick={(e) => { 
+                                  e.stopPropagation(); 
+                                  openMoveModal({ ...folder, isFolder: true });
+                                  setActiveFolderMenuId(null); 
+                                }} 
+                                className="w-full text-left px-3 py-2 text-xs sm:text-sm text-neutral-700 dark:text-[#e3e3e3] hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition-colors flex items-center gap-2 cursor-pointer"
+                              >
+                                <FolderInput size={16} strokeWidth={2} /> Move
+                              </button>
+                              <button 
+                                onClick={(e) => { 
+                                  e.stopPropagation(); 
+                                  setFolderToRename(folder);
+                                  setNewRenameFolderName(folder.name);
+                                  setShowRenameFolderModal(true);
+                                  setActiveFolderMenuId(null); 
+                                }} 
+                                className="w-full text-left px-3 py-2 text-xs sm:text-sm text-neutral-700 dark:text-[#e3e3e3] hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition-colors flex items-center gap-2 cursor-pointer"
+                              >
+                                <Pencil size={16} strokeWidth={2} /> Rename
+                              </button>
+                              <button 
+                                onClick={(e) => { 
+                                  e.stopPropagation(); 
+                                  setFolderToView(folder);
+                                  setShowFolderDetailsModal(true);
+                                  setActiveFolderMenuId(null); 
+                                }} 
+                                className="w-full text-left px-3 py-2 text-xs sm:text-sm text-neutral-700 dark:text-[#e3e3e3] hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition-colors flex items-center gap-2 cursor-pointer"
+                              >
+                                <Info size={16} strokeWidth={2} /> Folder Details
+                              </button>
+                              <div className="border-t border-neutral-200 dark:border-neutral-700 my-1"></div>
+                              <button 
+                                onClick={(e) => { 
+                                  e.stopPropagation(); 
+                                  setFolderToDelete(folder); 
+                                  setActiveFolderMenuId(null); 
+                                }} 
+                                className="w-full text-left px-3 py-2 text-xs sm:text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors flex items-center gap-2 cursor-pointer"
+                              >
+                                <span className="material-symbols-outlined text-[18px]">delete</span> Delete
+                              </button>
+                            </div>
+                          )}
                         </div>
 
                         {/* Card Content: Permanently Visible Folder Icon + Name */}
@@ -2696,52 +2698,54 @@ function App() {
                             <MoreVertical size={16}/>
                           </button>
 
-                          <div className={`absolute right-0 top-8 w-48 bg-white dark:bg-[#1e1f20] rounded-xl shadow-xl border border-neutral-200 dark:border-zinc-800 z-[60] flex flex-col py-1 transition-all duration-200 ease-out origin-top-right transform ${activeFolderMenuId === folder._id ? 'opacity-100 scale-100 translate-y-0 pointer-events-auto' : 'opacity-0 scale-95 translate-y-[-10px] pointer-events-none'}`}>
-                            <button 
-                              onClick={(e) => { 
-                                e.stopPropagation(); 
-                                openMoveModal({ ...folder, isFolder: true });
-                                setActiveFolderMenuId(null); 
-                              }} 
-                              className="w-full text-left px-4 py-2 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors flex items-center gap-2 cursor-pointer"
-                            >
-                              <FolderInput size={16} strokeWidth={2} /> Move
-                            </button>
-                            <button 
-                              onClick={(e) => { 
-                                e.stopPropagation(); 
-                                setFolderToRename(folder);
-                                setNewRenameFolderName(folder.name);
-                                setShowRenameFolderModal(true);
-                                setActiveFolderMenuId(null); 
-                              }} 
-                              className="w-full text-left px-4 py-2 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors flex items-center gap-2 cursor-pointer"
-                            >
-                              <Pencil size={16} strokeWidth={2} /> Rename
-                            </button>
-                            <button 
-                              onClick={(e) => { 
-                                e.stopPropagation(); 
-                                setFolderToView(folder);
-                                setShowFolderDetailsModal(true);
-                                setActiveFolderMenuId(null); 
-                              }} 
-                              className="w-full text-left px-4 py-2 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors flex items-center gap-2 cursor-pointer"
-                            >
-                              <Info size={16} strokeWidth={2} /> Folder Details
-                            </button>
-                            <div className="border-t border-neutral-200 dark:border-neutral-700 my-1"></div>
-                            <button 
-                              onClick={(e) => { 
-                                e.stopPropagation(); 
-                                setFolderToDelete(folder); 
-                                setActiveFolderMenuId(null); 
-                              }} 
-                              className="w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors flex items-center gap-2 cursor-pointer"
-                            >
-                              <span className="material-symbols-outlined text-[18px]">delete</span> Delete
-                            </button>
-                          </div>
+                          {activeFolderMenuId === folder._id && (
+                            <div className="absolute right-0 top-full mt-1.5 w-44 sm:w-48 rounded-xl bg-white/95 dark:bg-neutral-900/95 backdrop-blur-md border border-neutral-200 dark:border-neutral-800 shadow-2xl p-1.5 z-50 animate-in fade-in zoom-in-95">
+                              <button 
+                                onClick={(e) => { 
+                                  e.stopPropagation(); 
+                                  openMoveModal({ ...folder, isFolder: true });
+                                  setActiveFolderMenuId(null); 
+                                }} 
+                                className="w-full text-left px-3 py-2 text-xs sm:text-sm text-neutral-700 dark:text-[#e3e3e3] hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition-colors flex items-center gap-2 cursor-pointer"
+                              >
+                                <FolderInput size={16} strokeWidth={2} /> Move
+                              </button>
+                              <button 
+                                onClick={(e) => { 
+                                  e.stopPropagation(); 
+                                  setFolderToRename(folder);
+                                  setNewRenameFolderName(folder.name);
+                                  setShowRenameFolderModal(true);
+                                  setActiveFolderMenuId(null); 
+                                }} 
+                                className="w-full text-left px-3 py-2 text-xs sm:text-sm text-neutral-700 dark:text-[#e3e3e3] hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition-colors flex items-center gap-2 cursor-pointer"
+                              >
+                                <Pencil size={16} strokeWidth={2} /> Rename
+                              </button>
+                              <button 
+                                onClick={(e) => { 
+                                  e.stopPropagation(); 
+                                  setFolderToView(folder);
+                                  setShowFolderDetailsModal(true);
+                                  setActiveFolderMenuId(null); 
+                                }} 
+                                className="w-full text-left px-3 py-2 text-xs sm:text-sm text-neutral-700 dark:text-[#e3e3e3] hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition-colors flex items-center gap-2 cursor-pointer"
+                              >
+                                <Info size={16} strokeWidth={2} /> Folder Details
+                              </button>
+                              <div className="border-t border-neutral-200 dark:border-neutral-700 my-1"></div>
+                              <button 
+                                onClick={(e) => { 
+                                  e.stopPropagation(); 
+                                  setFolderToDelete(folder); 
+                                  setActiveFolderMenuId(null); 
+                                }} 
+                                className="w-full text-left px-3 py-2 text-xs sm:text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors flex items-center gap-2 cursor-pointer"
+                              >
+                                <span className="material-symbols-outlined text-[18px]">delete</span> Delete
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </div>
                     );

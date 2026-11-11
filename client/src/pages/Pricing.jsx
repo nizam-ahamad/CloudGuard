@@ -569,19 +569,31 @@ export default function Pricing() {
       </main>
 
       {/* Universal Footer */}
-      <footer className="w-full py-8 border-t border-neutral-900 bg-black text-center text-xs">
-        <div className="flex flex-wrap justify-center gap-6 text-xs text-neutral-400 mb-4">
-          <Link className="hover:text-white transition-colors" to="/pricing">Pricing</Link>
-          <span>•</span>
-          <Link className="hover:text-white transition-colors" to="/terms">Terms of Service</Link>
-          <span>•</span>
-          <Link className="hover:text-white transition-colors" to="/privacy">Privacy Policy</Link>
-          <span>•</span>
-          <Link className="hover:text-white transition-colors" to="/refund-policy">Refund Policy</Link>
-          <span>•</span>
-          <Link className="hover:text-white transition-colors" to="/contact">Contact Us</Link>
+      <footer className="w-full border-t border-neutral-200 dark:border-neutral-900 bg-white/60 dark:bg-black/60 py-8 px-4 mt-auto">
+        <div className="max-w-5xl mx-auto flex flex-col items-center justify-center text-center">
+          
+          {/* Responsive Navigation Links */}
+          <div className="flex flex-wrap items-center justify-center gap-x-3 sm:gap-x-5 gap-y-2 text-xs text-neutral-600 dark:text-neutral-400 mb-4 max-w-sm sm:max-w-none">
+            <Link className="hover:text-neutral-900 dark:hover:text-white transition-colors" to="/pricing">Pricing</Link>
+            <span className="hidden sm:inline text-neutral-400 dark:text-neutral-700">•</span>
+            
+            <Link className="hover:text-neutral-900 dark:hover:text-white transition-colors" to="/terms">Terms of Service</Link>
+            <span className="hidden sm:inline text-neutral-400 dark:text-neutral-700">•</span>
+            
+            <Link className="hover:text-neutral-900 dark:hover:text-white transition-colors" to="/privacy">Privacy Policy</Link>
+            <span className="hidden sm:inline text-neutral-400 dark:text-neutral-700">•</span>
+            
+            <Link className="hover:text-neutral-900 dark:hover:text-white transition-colors" to="/refund-policy">Refund Policy</Link>
+            <span className="hidden sm:inline text-neutral-400 dark:text-neutral-700">•</span>
+            
+            <Link className="hover:text-neutral-900 dark:hover:text-white transition-colors" to="/contact">Contact Us</Link>
+          </div>
+
+          {/* Copyright */}
+          <p className="text-[11px] sm:text-xs text-neutral-500">
+            © 2026 CloudGuard. All rights reserved.
+          </p>
         </div>
-        <p className="text-xs text-neutral-500">© 2026 CloudGuard. All rights reserved.</p>
       </footer>
     </div>
   );
