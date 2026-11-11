@@ -498,11 +498,12 @@ router.post('/presigned-url', authMiddleware, async (req, res) => {
 // 4. FINALIZE UPLOAD & THREAT AUTO-DELETE PIPELINE
 // -------------------------------------------------------------
 router.post('/finalize-upload', authMiddleware, async (req, res) => {
+  let file;
   try {
     const { fileId, sha256, thumbnail } = req.body;
     const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
 
-    const file = await File.findOne(buildTenantQuery(rawUserId, { _id: fileId }));
+    file = await File.findOne(buildTenantQuery(rawUserId, { _id: fileId }));
     if (!file) return res.status(404).json({ error: 'File record not found' });
 
     const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
@@ -795,8 +796,23 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
       file,
     });
   } catch (err) {
-    console.error('Finalize error:', err);
-    res.status(500).json({ error: 'Failed to finalize upload' });
+    console.error('[Finalize Upload Error] Initiating S3 rollback cleanup:', err.message);
+
+    // If s3Key exists in request or resolved file, purge the binary so an incomplete upload never remains orphaned
+    const targetS3Key = req.body?.s3Key || file?.s3Key;
+    if (targetS3Key) {
+      try {
+        await s3Client.send(new DeleteObjectCommand({
+          Bucket: process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME,
+          Key: targetS3Key,
+        }));
+        console.log(`[Rollback] Removed orphaned S3 object: ${targetS3Key}`);
+      } catch (cleanupErr) {
+        console.warn('[Rollback Warning] Could not remove S3 object on finalize failure:', cleanupErr.message);
+      }
+    }
+
+    return res.status(500).json({ error: 'Failed to finalize upload' });
   }
 });
 

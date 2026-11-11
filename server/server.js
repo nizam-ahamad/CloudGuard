@@ -86,6 +86,7 @@ const s3 = new S3Client({
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
   }
 });
+const s3Client = s3;
 
 // Use centralized Mongoose models from server/models/
 const File = require('./models/File');
@@ -422,6 +423,62 @@ async function reconcileExpiredSubscriptions() {
 
 // Check every 24 hours
 setInterval(reconcileExpiredSubscriptions, 24 * 60 * 60 * 1000);
+
+/**
+ * Automated Abandoned Upload Reaper
+ * Purges orphaned S3 objects and MongoDB records for uploads that were
+ * initiated (pending_scan) but never finalized due to network drops or tab closures.
+ */
+async function sweepAbandonedUploads() {
+  try {
+    const File = mongoose.models.File || require('./models/File') || require('./models/User').db.model('File');
+    const { DeleteObjectsCommand } = require('@aws-sdk/client-s3');
+    const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
+
+    // Buffer window: 2 hours to protect in-flight active uploads
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+
+    // Find upload tickets stuck in pending_scan older than 2 hours
+    const abandonedFiles = await File.find({
+      securityStatus: 'pending_scan',
+      createdAt: { $lte: twoHoursAgo }
+    }).select('_id s3Key thumbnailKey name').lean();
+
+    if (!abandonedFiles || abandonedFiles.length === 0) return;
+
+    console.log(`[Upload Reaper] Detected ${abandonedFiles.length} abandoned upload ticket(s) older than 2 hours. Purging...`);
+
+    // 1. Collect S3 keys to purge
+    const s3KeysToDelete = [];
+    abandonedFiles.forEach((file) => {
+      if (file.s3Key) s3KeysToDelete.push({ Key: file.s3Key });
+      if (file.thumbnailKey) s3KeysToDelete.push({ Key: file.thumbnailKey });
+    });
+
+    // 2. Batch-delete objects from S3
+    if (s3KeysToDelete.length > 0 && typeof s3Client !== 'undefined') {
+      for (let i = 0; i < s3KeysToDelete.length; i += 1000) {
+        const batch = s3KeysToDelete.slice(i, i + 1000);
+        await s3Client.send(new DeleteObjectsCommand({
+          Bucket: bucket,
+          Delete: { Objects: batch, Quiet: true }
+        })).catch((err) => console.error('[Upload Reaper] S3 batch delete warning:', err.message));
+      }
+    }
+
+    // 3. Delete orphaned metadata tickets from MongoDB
+    const fileIds = abandonedFiles.map((f) => f._id);
+    const dbResult = await File.deleteMany({ _id: { $in: fileIds } });
+
+    console.log(`[Upload Reaper] Successfully purged ${s3KeysToDelete.length} S3 object(s) and ${dbResult.deletedCount} orphaned DB ticket(s).`);
+  } catch (err) {
+    console.warn('[Upload Reaper Error]:', err.message);
+  }
+}
+
+// Run initial sweep 1 minute after server boot, then recur every 6 hours
+setTimeout(sweepAbandonedUploads, 60 * 1000);
+setInterval(sweepAbandonedUploads, 6 * 60 * 60 * 1000);
 
 
 
@@ -2523,6 +2580,13 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server running on port ${PORT}`);
-});
+if (require.main === module) {
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on port ${PORT}`);
+  });
+}
+
+module.exports = {
+  app,
+  sweepAbandonedUploads
+};
