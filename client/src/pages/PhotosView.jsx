@@ -127,7 +127,7 @@ export default function PhotosView({ token: propToken }) {
   const urlCacheRef = useRef(new Map()); // fileId -> accessUrl
   const activeLoadIdRef = useRef(null);
 
-  // Native CloudGuard Pill Toast
+  // Native CloudGuard Pill Toast (Theme-Aware & Responsive)
   const showPillToast = useCallback(({ message, actionText = null, onAction = null, duration = 6000 }) => {
     if (!toast?.custom) {
       toast?.success?.(message);
@@ -137,36 +137,53 @@ export default function PhotosView({ token: propToken }) {
       (t) => (
         <div
           className={`${
-            t.visible ? 'animate-enter' : 'animate-leave'
-          } pointer-events-auto flex items-center justify-between gap-3 bg-zinc-900/95 dark:bg-[#18181b]/95 text-zinc-100 px-4 py-2.5 rounded-full shadow-2xl border border-zinc-700/80 dark:border-zinc-800/90 backdrop-blur-md transition-all w-auto max-w-[92vw] sm:max-w-lg mx-auto z-[99999]`}
+            t.visible ? 'animate-in fade-in slide-in-from-bottom-3 duration-200' : 'animate-out fade-out slide-out-to-bottom-2 duration-150'
+          } pointer-events-auto flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-2xl shadow-xl border backdrop-blur-md transition-all select-none
+          w-full max-w-[calc(100vw-2rem)] sm:max-w-md mx-auto
+          bg-white/95 text-neutral-900 border-neutral-200/90 shadow-neutral-900/10
+          dark:bg-neutral-900/95 dark:text-neutral-100 dark:border-neutral-800/90 dark:shadow-black/50`}
         >
-          <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0 shadow-[0_0_8px_rgba(52,211,153,0.7)]" />
-          <span className="text-xs sm:text-sm font-medium leading-snug break-words line-clamp-2 sm:line-clamp-none flex-1">
-            {message}
-          </span>
-          {actionText && onAction && (
+          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+            <span className="relative flex h-2 w-2 shrink-0">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+            </span>
+            <p className="text-xs sm:text-sm font-medium truncate leading-tight">
+              <span className="font-semibold text-neutral-900 dark:text-white" title={typeof message === 'string' ? message : undefined}>
+                {message}
+              </span>
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {actionText && onAction && (
+              <>
+                <div className="h-4 w-[1px] bg-neutral-200 dark:bg-neutral-800" />
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (t.dismiss) t.dismiss();
+                    else if (toast.dismiss) toast.dismiss(t.id);
+                    onAction();
+                  }}
+                  className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 active:bg-emerald-500/25 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 hover:border-emerald-500/30 transition-all cursor-pointer whitespace-nowrap focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                >
+                  {actionText}
+                </button>
+              </>
+            )}
             <button
               type="button"
               onClick={() => {
                 if (t.dismiss) t.dismiss();
                 else if (toast.dismiss) toast.dismiss(t.id);
-                onAction();
               }}
-              className="text-xs sm:text-sm font-semibold text-emerald-400 hover:text-emerald-300 underline underline-offset-2 shrink-0 cursor-pointer transition-colors px-1 py-0.5"
+              className="p-1 rounded-md text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800/80 transition-colors cursor-pointer"
+              title="Dismiss"
+              aria-label="Dismiss notification"
             >
-              {actionText}
+              <X className="w-3.5 h-3.5 stroke-[2]"/>
             </button>
-          )}
-          <button
-            type="button"
-            onClick={() => {
-              if (t.dismiss) t.dismiss();
-              else if (toast.dismiss) toast.dismiss(t.id);
-            }}
-            className="text-zinc-400 hover:text-zinc-200 text-xs sm:text-sm shrink-0 leading-none cursor-pointer p-1"
-          >
-            ✕
-          </button>
+          </div>
         </div>
       ),
       { duration, position: 'bottom-center' }
@@ -462,21 +479,82 @@ export default function PhotosView({ token: propToken }) {
       globalPhotosCache = updated;
       setMediaList(updated);
 
-      const toastMessage =
-        itemsToDelete.length === 1
-          ? `Permanently deleted "${itemsToDelete[0].name}"`
-          : `Permanently deleted ${itemsToDelete.length} items`;
+      const itemsToRestore = [...itemsToDelete];
+      const getDeleteToastContent = (items) => {
+        if (!items || items.length === 0) return { action: 'Deleted', target: 'item' };
+        if (items.length === 1) {
+          return {
+            action: 'Deleted',
+            target: items[0].name || 'item',
+          };
+        }
+        return {
+          action: 'Deleted',
+          target: `${items.length} items`,
+        };
+      };
 
-      if (typeof showPillToast === 'function') {
-        showPillToast({
-          message: toastMessage,
-          actionText: 'Undo',
-          onAction: () => handleUndoDelete(itemsToDelete),
-          duration: 7000,
-        });
-      } else {
-        toast.success(toastMessage);
-      }
+      const toastData = getDeleteToastContent(itemsToRestore);
+
+      toast.custom(
+        (t) => (
+          <div
+            className={`${
+              t.visible ? 'animate-in fade-in slide-in-from-bottom-3 duration-200' : 'animate-out fade-out slide-out-to-bottom-2 duration-150'
+            } pointer-events-auto flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-2xl shadow-xl border backdrop-blur-md transition-all select-none
+            w-full max-w-[calc(100vw-2rem)] sm:max-w-md mx-auto
+            bg-white/95 text-neutral-900 border-neutral-200/90 shadow-neutral-900/10
+            dark:bg-neutral-900/95 dark:text-neutral-100 dark:border-neutral-800/90 dark:shadow-black/50`}
+          >
+            <div className="flex items-center gap-2.5 min-w-0 flex-1">
+              <span className="relative flex h-2 w-2 shrink-0">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              </span>
+
+              <p className="text-xs sm:text-sm font-medium truncate leading-tight">
+                <span className="text-neutral-500 dark:text-neutral-400 font-normal mr-1">
+                  {toastData.action}
+                </span>
+                <span className="font-semibold text-neutral-900 dark:text-white" title={toastData.target}>
+                  "{toastData.target}"
+                </span>
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <div className="h-4 w-[1px] bg-neutral-200 dark:bg-neutral-800" />
+              <button
+                type="button"
+                onClick={() => {
+                  if (t.dismiss) t.dismiss();
+                  else if (toast.dismiss) toast.dismiss(t.id);
+                  handleUndoDelete(itemsToRestore);
+                }}
+                className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 active:bg-emerald-500/25 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 hover:border-emerald-500/30 transition-all cursor-pointer whitespace-nowrap focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+              >
+                Undo
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (t.dismiss) t.dismiss();
+                  else if (toast.dismiss) toast.dismiss(t.id);
+                }}
+                className="p-1 rounded-md text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800/80 transition-colors cursor-pointer"
+                title="Dismiss"
+                aria-label="Dismiss notification"
+              >
+                <X className="w-3.5 h-3.5 stroke-[2]"/>
+              </button>
+            </div>
+          </div>
+        ),
+        {
+          duration: 6000,
+          position: 'bottom-center',
+        }
+      );
     } catch (err) {
       console.error('Delete error:', err);
       toast.error('Failed to delete selected items');

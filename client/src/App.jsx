@@ -982,7 +982,7 @@ function App() {
     return `${items.length} items moved to ${dest}`;
   };
 
-  // Universal CloudGuard Native Toast Formatter (Full-Width, Non-clamping, Safe Mobile View)
+  // Universal CloudGuard Native Toast Formatter (Theme-Aware, Full-Width, Non-clamping, Safe Mobile View)
   const showPillToast = ({
     message,
     actionText = null,
@@ -992,39 +992,53 @@ function App() {
     toast.custom(
       (t) => (
         <div
-          className="${
-            t.visible ? 'animate-enter' : 'animate-leave'
-          } pointer-events-auto flex items-center justify-between gap-2.5 sm:gap-3.5 bg-[#18181b]/95 text-zinc-200 px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-full shadow-2xl border border-zinc-800/90 backdrop-blur-md transition-all w-auto max-w-[92vw] sm:max-w-lg md:max-w-xl mx-auto z-[99999]"
+          className={`${
+            t.visible ? 'animate-in fade-in slide-in-from-bottom-3 duration-200' : 'animate-out fade-out slide-out-to-bottom-2 duration-150'
+          } pointer-events-auto flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-2xl shadow-xl border backdrop-blur-md transition-all select-none
+          w-full max-w-[calc(100vw-2rem)] sm:max-w-md mx-auto
+          bg-white/95 text-neutral-900 border-neutral-200/90 shadow-neutral-900/10
+          dark:bg-neutral-900/95 dark:text-neutral-100 dark:border-neutral-800/90 dark:shadow-black/50`}
         >
           {/* Status Dot */}
-          <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0 shadow-[0_0_8px_rgba(52,211,153,0.7)]" />
+          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+            <span className="relative flex h-2 w-2 shrink-0">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+            </span>
 
-          {/* Message Text: Full visibility with clean break-word handling for mobile */}
-          <span className="text-xs sm:text-sm font-medium text-zinc-200 leading-snug break-words line-clamp-2 sm:line-clamp-none flex-1">
-            {message}
-          </span>
+            <p className="text-xs sm:text-sm font-medium truncate leading-tight">
+              <span className="font-semibold text-neutral-900 dark:text-white" title={typeof message === 'string' ? message : undefined}>
+                {message}
+              </span>
+            </p>
+          </div>
 
-          {/* Optional Action (Undo) */}
-          {actionText && onAction && (
+          {/* Right: Divider, Optional Action (Undo) & Dismiss Icon */}
+          <div className="flex items-center gap-2 shrink-0">
+            {actionText && onAction && (
+              <>
+                <div className="h-4 w-[1px] bg-neutral-200 dark:bg-neutral-800" />
+                <button
+                  onClick={() => {
+                    toast.dismiss(t.id);
+                    onAction();
+                  }}
+                  className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 active:bg-emerald-500/25 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 hover:border-emerald-500/30 transition-all cursor-pointer whitespace-nowrap focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                >
+                  {actionText}
+                </button>
+              </>
+            )}
+
             <button
-              onClick={() => {
-                toast.dismiss(t.id);
-                onAction();
-              }}
-              className="text-xs sm:text-sm font-semibold text-emerald-400 hover:text-emerald-300 underline underline-offset-2 shrink-0 cursor-pointer transition-colors px-1 py-0.5"
+              onClick={() => toast.dismiss(t.id)}
+              className="p-1 rounded-md text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800/80 transition-colors cursor-pointer"
+              title="Dismiss"
+              aria-label="Dismiss notification"
             >
-              {actionText}
+              <X className="w-3.5 h-3.5 stroke-[2]"/>
             </button>
-          )}
-
-          {/* Dismiss Button */}
-          <button
-            onClick={() => toast.dismiss(t.id)}
-            className="text-zinc-500 hover:text-zinc-300 text-xs sm:text-sm shrink-0 leading-none cursor-pointer p-1"
-            aria-label="Close notification"
-          >
-            ✕
-          </button>
+          </div>
         </div>
       ),
       {
@@ -1322,6 +1336,87 @@ function App() {
     }
   };
 
+  // Dynamic message formatting with single-line truncation
+  const getDeleteToastContent = (items) => {
+    if (!items || items.length === 0) return { action: 'Deleted', target: 'Item' };
+    if (items.length === 1) {
+      return {
+        action: 'Deleted',
+        target: items[0].name || items[0].fileName || 'Item',
+      };
+    }
+    return {
+      action: 'Deleted',
+      target: `${items.length} items`,
+    };
+  };
+
+  const triggerDeleteToast = (itemsToRestore) => {
+    const toastData = getDeleteToastContent(itemsToRestore);
+
+    // Trigger toast using full theme-aware classes:
+    toast.custom(
+      (t) => (
+        <div
+          className={`${
+            t.visible ? 'animate-in fade-in slide-in-from-bottom-3 duration-200' : 'animate-out fade-out slide-out-to-bottom-2 duration-150'
+          } pointer-events-auto flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-2xl shadow-xl border backdrop-blur-md transition-all select-none
+          w-full max-w-[calc(100vw-2rem)] sm:max-w-md mx-auto
+          bg-white/95 text-neutral-900 border-neutral-200/90 shadow-neutral-900/10
+          dark:bg-neutral-900/95 dark:text-neutral-100 dark:border-neutral-800/90 dark:shadow-black/50`}
+        >
+          {/* Left: Status Dot & Truncated Filename */}
+          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+            <span className="relative flex h-2 w-2 shrink-0">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+            </span>
+
+            <p className="text-xs sm:text-sm font-medium truncate leading-tight">
+              <span className="text-neutral-500 dark:text-neutral-400 font-normal mr-1">
+                {toastData.action}
+              </span>
+              <span className="font-semibold text-neutral-900 dark:text-white" title={toastData.target}>
+                "{toastData.target}"
+              </span>
+            </p>
+          </div>
+
+          {/* Right: Divider, Undo Pill Button & Close Icon */}
+          <div className="flex items-center gap-2 shrink-0">
+            {/* Subtle Vertical Divider */}
+            <div className="h-4 w-[1px] bg-neutral-200 dark:bg-neutral-800" />
+
+            {/* Polished Interactive Undo Button */}
+            <button
+              onClick={() => {
+                toast.dismiss(t.id);
+                handleUndoDelete(itemsToRestore);
+              }}
+              className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 active:bg-emerald-500/25 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 hover:border-emerald-500/30 transition-all cursor-pointer whitespace-nowrap focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+            >
+              Undo
+            </button>
+
+            {/* Clean Dismiss Button */}
+            <button
+              onClick={() => toast.dismiss(t.id)}
+              className="p-1 rounded-md text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800/80 transition-colors cursor-pointer"
+              title="Dismiss"
+              aria-label="Dismiss notification"
+            >
+              <X className="w-3.5 h-3.5 stroke-[2]"/>
+            </button>
+          </div>
+        </div>
+      ),
+      {
+        duration: 6000,
+        position: 'bottom-center',
+      }
+    );
+  };
+
   // Confirm Deletion Handler
   const handleConfirmPermanentDelete = async (customTarget) => {
     const target = itemToDelete || (customTarget && !Array.isArray(customTarget) ? customTarget : (Array.isArray(customTarget) && customTarget.length === 1 ? customTarget[0] : null)) || folderToDelete || fileToDelete;
@@ -1371,57 +1466,7 @@ function App() {
 
         // 3. Trigger toast with working interactive Undo callback
         const itemsToRestore = [target];
-        const toastMessage = `Permanently deleted "${target.name || target.fileName || 'Item'}"`;
-
-        if (typeof showPillToast === 'function') {
-          showPillToast({
-            message: toastMessage,
-            actionText: 'Undo',
-            onAction: () => handleUndoDelete(itemsToRestore),
-            duration: 7000,
-          });
-        } else if (typeof toast?.custom === 'function') {
-          toast.custom(
-            (t) => (
-              <div
-                className={`${
-                  t.visible ? 'animate-enter' : 'animate-leave'
-                } flex items-center gap-3 bg-[#18181b]/95 text-zinc-200 px-4 py-2 rounded-full shadow-2xl border border-zinc-800/80 backdrop-blur-md pointer-events-auto transition-all`}
-              >
-                <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0 shadow-[0_0_6px_rgba(52,211,153,0.6)]" />
-                <span className="text-xs sm:text-sm font-medium text-zinc-200 truncate max-w-[240px] sm:max-w-[320px]">
-                  {toastMessage}
-                </span>
-                <button
-                  onClick={() => {
-                    toast.dismiss(t.id);
-                    handleUndoDelete(itemsToRestore);
-                  }}
-                  className="text-xs sm:text-sm font-semibold text-emerald-400 hover:text-emerald-300 underline underline-offset-2 ml-1 cursor-pointer transition-colors"
-                >
-                  Undo
-                </button>
-                <button
-                  onClick={() => toast.dismiss(t.id)}
-                  className="text-zinc-500 hover:text-zinc-300 text-xs sm:text-sm ml-1 transition-colors leading-none cursor-pointer"
-                >
-                  ✕
-                </button>
-              </div>
-            ),
-            {
-              duration: 7000,
-              position: 'bottom-center',
-            }
-          );
-        } else if (typeof toast?.show === 'function') {
-          toast.show(toastMessage, {
-            type: 'success',
-            actionText: 'Undo',
-            onAction: () => handleUndoDelete(itemsToRestore),
-            duration: 7000,
-          });
-        }
+        triggerDeleteToast(itemsToRestore);
       } catch (err) {
         console.error('Delete failed:', err);
         toast.error('Failed to delete item');
@@ -1465,57 +1510,7 @@ function App() {
 
         // 3. Trigger toast with working interactive Undo callback
         const itemsToRestore = [...bulkTargets];
-        const toastMessage = `Permanently deleted ${itemsToRestore.length} items`;
-
-        if (typeof showPillToast === 'function') {
-          showPillToast({
-            message: toastMessage,
-            actionText: 'Undo',
-            onAction: () => handleUndoDelete(itemsToRestore),
-            duration: 7000,
-          });
-        } else if (typeof toast?.custom === 'function') {
-          toast.custom(
-            (t) => (
-              <div
-                className={`${
-                  t.visible ? 'animate-enter' : 'animate-leave'
-                } flex items-center gap-3 bg-[#18181b]/95 text-zinc-200 px-4 py-2 rounded-full shadow-2xl border border-zinc-800/80 backdrop-blur-md pointer-events-auto transition-all`}
-              >
-                <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0 shadow-[0_0_6px_rgba(52,211,153,0.6)]" />
-                <span className="text-xs sm:text-sm font-medium text-zinc-200 truncate max-w-[240px] sm:max-w-[320px]">
-                  {toastMessage}
-                </span>
-                <button
-                  onClick={() => {
-                    toast.dismiss(t.id);
-                    handleUndoDelete(itemsToRestore);
-                  }}
-                  className="text-xs sm:text-sm font-semibold text-emerald-400 hover:text-emerald-300 underline underline-offset-2 ml-1 cursor-pointer transition-colors"
-                >
-                  Undo
-                </button>
-                <button
-                  onClick={() => toast.dismiss(t.id)}
-                  className="text-zinc-500 hover:text-zinc-300 text-xs sm:text-sm ml-1 transition-colors leading-none cursor-pointer"
-                >
-                  ✕
-                </button>
-              </div>
-            ),
-            {
-              duration: 7000,
-              position: 'bottom-center',
-            }
-          );
-        } else if (typeof toast?.show === 'function') {
-          toast.show(toastMessage, {
-            type: 'success',
-            actionText: 'Undo',
-            onAction: () => handleUndoDelete(itemsToRestore),
-            duration: 7000,
-          });
-        }
+        triggerDeleteToast(itemsToRestore);
       } catch (err) {
         console.error('Bulk delete failed:', err);
         toast.error('Failed to delete items');
