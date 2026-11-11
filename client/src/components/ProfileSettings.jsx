@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Loader2 } from 'lucide-react';
 import PasswordInput from '../PasswordInput';
@@ -20,6 +20,8 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
 
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
   const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
 
   // 1. Add state hooks at the top of ProfileSettings component:
@@ -27,6 +29,14 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
   const [showDeletePassword, setShowDeletePassword] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+
+  // Ensure state clears on mount
+  useEffect(() => {
+    setDeletePassword('');
+    setDeleteConfirmText('');
+    if (typeof setCurrentPassword === 'function') setCurrentPassword('');
+    if (typeof setNewPassword === 'function') setNewPassword('');
+  }, []);
 
   const isOAuthUser = user?.authProvider === 'google' || (!user?.password && !user?.hasPassword);
   const isDeleteReady = isOAuthUser
@@ -151,12 +161,44 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
               <label className="text-xs font-mono text-slate-500 dark:text-gray-400 uppercase tracking-wider mb-2 block">
                 Current Password
               </label>
-              <PasswordInput
-                value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
-                required
-                className="w-full h-12 bg-transparent border border-slate-300 dark:border-[#333] focus:border-black dark:focus:border-white outline-none text-black dark:text-white px-4 transition-colors"
-              />
+              <div className="relative">
+                <input
+                  type={showCurrentPassword ? 'text' : 'password'}
+                  name="cg-current-pwd-field"
+                  id="cg-current-pwd-field"
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  required
+                  autoComplete="new-password"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  spellCheck="false"
+                  data-lpignore="true"
+                  data-1p-ignore="true"
+                  readOnly
+                  onFocus={(e) => {
+                    e.target.readOnly = false;
+                  }}
+                  placeholder="Enter current password"
+                  className="w-full h-12 bg-transparent border border-slate-300 dark:border-[#333] focus:border-black dark:focus:border-white outline-none text-black dark:text-white px-4 pr-10 transition-colors"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowCurrentPassword(!showCurrentPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-neutral-300 transition-colors cursor-pointer"
+                >
+                  {showCurrentPassword ? (
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l18 18" />
+                    </svg>
+                  ) : (
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                    </svg>
+                  )}
+                </button>
+              </div>
             </div>
           )}
 
@@ -164,13 +206,44 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
             <label className="text-xs font-mono text-slate-500 dark:text-gray-400 uppercase tracking-wider mb-2 block">
               New Password
             </label>
-            <PasswordInput
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              required
-              className="w-full h-12 bg-transparent border border-slate-300 dark:border-[#333] focus:border-black dark:focus:border-white outline-none text-black dark:text-white px-4 transition-colors"
-              placeholder="Must be at least 8 characters"
-            />
+            <div className="relative">
+              <input
+                type={showNewPassword ? 'text' : 'password'}
+                name="cg-new-pwd-field"
+                id="cg-new-pwd-field"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                required
+                autoComplete="new-password"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck="false"
+                data-lpignore="true"
+                data-1p-ignore="true"
+                readOnly
+                onFocus={(e) => {
+                  e.target.readOnly = false;
+                }}
+                placeholder="Must be at least 8 characters"
+                className="w-full h-12 bg-transparent border border-slate-300 dark:border-[#333] focus:border-black dark:focus:border-white outline-none text-black dark:text-white px-4 pr-10 transition-colors"
+              />
+              <button
+                type="button"
+                onClick={() => setShowNewPassword(!showNewPassword)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-neutral-300 transition-colors cursor-pointer"
+              >
+                {showNewPassword ? (
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l18 18" />
+                  </svg>
+                ) : (
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                  </svg>
+                )}
+              </button>
+            </div>
             <p className="text-xs font-mono text-slate-500 dark:text-[#777] mt-2">
               Must be at least 8 characters with 1 letter and 1 number
             </p>
@@ -228,9 +301,21 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
               <div className="relative">
                 <input
                   type={showDeletePassword ? 'text' : 'password'}
+                  name="cloudguard-verify-token-prompt"
+                  id="danger-zone-verify-pass"
                   value={deletePassword}
                   onChange={(e) => setDeletePassword(e.target.value)}
                   placeholder="Enter your password to verify ownership"
+                  autoComplete="new-password"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  spellCheck="false"
+                  data-lpignore="true"
+                  data-1p-ignore="true"
+                  readOnly
+                  onFocus={(e) => {
+                    e.target.readOnly = false;
+                  }}
                   className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-neutral-900/90 border border-neutral-800 text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-red-500/60 focus:ring-1 focus:ring-red-500/40 transition-colors"
                 />
                 <button
