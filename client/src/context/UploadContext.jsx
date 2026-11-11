@@ -455,8 +455,8 @@ export const HeaderUploadButton = () => {
                 {isWorking ? `Uploading (${activeCount} left)` : 'Uploads Complete'}
               </span>
               {isWorking && globalSpeed && (
-                <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold tabular-nums bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border border-blue-200/50 dark:border-blue-800/40 animate-in fade-in duration-150">
-                  {globalSpeed}
+                <span className="text-xs font-mono font-medium text-neutral-500 dark:text-neutral-400 tracking-tight">
+                  • {globalSpeed}
                 </span>
               )}
             </div>

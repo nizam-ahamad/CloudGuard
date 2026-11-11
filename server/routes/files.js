@@ -75,26 +75,50 @@ async function getDescendantFolderIds(folderId, userMatch) {
   return allDescendants;
 }
 
-// Purge a single file from S3 & DB if not restored
+// Active purge timer registry: Map<string, NodeJS.Timeout>
+const activePurgeTimers = new Map();
+
+/**
+ * Safely cancels a running deletion timer if the user restores the file/folder
+ */
+const cancelPurgeTimer = (id) => {
+  const idStr = String(id);
+  if (activePurgeTimers.has(idStr)) {
+    clearTimeout(activePurgeTimers.get(idStr));
+    activePurgeTimers.delete(idStr);
+  }
+};
+
+// 1. Single File Purge Scheduler
 const scheduleFilePurge = (fileId, rawUserId, delayMs = 12000) => {
-  setTimeout(async () => {
+  const fileIdStr = String(fileId);
+  cancelPurgeTimer(fileIdStr);
+
+  const purgeScheduledAt = Date.now();
+
+  const timer = setTimeout(async () => {
+    activePurgeTimers.delete(fileIdStr);
     try {
-      const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || 'cloudguard-vault-mumbai-2026';
       const userMatch = { $or: [{ userId: rawUserId }, { user: rawUserId }] };
       const file = await File.findOne({ _id: fileId, isTrash: true, ...userMatch });
-      if (!file) return; // Restored via Undo or already removed
+      if (!file) return;
+
+      // Timestamp Guard: If the file was restored and re-deleted later, abort this stale timer
+      if (file.trashedAt && new Date(file.trashedAt).getTime() > purgeScheduledAt) {
+        return;
+      }
 
       if (file.s3Key) {
         await s3Client.send(new DeleteObjectCommand({
-          Bucket: bucket,
+          Bucket: process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME,
           Key: file.s3Key,
-        })).catch(e => console.warn(`[S3 Purge Warning] ${e.message}`));
+        })).catch((e) => console.warn(`[S3 Purge Warning] ${e.message}`));
       }
       if (file.thumbnailKey) {
         await s3Client.send(new DeleteObjectCommand({
-          Bucket: bucket,
+          Bucket: process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME,
           Key: file.thumbnailKey,
-        })).catch(e => console.warn(`[S3 Thumb Purge Warning] ${e.message}`));
+        })).catch((e) => console.warn(`[S3 Thumb Purge Warning] ${e.message}`));
       }
 
       await File.deleteOne({ _id: file._id });
@@ -103,16 +127,28 @@ const scheduleFilePurge = (fileId, rawUserId, delayMs = 12000) => {
       console.error('[Deferred File Purge Error]:', err);
     }
   }, delayMs);
+
+  activePurgeTimers.set(fileIdStr, timer);
 };
 
-// Purge batch files & folders from S3 & DB if not restored
+// 2. Batch Purge Scheduler
 const scheduleBatchPurge = (fileIds = [], folderIds = [], rawUserId, delayMs = 12000) => {
-  setTimeout(async () => {
+  const batchKey = `batch_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const purgeScheduledAt = Date.now();
+
+  // Register individual keys so restore-batch can cancel them
+  fileIds.forEach((id) => cancelPurgeTimer(id));
+  folderIds.forEach((id) => cancelPurgeTimer(id));
+
+  const timer = setTimeout(async () => {
+    activePurgeTimers.delete(batchKey);
+    fileIds.forEach((id) => activePurgeTimers.delete(String(id)));
+    folderIds.forEach((id) => activePurgeTimers.delete(String(id)));
+
     try {
-      const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || 'cloudguard-vault-mumbai-2026';
       const userMatch = { $or: [{ userId: rawUserId }, { user: rawUserId }] };
 
-      // A. Purge un-restored files
+      // Purge un-restored files
       if (fileIds.length > 0) {
         const trashedFiles = await File.find({
           _id: { $in: fileIds },
@@ -120,28 +156,35 @@ const scheduleBatchPurge = (fileIds = [], folderIds = [], rawUserId, delayMs = 1
           ...userMatch,
         });
 
+        // Only purge files whose trashedAt is not newer than this timer
+        const validToPurge = trashedFiles.filter(
+          (f) => !f.trashedAt || new Date(f.trashedAt).getTime() <= purgeScheduledAt
+        );
+
         const keys = [];
-        for (const f of trashedFiles) {
+        validToPurge.forEach((f) => {
           if (f.s3Key) keys.push({ Key: f.s3Key });
           if (f.thumbnailKey) keys.push({ Key: f.thumbnailKey });
-        }
+        });
 
         if (keys.length > 0) {
           for (let i = 0; i < keys.length; i += 1000) {
             await s3Client.send(new DeleteObjectsCommand({
-              Bucket: bucket,
+              Bucket: process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME,
               Delete: { Objects: keys.slice(i, i + 1000), Quiet: true },
-            })).catch(e => console.warn(`[S3 Batch Purge Warning] ${e.message}`));
+            })).catch((e) => console.warn(`[S3 Batch Purge Warning] ${e.message}`));
           }
         }
 
-        await File.deleteMany({
-          _id: { $in: trashedFiles.map(f => f._id) },
-          ...userMatch,
-        });
+        if (validToPurge.length > 0) {
+          await File.deleteMany({
+            _id: { $in: validToPurge.map((f) => f._id) },
+            ...userMatch,
+          });
+        }
       }
 
-      // B. Purge un-restored folders & their child files
+      // Purge un-restored folders & children
       if (folderIds.length > 0) {
         const trashedFolders = await Folder.find({
           _id: { $in: folderIds },
@@ -149,10 +192,14 @@ const scheduleBatchPurge = (fileIds = [], folderIds = [], rawUserId, delayMs = 1
           ...userMatch,
         });
 
-        if (trashedFolders.length > 0) {
-          const allFolderIds = trashedFolders.map(f => f._id);
+        const validFolders = trashedFolders.filter(
+          (f) => !f.trashedAt || new Date(f.trashedAt).getTime() <= purgeScheduledAt
+        );
+
+        if (validFolders.length > 0) {
+          const allFolderIds = validFolders.map((f) => f._id);
           if (typeof getDescendantFolderIds === 'function') {
-            for (const f of trashedFolders) {
+            for (const f of validFolders) {
               const desc = await getDescendantFolderIds(f._id, userMatch);
               allFolderIds.push(...desc);
             }
@@ -165,17 +212,17 @@ const scheduleBatchPurge = (fileIds = [], folderIds = [], rawUserId, delayMs = 1
           });
 
           const childKeys = [];
-          for (const cf of childFiles) {
+          childFiles.forEach((cf) => {
             if (cf.s3Key) childKeys.push({ Key: cf.s3Key });
             if (cf.thumbnailKey) childKeys.push({ Key: cf.thumbnailKey });
-          }
+          });
 
           if (childKeys.length > 0) {
             for (let i = 0; i < childKeys.length; i += 1000) {
               await s3Client.send(new DeleteObjectsCommand({
-                Bucket: bucket,
+                Bucket: process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME,
                 Delete: { Objects: childKeys.slice(i, i + 1000), Quiet: true },
-              })).catch(e => console.warn(`[S3 Folder Child Purge Warning] ${e.message}`));
+              })).catch((e) => console.warn(`[S3 Folder Child Purge Warning] ${e.message}`));
             }
           }
 
@@ -191,6 +238,10 @@ const scheduleBatchPurge = (fileIds = [], folderIds = [], rawUserId, delayMs = 1
       console.error('[Deferred Batch Purge Error]:', err);
     }
   }, delayMs);
+
+  activePurgeTimers.set(batchKey, timer);
+  fileIds.forEach((id) => activePurgeTimers.set(String(id), timer));
+  folderIds.forEach((id) => activePurgeTimers.set(String(id), timer));
 };
 
 // Helper for direct Node-level MalwareBazaar check
@@ -989,6 +1040,10 @@ const handleBatchRestore = async (req, res) => {
     };
 
     const { fileIds = [], folderIds = [] } = req.body;
+
+    // CRITICAL FIX: Cancel any pending purge timers immediately
+    (Array.isArray(fileIds) ? fileIds : []).forEach((id) => cancelPurgeTimer(id));
+    (Array.isArray(folderIds) ? folderIds : []).forEach((id) => cancelPurgeTimer(id));
 
     const validFileIds = (Array.isArray(fileIds) ? fileIds : [])
       .filter((id) => id && mongoose.Types.ObjectId.isValid(String(id)))
