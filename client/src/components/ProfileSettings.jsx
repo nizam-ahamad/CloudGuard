@@ -361,7 +361,7 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
       </div>
 
       {/* Single Danger Zone: Placed at the very bottom of Settings */}
-      <div className="mt-10 rounded-2xl border border-red-500/20 bg-gradient-to-b from-red-500/[0.04] to-transparent p-6 sm:p-7 shadow-xl">
+      <div className="mt-10 rounded-2xl border border-red-200 dark:border-red-500/20 bg-red-50/40 dark:bg-gradient-to-b dark:from-red-500/[0.04] dark:to-transparent p-6 sm:p-7 shadow-sm dark:shadow-xl">
         <div className="flex items-center justify-between pb-4 border-b border-red-500/10">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-400">
@@ -370,8 +370,8 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
               </svg>
             </div>
             <div>
-              <h3 className="text-sm sm:text-base font-semibold text-white">Danger Zone: Permanent Account Erasure</h3>
-              <p className="text-xs text-neutral-400">Section 12 DPDP Act (Right to Erasure)</p>
+              <h3 className="text-sm sm:text-base font-semibold text-neutral-900 dark:text-white">Danger Zone: Permanent Account Erasure</h3>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400">Section 12 DPDP Act (Right to Erasure)</p>
             </div>
           </div>
           <span className="text-[11px] font-semibold text-red-400/90 bg-red-500/10 border border-red-500/20 px-2.5 py-1 rounded-full uppercase tracking-wider">
@@ -379,7 +379,7 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
           </span>
         </div>
 
-        <p className="text-xs sm:text-sm text-neutral-400 leading-relaxed mt-4">
+        <p className="text-xs sm:text-sm text-neutral-600 dark:text-neutral-400 leading-relaxed mt-4">
           Permanently erases your account, files, thumbnails, and cloud vault data from AWS S3 and MongoDB. This action cannot be undone.
         </p>
 
@@ -387,7 +387,7 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
           {/* Password Field: Required for password accounts; protected against browser autofill */}
           {!isOAuthUser && (
             <div>
-              <label className="block text-xs font-medium text-neutral-300 mb-1.5">
+              <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1.5">
                 Account Password
               </label>
               <div className="relative">
@@ -408,12 +408,12 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
                   onFocus={(e) => {
                     e.target.readOnly = false;
                   }}
-                  className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-neutral-900/90 border border-neutral-800 text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-red-500/60 focus:ring-1 focus:ring-red-500/40 transition-colors"
+                  className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-800 text-sm text-neutral-900 dark:text-white placeholder-neutral-400 dark:placeholder-neutral-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500/30 transition-colors shadow-sm"
                 />
                 <button
                   type="button"
                   onClick={() => setShowDeletePassword(!showDeletePassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-neutral-300 transition-colors cursor-pointer"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 dark:text-neutral-500 dark:hover:text-neutral-300 transition-colors cursor-pointer"
                 >
                   {showDeletePassword ? (
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -432,7 +432,7 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
 
           {/* Confirmation Phrase Field */}
           <div>
-            <label className="block text-xs font-medium text-neutral-300 mb-1.5">
+            <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1.5">
               To confirm, type <span className="font-bold text-red-400 select-all tracking-wider">DELETE</span> below:
             </label>
             <input
@@ -441,7 +441,7 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
               onChange={(e) => setDeleteConfirmText(e.target.value)}
               placeholder="Type DELETE to confirm"
               autoComplete="off"
-              className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-900/90 border border-neutral-800 text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-red-500/60 focus:ring-1 focus:ring-red-500/40 transition-colors"
+              className="w-full px-3.5 py-2.5 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-800 text-sm text-neutral-900 dark:text-white placeholder-neutral-400 dark:placeholder-neutral-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500/30 transition-colors shadow-sm"
             />
           </div>
 
@@ -453,7 +453,7 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
             className={`w-full py-2.5 px-4 rounded-xl text-sm font-semibold transition-all ${
               isDeleteReady && !isDeletingAccount
                 ? 'bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-600/20 cursor-pointer active:scale-[0.99]'
-                : 'bg-neutral-800/50 text-neutral-500 cursor-not-allowed border border-neutral-800/80'
+                : 'bg-neutral-100 dark:bg-neutral-800/50 text-neutral-400 dark:text-neutral-500 cursor-not-allowed border border-neutral-200 dark:border-neutral-800/80'
             }`}
           >
             Permanently Delete Account
