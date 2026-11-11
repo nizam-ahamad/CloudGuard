@@ -1,23 +1,28 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import axios from 'axios';
-import { Loader2 } from 'lucide-react';
+import { Loader2, AlertTriangle, X } from 'lucide-react';
+import toast, { Toaster } from 'react-hot-toast';
 import PasswordInput from '../PasswordInput';
 import { API_BASE_URL } from '../config';
 import { useToast } from '../context/ToastContext';
 
+const api = axios.create({
+  baseURL: `${API_BASE_URL}/api`,
+});
+
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
 export default function ProfileSettings({ user, setUser, addToast, onClose }) {
-  const toastContext = useToast?.();
-  const toast = {
-    success: (msg) => {
-      if (toastContext?.success) toastContext.success(msg);
-      else if (typeof addToast === 'function') addToast('success', msg);
-    },
-    error: (msg) => {
-      if (toastContext?.error) toastContext.error(msg);
-      else if (typeof addToast === 'function') addToast('error', msg);
-    },
-  };
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [isCancellingSub, setIsCancellingSub] = useState(false);
+  const [isResumingSub, setIsResumingSub] = useState(false);
 
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -31,6 +36,112 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [isFinalModalOpen, setIsFinalModalOpen] = useState(false);
+
+  // Subscription state hooks
+  const [subData, setSubData] = useState(null);
+  const [billingHistory, setBillingHistory] = useState([]);
+
+  useEffect(() => {
+    api.get('/payments/subscription-status')
+      .then((res) => {
+        if (res.data?.success) {
+          setSubData(res.data);
+        }
+      })
+      .catch((err) => console.error('Failed to load subscription status:', err));
+  }, []);
+
+  useEffect(() => {
+    api.get('/payments/history')
+      .then(res => {
+        if (res.data?.success) setBillingHistory(res.data.history);
+      })
+      .catch(console.error);
+  }, [subData]);
+
+  const handleResumeSub = async () => {
+    setIsResumingSub(true);
+    try {
+      const res = await api.post('/payments/reactivate-subscription');
+      if (res.data.success) {
+        setSubData((prev) => ({
+          ...prev,
+          subscription: {
+            ...prev.subscription,
+            status: 'active',
+          },
+        }));
+        toast.success('Subscription reactivated! Your vault will continue uninterrupted.', {
+          duration: 5000,
+          style: {
+            background: '#18181b',
+            color: '#fff',
+            border: '1px solid #27272a',
+            fontSize: '13px'
+          }
+        });
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to reactivate subscription');
+    } finally {
+      setIsResumingSub(false);
+    }
+  };
+
+  const handleConfirmCancel = async () => {
+    setIsCancellingSub(true);
+    try {
+      const res = await api.post('/payments/cancel-subscription');
+      if (res.data.success) {
+        setSubData((prev) => ({
+          ...prev,
+          subscription: {
+            ...prev.subscription,
+            status: 'cancelled',
+          },
+        }));
+        setShowCancelModal(false);
+        toast.success('Subscription cancelled. Full access remains active until the end of your billing cycle.', {
+          duration: 5000,
+          style: {
+            background: '#18181b',
+            color: '#fff',
+            border: '1px solid #27272a',
+            fontSize: '13px'
+          }
+        });
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to cancel subscription');
+    } finally {
+      setIsCancellingSub(false);
+    }
+  };
+
+  const [isCancellingDowngrade, setIsCancellingDowngrade] = useState(false);
+
+  const handleCancelScheduledDowngrade = async () => {
+    setIsCancellingDowngrade(true);
+    try {
+      const res = await api.post('/payments/cancel-scheduled-downgrade');
+      if (res.data.success) {
+        toast.success(res.data.message, {
+          style: { background: '#18181b', color: '#fff', border: '1px solid #27272a' }
+        });
+        setSubData((prev) => ({
+          ...prev,
+          subscription: {
+            ...prev.subscription,
+            scheduledDowngrade: { targetPlanId: null, targetBillingCycle: null, scheduledAt: null }
+          }
+        }));
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to cancel scheduled downgrade');
+    } finally {
+      setIsCancellingDowngrade(false);
+    }
+  };
 
   // Ensure state clears on mount
   useEffect(() => {
@@ -274,6 +385,192 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
             )}
           </button>
         </form>
+      </div>
+
+      {/* Subscription & Vault Plan Card */}
+      <div className="bg-white dark:bg-[#141414] border border-neutral-200 dark:border-[#262626] rounded-xl p-6 transition-colors shadow-sm dark:shadow-none">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-100">
+                Subscription & Vault Plan
+              </h3>
+              {subData?.subscription?.status === 'active' && subData.subscription.planId !== 'free' && (
+                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 font-semibold">
+                  Active
+                </span>
+              )}
+              {subData?.subscription?.status === 'cancelled' && (
+                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 font-semibold">
+                  Cancelled
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
+              Current Tier: <strong className="text-neutral-800 dark:text-neutral-200 capitalize">
+                {subData?.subscription?.planId ? subData.subscription.planId.replace('_', ' ') : 'Free Trial (5 GB)'}
+              </strong>
+              {subData?.subscription?.expiresAt && subData.subscription.planId !== 'free' ? (
+                <>
+                  {' '}• Billing Cycle: <span className="capitalize font-semibold text-neutral-800 dark:text-neutral-200">{subData.subscription.billingCycle || 'Monthly'}</span>
+                  <br />
+                  {subData.subscription.status === 'cancelled'
+                    ? `Access remains active until: ${new Date(subData.subscription.expiresAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })} (No further billing)`
+                    : `Next renewal: ${new Date(subData.subscription.expiresAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`}
+                </>
+              ) : (
+                ' • Standard 5 GB secure zero-trust storage. Upgrade to increase capacity.'
+              )}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-3">
+            {(!subData?.subscription || subData.subscription.planId === 'free' || subData.subscription.status === 'expired') ? (
+              <a
+                href="/pricing"
+                className="text-xs font-semibold px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white transition-colors"
+              >
+                Upgrade Storage
+              </a>
+            ) : subData.subscription.status === 'cancelled' ? (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleResumeSub}
+                  disabled={isResumingSub}
+                  className="text-xs font-semibold px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  {isResumingSub ? 'Resuming...' : 'Resume Subscription'}
+                </button>
+                <a
+                  href="/pricing"
+                  className="text-xs font-medium px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
+                >
+                  Change Plan
+                </a>
+              </div>
+            ) : subData.subscription.status === 'active' ? (
+              <div className="flex items-center gap-2">
+                <a
+                  href="/pricing"
+                  className="text-xs font-medium px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
+                >
+                  Change Plan
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setShowCancelModal(true)}
+                  className="text-xs font-medium text-red-600 dark:text-red-400 hover:text-red-700 px-3 py-1.5 rounded-lg border border-red-200 dark:border-red-900/40 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors cursor-pointer"
+                >
+                  Cancel Subscription
+                </button>
+              </div>
+            ) : (
+              <span className="text-xs text-amber-500 font-medium">
+                Cancellation scheduled
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Scheduled Downgrade Notice Card */}
+        {subData?.subscription?.scheduledDowngrade?.targetPlanId && (
+          <div className="mt-4 p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 animate-in fade-in">
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center shrink-0 mt-0.5">
+                <AlertTriangle className="w-4 h-4"/>
+              </div>
+              <div>
+                <h4 className="text-xs font-semibold text-amber-500 dark:text-amber-400">
+                  Downgrade Scheduled
+                </h4>
+                <p className="text-xs text-neutral-600 dark:text-neutral-300 mt-0.5">
+                  Your vault is set to transition to the{' '}
+                  <strong>
+                    {subData.subscription.scheduledDowngrade.targetPlanId === 'tier_50gb' ? '50 GB' : '100 GB'}
+                  </strong>{' '}
+                  plan on{' '}
+                  <strong>
+                    {subData.subscription.expiresAt
+                      ? new Date(subData.subscription.expiresAt).toLocaleDateString('en-IN', {
+                          day: 'numeric',
+                          month: 'short',
+                          year: 'numeric'
+                        })
+                      : 'cycle end'}
+                  </strong>
+                  . You retain your current capacity until then.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              disabled={isCancellingDowngrade}
+              onClick={handleCancelScheduledDowngrade}
+              className="self-start sm:self-auto px-3 py-1.5 text-xs font-semibold rounded-lg bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 hover:bg-neutral-800 dark:hover:bg-neutral-100 transition-colors cursor-pointer shrink-0 disabled:opacity-50"
+            >
+              {isCancellingDowngrade ? 'Cancelling...' : 'Cancel Downgrade'}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Billing History & Official Invoices */}
+      <div className="p-6 rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#141414] shadow-sm mb-6">
+        <h3 className="text-sm font-semibold uppercase tracking-wider text-neutral-900 dark:text-white mb-1">
+          Billing History & Invoices
+        </h3>
+        <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-4">
+          Download official Bills of Supply and receipts for your subscription payments.
+        </p>
+
+        {billingHistory.length === 0 ? (
+          <div className="py-6 text-center text-xs text-neutral-400 dark:text-neutral-500 border border-dashed border-neutral-200 dark:border-neutral-800 rounded-xl">
+            No past billing records found.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="border-b border-neutral-200 dark:border-neutral-800 text-neutral-400">
+                  <th className="py-2.5 font-medium">Invoice #</th>
+                  <th className="py-2.5 font-medium">Plan</th>
+                  <th className="py-2.5 font-medium">Date</th>
+                  <th className="py-2.5 font-medium">Amount</th>
+                  <th className="py-2.5 font-medium text-right">Invoice</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-neutral-100 dark:divide-neutral-800/60 text-neutral-700 dark:text-neutral-300">
+                {billingHistory.map((item) => (
+                  <tr key={item._id}>
+                    <td className="py-3 font-mono font-medium text-neutral-900 dark:text-white">
+                      {item.invoiceNumber}
+                    </td>
+                    <td className="py-3">
+                      {item.planName} ({item.billingCycle})
+                    </td>
+                    <td className="py-3 text-neutral-500">
+                      {new Date(item.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                    </td>
+                    <td className="py-3 font-semibold text-neutral-900 dark:text-white">
+                      ₹{item.amount}
+                    </td>
+                    <td className="py-3 text-right">
+                      <a
+                        href={`/api/payments/invoice/${item.orderId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-200 dark:hover:bg-neutral-700 transition-colors"
+                      >
+                        View / PDF
+                      </a>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* Legal & Policies Card */}
@@ -525,6 +822,70 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
           </div>
         </div>
       )}
+
+      {/* Cancel Subscription Confirmation Modal */}
+      {showCancelModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
+          <div 
+            className="relative w-full max-w-md rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#141414] p-6 shadow-2xl transition-all"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => !isCancellingSub && setShowCancelModal(false)}
+              className="absolute top-4 right-4 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 transition-colors"
+            >
+              <X className="w-4 h-4"/>
+            </button>
+
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-500 shrink-0">
+                <AlertTriangle className="w-5 h-5"/>
+              </div>
+              <div>
+                <h3 className="text-base font-semibold text-neutral-900 dark:text-white">
+                  Cancel Subscription?
+                </h3>
+                <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                  Confirm your plan cancellation
+                </p>
+              </div>
+            </div>
+
+            <div className="my-4 p-3.5 rounded-xl bg-neutral-50 dark:bg-neutral-900/60 border border-neutral-200/60 dark:border-neutral-800 text-xs text-neutral-600 dark:text-neutral-300 space-y-2">
+              <p>
+                • You will <strong>not</strong> be charged again.
+              </p>
+              <p>
+                • You retain full access to your <strong>{Math.round((subData?.storageLimit || 0) / (1024 * 1024 * 1024))} GB</strong> vault until <strong>{subData?.subscription?.expiresAt ? new Date(subData.subscription.expiresAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : 'the end of your cycle'}</strong>.
+              </p>
+              <p>
+                • None of your existing files will be deleted.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                disabled={isCancellingSub}
+                onClick={() => setShowCancelModal(false)}
+                className="px-4 py-2 rounded-xl text-xs font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
+              >
+                Keep Subscription
+              </button>
+              <button
+                type="button"
+                disabled={isCancellingSub}
+                onClick={handleConfirmCancel}
+                className="px-4 py-2 rounded-xl text-xs font-semibold bg-red-600 hover:bg-red-500 text-white shadow-md shadow-red-600/20 transition-all cursor-pointer disabled:opacity-50"
+              >
+                {isCancellingSub ? 'Cancelling...' : 'Yes, Cancel Plan'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      <Toaster position="bottom-right" reverseOrder={false} />
     </div>
   );
 }

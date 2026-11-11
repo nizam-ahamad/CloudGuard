@@ -1,15 +1,577 @@
 const { Resend } = require('resend');
 
 if (!process.env.RESEND_API_KEY) {
-  console.error('[EmailService Error]: RESEND_API_KEY is not defined in environment variables.');
+  console.warn('[EmailService Warning]: RESEND_API_KEY is not defined in environment variables. Operating in dry-run mode.');
 }
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 const FROM_EMAIL = process.env.EMAIL_FROM || 'CloudGuard <noreply@cloudguard.site>';
 
+// -------------------------------------------------------------
+// Format & Safety Helpers
+// -------------------------------------------------------------
+function formatDate(d) {
+  if (!d) return 'N/A';
+  const dateObj = d instanceof Date ? d : new Date(d);
+  if (isNaN(dateObj.getTime())) return 'N/A';
+  return dateObj.toLocaleDateString('en-IN', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric'
+  });
+}
+
+function formatGB(val) {
+  if (val === undefined || val === null) return '0.00';
+  const num = Number(val);
+  return isNaN(num) ? '0.00' : num.toFixed(2);
+}
+
+function formatAmount(val) {
+  if (val === undefined || val === null) return '0';
+  const num = Number(val);
+  return isNaN(num) ? '0' : String(num);
+}
+
 /**
- * Sends an activation OTP verification email
+ * Core Mail Delivery Dispatcher (Resend + Dry-Run Fallback)
  */
+async function sendSubscriptionEmail({ to, subject, html }) {
+  if (!to) {
+    console.warn('[EmailService]: Recipient address is empty. Skipping dispatch.');
+    return { success: false, error: 'Recipient missing' };
+  }
+
+  if (!resend) {
+    console.log(`[EmailService Dry-Run] To: ${to} | Subject: ${subject}`);
+    return { success: true, dryRun: true };
+  }
+
+  try {
+    const { data, error } = await resend.emails.send({
+      from: FROM_EMAIL,
+      to: [to],
+      subject,
+      html
+    });
+
+    if (error) {
+      console.error('[Resend Error]:', error);
+      return { success: false, error };
+    }
+    return { success: true, id: data.id };
+  } catch (err) {
+    console.error('[Resend Exception]:', err.message);
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Generates uniform, branded CloudGuard transactional email HTML
+ */
+function buildCloudGuardEmail({ title, badge, contentHtml, ctaText, ctaUrl, isUrgent = false }) {
+  const accentColor = isUrgent ? '#dc2626' : '#2563eb';
+  const badgeBg = isUrgent ? '#fef2f2' : '#eff6ff';
+  const badgeBorder = isUrgent ? '#fee2e2' : '#dbeafe';
+
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>${title || 'CloudGuard Notification'}</title>
+    </head>
+    <body style="margin: 0; padding: 30px 15px; background-color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #0f172a;">
+      <table align="center" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 580px; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.03);">
+        <tr>
+          <td style="padding: 32px 32px 20px 32px; border-bottom: 1px solid #f1f5f9;">
+            <table width="100%" border="0" cellpadding="0" cellspacing="0">
+              <tr>
+                <td>
+                  <span style="font-size: 22px; font-weight: 800; letter-spacing: -0.5px; color: #0f172a;">CloudGuard</span>
+                </td>
+                <td align="right">
+                  <span style="display: inline-block; padding: 4px 10px; font-size: 11px; font-weight: 700; color: ${accentColor}; background: ${badgeBg}; border: 1px solid ${badgeBorder}; border-radius: 6px; text-transform: uppercase; letter-spacing: 0.5px;">
+                    ${badge || 'SECURITY NOTICE'}
+                  </span>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding: 32px;">
+            <h2 style="margin: 0 0 16px 0; font-size: 20px; font-weight: 700; color: #0f172a;">${title}</h2>
+            <div style="font-size: 14px; line-height: 1.6; color: #334155;">
+              ${contentHtml}
+            </div>
+            ${ctaText && ctaUrl ? `
+              <div style="margin-top: 28px; text-align: left;">
+                <a href="${ctaUrl}" style="display: inline-block; background-color: ${accentColor}; color: #ffffff; text-decoration: none; font-size: 13px; font-weight: 600; padding: 12px 24px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.08);">
+                  ${ctaText} &rarr;
+                </a>
+              </div>
+            ` : ''}
+          </td>
+        </tr>
+        <tr>
+          <td style="padding: 24px 32px; background-color: #f8fafc; border-top: 1px solid #f1f5f9; font-size: 12px; color: #64748b; line-height: 1.5;">
+            CloudGuard Vault • Zero-Knowledge AI-Protected Cloud Storage<br>
+            House No. 120, Main Market, Shaktifarm, Uttarakhand - 263151, India<br>
+            For support or questions, reach us at <a href="mailto:support@cloudguard.site" style="color: #2563eb; text-decoration: none;">support@cloudguard.site</a>.
+          </td>
+        </tr>
+      </table>
+    </body>
+    </html>
+  `;
+}
+
+// -------------------------------------------------------------
+// 10-Point Transactional Email Template Generators
+// -------------------------------------------------------------
+
+/**
+ * Scenario 1: New Purchase / Activation
+ */
+function generatePurchaseEmail({ user, targetPlan, cycle, orderAmount, invoiceNumber, expiresAt, invoiceUrl }) {
+  const planName = targetPlan?.name || 'Vault Subscription';
+  const storageGB = targetPlan?.storageGB || 50;
+  const cycleStr = cycle || 'monthly';
+  const amountStr = formatAmount(orderAmount);
+  const formattedExpiry = formatDate(expiresAt);
+  const invNumber = invoiceNumber || 'CG-INV-PENDING';
+
+  const subject = `Payment Confirmed: ${planName} (${storageGB} GB) is Active`;
+  const contentHtml = `
+    <p>Thank you for subscribing to <strong>${planName}</strong>. Your payment of <strong>₹${amountStr}</strong> has been successfully processed via Cashfree.</p>
+    <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 18px; margin: 20px 0;">
+      <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+        <tr>
+          <td style="padding: 6px 0; color: #64748b;">Invoice Number:</td>
+          <td style="padding: 6px 0; font-weight: 600; text-align: right; color: #0f172a;">${invNumber}</td>
+        </tr>
+        <tr>
+          <td style="padding: 6px 0; color: #64748b;">Allocated Storage:</td>
+          <td style="padding: 6px 0; font-weight: 600; text-align: right; color: #0f172a;">${storageGB} GB</td>
+        </tr>
+        <tr>
+          <td style="padding: 6px 0; color: #64748b;">Billing Cycle:</td>
+          <td style="padding: 6px 0; font-weight: 600; text-align: right; color: #0f172a; text-transform: capitalize;">${cycleStr}</td>
+        </tr>
+        <tr>
+          <td style="padding: 6px 0; color: #64748b;">Valid Until:</td>
+          <td style="padding: 6px 0; font-weight: 600; text-align: right; color: #0f172a;">${formattedExpiry}</td>
+        </tr>
+        <tr style="border-top: 1px dashed #cbd5e1;">
+          <td style="padding: 10px 0 4px; font-weight: 600; color: #0f172a;">Total Paid:</td>
+          <td style="padding: 10px 0 4px; font-weight: 700; text-align: right; color: #2563eb; font-size: 15px;">₹${amountStr}</td>
+        </tr>
+      </table>
+    </div>
+  `;
+
+  const html = buildCloudGuardEmail({
+    title: 'Payment Receipt & Subscription Active',
+    badge: 'SUBSCRIPTION ACTIVE',
+    contentHtml,
+    ctaText: 'Download Official Invoice',
+    ctaUrl: invoiceUrl,
+    isUrgent: false
+  });
+
+  return { subject, html };
+}
+
+/**
+ * Scenario 2: Mid-Cycle Upgrade (Delta / Co-Termed)
+ */
+function generateUpgradeEmail({ user, targetPlan, cycle, deltaAmount, invoiceNumber, expiresAt, invoiceUrl }) {
+  const planName = targetPlan?.name || 'Vault Upgrade';
+  const storageGB = targetPlan?.storageGB || 100;
+  const cycleStr = cycle || 'monthly';
+  const amountStr = formatAmount(deltaAmount);
+  const formattedExpiry = formatDate(expiresAt);
+  const invNumber = invoiceNumber || 'CG-INV-PENDING';
+
+  const subject = `Plan Upgraded: ${planName} (${storageGB} GB) Now Active`;
+  const contentHtml = `
+    <p>Your CloudGuard vault has been successfully upgraded to <strong>${planName}</strong> with <strong>${storageGB} GB</strong> of ultra-secure storage unlocked immediately.</p>
+    <p>Your prorated delta payment of <strong>₹${amountStr}</strong> has been confirmed. Your billing anniversary date remains co-termed and unchanged.</p>
+    <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 18px; margin: 20px 0;">
+      <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+        <tr>
+          <td style="padding: 6px 0; color: #64748b;">Invoice Number:</td>
+          <td style="padding: 6px 0; font-weight: 600; text-align: right; color: #0f172a;">${invNumber}</td>
+        </tr>
+        <tr>
+          <td style="padding: 6px 0; color: #64748b;">New Storage Limit:</td>
+          <td style="padding: 6px 0; font-weight: 600; text-align: right; color: #0f172a;">${storageGB} GB</td>
+        </tr>
+        <tr>
+          <td style="padding: 6px 0; color: #64748b;">Billing Cycle:</td>
+          <td style="padding: 6px 0; font-weight: 600; text-align: right; color: #0f172a; text-transform: capitalize;">${cycleStr}</td>
+        </tr>
+        <tr>
+          <td style="padding: 6px 0; color: #64748b;">Cycle Anniversary Date:</td>
+          <td style="padding: 6px 0; font-weight: 600; text-align: right; color: #0f172a;">${formattedExpiry}</td>
+        </tr>
+        <tr style="border-top: 1px dashed #cbd5e1;">
+          <td style="padding: 10px 0 4px; font-weight: 600; color: #0f172a;">Prorated Delta Charged:</td>
+          <td style="padding: 10px 0 4px; font-weight: 700; text-align: right; color: #2563eb; font-size: 15px;">₹${amountStr}</td>
+        </tr>
+      </table>
+    </div>
+  `;
+
+  const html = buildCloudGuardEmail({
+    title: 'Storage Tier Upgrade Confirmed',
+    badge: 'UPGRADE SUCCESSFUL',
+    contentHtml,
+    ctaText: 'Download Bill of Supply',
+    ctaUrl: invoiceUrl,
+    isUrgent: false
+  });
+
+  return { subject, html };
+}
+
+/**
+ * Scenario 3: Scheduled Downgrade Confirmation
+ */
+function generateScheduledDowngradeEmail({ user, targetPlan, expiresAt, clientUrl }) {
+  const planName = targetPlan?.name || 'Free Vault';
+  const targetGB = targetPlan?.storageGB || 5;
+  const formattedExpiry = formatDate(expiresAt);
+  const baseUrl = clientUrl || process.env.CLIENT_URL || 'https://cloudguard.site';
+
+  const subject = `Scheduled Plan Transition: ${planName} — CloudGuard`;
+  const contentHtml = `
+    <p>You have scheduled a plan transition to <strong>${planName}</strong> (${targetGB} GB).</p>
+    <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 18px; margin: 20px 0;">
+      <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>Amount Charged Today:</strong> ₹0</p>
+      <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>Effective Transition Date:</strong> ${formattedExpiry}</p>
+      <p style="margin: 0; font-size: 13px; color: #64748b;">You retain your current higher storage quota until this date with zero disruption.</p>
+    </div>
+    <p style="font-size: 13px; line-height: 1.6; color: #475569;">
+      <strong>How Quota Gate Works:</strong> On ${formattedExpiry}, our automated Quota Gate will check your stored vault files. If your stored files total <strong>${targetGB} GB or less</strong>, the transition will complete automatically. If your storage exceeds ${targetGB} GB, a 7-day grace window will activate to let you download or delete excess files.
+    </p>
+    <p style="font-size: 13px; color: #64748b;">You may cancel this scheduled transition anytime from your Profile Settings before ${formattedExpiry}.</p>
+  `;
+
+  const html = buildCloudGuardEmail({
+    title: 'Scheduled Plan Downgrade Confirmed',
+    badge: 'DOWNGRADE SCHEDULED',
+    contentHtml,
+    ctaText: 'Manage Subscription',
+    ctaUrl: `${baseUrl}/pricing`,
+    isUrgent: false
+  });
+
+  return { subject, html };
+}
+
+/**
+ * Scenario 4: Scheduled Downgrade Cancellation
+ */
+function generateDowngradeRevocationEmail({ user, activePlanName, expiresAt, clientUrl }) {
+  const currentPlan = activePlanName || 'Active Vault Plan';
+  const formattedExpiry = formatDate(expiresAt);
+  const baseUrl = clientUrl || process.env.CLIENT_URL || 'https://cloudguard.site';
+
+  const subject = `Scheduled Downgrade Cancelled — CloudGuard Vault`;
+  const contentHtml = `
+    <p>Your request to cancel the scheduled plan downgrade has been processed successfully.</p>
+    <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 12px; padding: 18px; margin: 20px 0;">
+      <p style="margin: 0 0 8px 0; font-size: 13px; color: #166534;"><strong>Status:</strong> Active Tier Retained</p>
+      <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>Current Plan:</strong> ${currentPlan}</p>
+      <p style="margin: 0; font-size: 13px; color: #166534;">Your current storage quota and active subscription will continue uninterrupted through ${formattedExpiry}.</p>
+    </div>
+    <p style="font-size: 13px; color: #475569;">Thank you for continuing with CloudGuard Vault.</p>
+  `;
+
+  const html = buildCloudGuardEmail({
+    title: 'Scheduled Downgrade Revoked',
+    badge: 'SUBSCRIPTION RETAINED',
+    contentHtml,
+    ctaText: 'Open CloudGuard Vault',
+    ctaUrl: `${baseUrl}/dashboard`,
+    isUrgent: false
+  });
+
+  return { subject, html };
+}
+
+/**
+ * Scenario 5: Downgrade Quota Gate Pass (Clean Transition)
+ */
+function generateQuotaGatePassEmail({ user, targetPlanName, storageUsedGB, targetQuotaGB, clientUrl }) {
+  const planName = targetPlanName || 'Free Vault';
+  const usedGB = formatGB(storageUsedGB);
+  const quotaGB = targetQuotaGB || 5;
+  const baseUrl = clientUrl || process.env.CLIENT_URL || 'https://cloudguard.site';
+
+  const subject = `Plan Transition Completed — CloudGuard Vault`;
+  const contentHtml = `
+    <p>Your subscription cycle has ended and your vault has transitioned smoothly to <strong>${planName}</strong>.</p>
+    <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 18px; margin: 20px 0;">
+      <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>Current Storage Used:</strong> ${usedGB} GB</p>
+      <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>New Quota Limit:</strong> ${quotaGB} GB</p>
+      <p style="margin: 0; font-size: 13px; color: #16a34a;"><strong>Quota Gate Check:</strong> Passed (No files affected)</p>
+    </div>
+    <p style="font-size: 13px; color: #475569;">All your stored files are secure and immediately accessible. You can upgrade again anytime if you need more storage.</p>
+  `;
+
+  const html = buildCloudGuardEmail({
+    title: 'Plan Transition Completed',
+    badge: 'TIER TRANSITION',
+    contentHtml,
+    ctaText: 'Access Your Vault',
+    ctaUrl: `${baseUrl}/dashboard`,
+    isUrgent: false
+  });
+
+  return { subject, html };
+}
+
+/**
+ * Scenario 6: Downgrade Quota Gate Blocked (Over-Quota)
+ */
+function generateQuotaGateBlockedEmail({ user, targetPlanName, targetQuotaGB, storageUsedGB, excessGB, gracePeriodExpiresAt, clientUrl }) {
+  const planName = targetPlanName || 'Free Vault';
+  const usedGB = formatGB(storageUsedGB);
+  const quotaGB = targetQuotaGB || 5;
+  const excessStr = formatGB(excessGB);
+  const formattedGrace = formatDate(gracePeriodExpiresAt);
+  const baseUrl = clientUrl || process.env.CLIENT_URL || 'https://cloudguard.site';
+
+  const subject = `Action Required: Storage Quota Exceeded — CloudGuard Vault`;
+  const contentHtml = `
+    <p>Your subscription has ended and was scheduled to transition to <strong>${planName}</strong> (${quotaGB} GB).</p>
+    <div style="background: #fef2f2; border: 1px solid #fee2e2; border-radius: 12px; padding: 18px; margin: 20px 0;">
+      <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>Target Quota:</strong> ${quotaGB} GB</p>
+      <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>Current Storage Used:</strong> ${usedGB} GB</p>
+      <p style="margin: 0 0 8px 0; font-size: 13px; color: #b91c1c;"><strong>Excess Storage to Remove:</strong> ${excessStr} GB</p>
+      <p style="margin: 0; font-size: 13px; color: #991b1b;"><strong>7-Day Rescue Cutoff Date:</strong> ${formattedGrace}</p>
+    </div>
+    <p style="font-size: 13px; line-height: 1.6; color: #334155;">
+      <strong>Upload Write-Lock Active:</strong> New uploads have been temporarily locked. Please download and delete at least <strong>${excessStr} GB</strong> of files, or upgrade your plan before <strong>${formattedGrace}</strong> to prevent automated data purge under our Zero-Parking storage policy.
+    </p>
+  `;
+
+  const html = buildCloudGuardEmail({
+    title: 'Vault Over-Quota: Action Required',
+    badge: 'ACTION REQUIRED',
+    contentHtml,
+    ctaText: 'Upgrade or Free Up Space',
+    ctaUrl: `${baseUrl}/pricing`,
+    isUrgent: true
+  });
+
+  return { subject, html };
+}
+
+/**
+ * Scenario 7: Prepaid Expiry Warning (T-3 Days)
+ */
+function generatePrepaidExpiryWarningEmail({ user, planName, storageGB, expiresAt, renewalUrl }) {
+  const plan = planName || 'Paid Vault Plan';
+  const quotaGB = storageGB || 50;
+  const formattedExpiry = formatDate(expiresAt);
+  const url = renewalUrl || `${process.env.CLIENT_URL || 'https://cloudguard.site'}/pricing`;
+
+  const subject = `Upcoming Subscription Expiry (3 Days Remaining) — CloudGuard Vault`;
+  const contentHtml = `
+    <p>This is a friendly reminder that your prepaid subscription for <strong>${plan}</strong> (${quotaGB} GB) is set to expire in <strong>72 hours</strong> on <strong>${formattedExpiry}</strong>.</p>
+    <div style="background: #eff6ff; border: 1px solid #dbeafe; border-radius: 12px; padding: 18px; margin: 20px 0;">
+      <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>Plan:</strong> ${plan} (${quotaGB} GB)</p>
+      <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>Expiry Date:</strong> ${formattedExpiry}</p>
+      <p style="margin: 0; font-size: 13px; color: #1e40af;">Renew today to prevent upload write-locks and avoid entering past-due grace status.</p>
+    </div>
+    <p style="font-size: 13px; color: #475569;">
+      CloudGuard operates on prepaid billing without silent recurring credit card charges. Click below to stack your renewal seamlessly.
+    </p>
+  `;
+
+  const html = buildCloudGuardEmail({
+    title: 'Prepaid Cycle Ending Soon',
+    badge: 'RENEWAL REMINDER',
+    contentHtml,
+    ctaText: 'Renew Subscription Now',
+    ctaUrl: url,
+    isUrgent: false
+  });
+
+  return { subject, html };
+}
+
+/**
+ * Scenario 8: Day 6 (24-Hour Final Purge Alert)
+ */
+function generate24HourPurgeAlertEmail({ user, excessGB, purgeDate, deleteUrl }) {
+  const excessStr = formatGB(excessGB);
+  const formattedCutoff = formatDate(purgeDate);
+  const url = deleteUrl || `${process.env.CLIENT_URL || 'https://cloudguard.site'}/pricing`;
+
+  const subject = `FINAL NOTICE: 24 Hours Until Permanent Vault Purge — CloudGuard Vault`;
+  const contentHtml = `
+    <p style="color: #991b1b; font-weight: 600;">URGENT: This is your final 24-hour warning before permanent file purge.</p>
+    <div style="background: #fef2f2; border: 1px solid #fee2e2; border-radius: 12px; padding: 18px; margin: 20px 0;">
+      <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>Excess Uncompensated Storage:</strong> ${excessStr} GB</p>
+      <p style="margin: 0 0 8px 0; font-size: 13px; color: #b91c1c;"><strong>Permanent Purge Cutoff:</strong> ${formattedCutoff}</p>
+      <p style="margin: 0; font-size: 13px; color: #991b1b;">After this cutoff, files exceeding the free quota will be permanently evicted from AWS S3 object storage.</p>
+    </div>
+    <p style="font-size: 13px; line-height: 1.6; color: #334155;">
+      To safeguard your data, either upgrade your subscription immediately or download and delete at least <strong>${excessStr} GB</strong> of stored files before the deadline.
+    </p>
+  `;
+
+  const html = buildCloudGuardEmail({
+    title: '24 Hours Remaining Before Permanent Purge',
+    badge: 'FINAL PURGE NOTICE',
+    contentHtml,
+    ctaText: 'Resolve Excess Storage Now',
+    ctaUrl: url,
+    isUrgent: true
+  });
+
+  return { subject, html };
+}
+
+/**
+ * Scenario 9: Hard Cloud Purge Completed (Day 7 Cutoff)
+ */
+function generateHardPurgeCompletedEmail({ user, clientUrl }) {
+  const baseUrl = clientUrl || process.env.CLIENT_URL || 'https://cloudguard.site';
+
+  const subject = `Vault Files Purged — CloudGuard Account Notice`;
+  const contentHtml = `
+    <p>Your 7-day past-due grace period has ended without subscription renewal or excess file removal.</p>
+    <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 18px; margin: 20px 0;">
+      <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>Policy Enforced:</strong> Zero-Parking Infrastructure Protection</p>
+      <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>Storage Usage Reset:</strong> 0 B used</p>
+      <p style="margin: 0; font-size: 13px; color: #64748b;"><strong>Account Tier:</strong> Free Evaluation Tier (5 GB limit)</p>
+    </div>
+    <p style="font-size: 13px; line-height: 1.6; color: #475569;">
+      Uncompensated stored files have been permanently and irreversibly purged from cloud object storage. Your account credentials remain active, and you are welcome to store new files within the 5 GB free quota or reactivate a premium plan at any time.
+    </p>
+  `;
+
+  const html = buildCloudGuardEmail({
+    title: 'Delinquent Storage Reset to 0 B',
+    badge: 'SECURITY NOTICE',
+    contentHtml,
+    ctaText: 'Open CloudGuard Vault',
+    ctaUrl: `${baseUrl}/dashboard`,
+    isUrgent: false
+  });
+
+  return { subject, html };
+}
+
+/**
+ * Scenario 10: Manual Refund Acknowledgment
+ */
+function generateRefundAcknowledgmentEmail({ user, planName, refundAmount, orderId, processedDate, clientUrl }) {
+  const plan = planName || 'Vault Subscription';
+  const amountStr = formatAmount(refundAmount);
+  const ordId = orderId || 'N/A';
+  const dateStr = formatDate(processedDate || new Date());
+  const baseUrl = clientUrl || process.env.CLIENT_URL || 'https://cloudguard.site';
+
+  const subject = `Refund Processed — CloudGuard Vault`;
+  const contentHtml = `
+    <p>We have processed a refund for your CloudGuard subscription order <strong>${ordId}</strong>.</p>
+    <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 18px; margin: 20px 0;">
+      <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+        <tr>
+          <td style="padding: 6px 0; color: #64748b;">Order ID:</td>
+          <td style="padding: 6px 0; font-weight: 600; text-align: right; color: #0f172a;">${ordId}</td>
+        </tr>
+        <tr>
+          <td style="padding: 6px 0; color: #64748b;">Plan:</td>
+          <td style="padding: 6px 0; font-weight: 600; text-align: right; color: #0f172a;">${plan}</td>
+        </tr>
+        <tr>
+          <td style="padding: 6px 0; color: #64748b;">Processed Date:</td>
+          <td style="padding: 6px 0; font-weight: 600; text-align: right; color: #0f172a;">${dateStr}</td>
+        </tr>
+        <tr style="border-top: 1px dashed #cbd5e1;">
+          <td style="padding: 10px 0 4px; font-weight: 600; color: #0f172a;">Refund Amount:</td>
+          <td style="padding: 10px 0 4px; font-weight: 700; text-align: right; color: #2563eb; font-size: 15px;">₹${amountStr}</td>
+        </tr>
+      </table>
+    </div>
+    <p style="font-size: 13px; line-height: 1.6; color: #475569;">
+      <strong>Settlement Timeline:</strong> The refunded amount will credit back to your original payment method via Cashfree within <strong>5–7 business days</strong> depending on your banking provider.
+    </p>
+    <p style="font-size: 13px; color: #64748b;">
+      Your vault has been adjusted to the baseline 5 GB evaluation tier. Any files already safely stored within 5 GB remain intact.
+    </p>
+  `;
+
+  const html = buildCloudGuardEmail({
+    title: 'Subscription Refund Confirmation',
+    badge: 'REFUND ACKNOWLEDGED',
+    contentHtml,
+    ctaText: 'View Vault Dashboard',
+    ctaUrl: `${baseUrl}/dashboard`,
+    isUrgent: false
+  });
+
+  return { subject, html };
+}
+
+// -------------------------------------------------------------
+// Transactional Dispatchers for Direct Integration
+// -------------------------------------------------------------
+async function sendScheduledDowngradeEmail(user, targetPlan, expiresAt, clientUrl) {
+  if (!user?.email) return { success: false, error: 'User email missing' };
+  const { subject, html } = generateScheduledDowngradeEmail({ user, targetPlan, expiresAt, clientUrl });
+  return sendSubscriptionEmail({ to: user.email, subject, html });
+}
+
+async function sendDowngradeRevocationEmail(user, activePlanName, expiresAt, clientUrl) {
+  if (!user?.email) return { success: false, error: 'User email missing' };
+  const { subject, html } = generateDowngradeRevocationEmail({ user, activePlanName, expiresAt, clientUrl });
+  return sendSubscriptionEmail({ to: user.email, subject, html });
+}
+
+async function sendPrepaidExpiryWarningEmail(user, planName, storageGB, expiresAt, renewalUrl) {
+  if (!user?.email) return { success: false, error: 'User email missing' };
+  const { subject, html } = generatePrepaidExpiryWarningEmail({ user, planName, storageGB, expiresAt, renewalUrl });
+  return sendSubscriptionEmail({ to: user.email, subject, html });
+}
+
+async function send24HourPurgeAlertEmail(user, excessGB, purgeDate, deleteUrl) {
+  if (!user?.email) return { success: false, error: 'User email missing' };
+  const { subject, html } = generate24HourPurgeAlertEmail({ user, excessGB, purgeDate, deleteUrl });
+  return sendSubscriptionEmail({ to: user.email, subject, html });
+}
+
+async function sendHardPurgeCompletedEmail(user, clientUrl) {
+  if (!user?.email) return { success: false, error: 'User email missing' };
+  const { subject, html } = generateHardPurgeCompletedEmail({ user, clientUrl });
+  return sendSubscriptionEmail({ to: user.email, subject, html });
+}
+
+async function sendRefundAcknowledgmentEmail(user, refundDetails) {
+  if (!user?.email) return { success: false, error: 'User email missing' };
+  const { subject, html } = generateRefundAcknowledgmentEmail({
+    user,
+    planName: refundDetails?.planName,
+    refundAmount: refundDetails?.refundAmount,
+    orderId: refundDetails?.orderId,
+    processedDate: refundDetails?.processedDate,
+    clientUrl: refundDetails?.clientUrl
+  });
+  return sendSubscriptionEmail({ to: user.email, subject, html });
+}
+
+// -------------------------------------------------------------
+// Legacy Auth & Onboarding Notifications
+// -------------------------------------------------------------
 async function sendActivationOtp(email, otp, name = '') {
   const trimmedName = name ? name.trim() : '';
   const subject = `${otp} is your CloudGuard verification code`;
@@ -21,28 +583,9 @@ async function sendActivationOtp(email, otp, name = '') {
     footerNotice: "This code expires in 10 minutes. If you did not sign up for CloudGuard, you can safely ignore this message."
   });
 
-  try {
-    const { data, error } = await resend.emails.send({
-      from: FROM_EMAIL,
-      to: [email],
-      subject: subject,
-      html: html
-    });
-
-    if (error) {
-      console.error('[Resend Activation Error]:', error);
-      return { success: false, error };
-    }
-    return { success: true, id: data.id };
-  } catch (err) {
-    console.error('[Resend Activation Exception]:', err);
-    return { success: false, error: err.message };
-  }
+  return sendSubscriptionEmail({ to: email, subject, html });
 }
 
-/**
- * Sends a password reset OTP email
- */
 async function sendResetOtp(email, otp, name = '') {
   const trimmedName = name ? name.trim() : '';
   const subject = `${otp} is your CloudGuard reset code`;
@@ -54,55 +597,17 @@ async function sendResetOtp(email, otp, name = '') {
     footerNotice: "This code expires in 10 minutes. If you didn't request a reset, you can safely ignore this message."
   });
 
-  try {
-    const { data, error } = await resend.emails.send({
-      from: FROM_EMAIL,
-      to: [email],
-      subject: subject,
-      html: html
-    });
-
-    if (error) {
-      console.error('[Resend Reset Error]:', error);
-      return { success: false, error };
-    }
-    return { success: true, id: data.id };
-  } catch (err) {
-    console.error('[Resend Reset Exception]:', err);
-    return { success: false, error: err.message };
-  }
+  return sendSubscriptionEmail({ to: email, subject, html });
 }
 
-/**
- * Sends a welcome email upon successful vault creation
- */
 async function sendWelcomeEmail(email, name = '') {
   const trimmedName = name ? name.trim() : '';
   const subject = `Welcome to CloudGuard${trimmedName ? ', ' + trimmedName : ''}`;
   const html = getWelcomeEmailHtml(trimmedName);
 
-  try {
-    const { data, error } = await resend.emails.send({
-      from: FROM_EMAIL,
-      to: [email],
-      subject: subject,
-      html: html
-    });
-
-    if (error) {
-      console.error('[Resend Welcome Error]:', error);
-      return { success: false, error };
-    }
-    return { success: true, id: data.id };
-  } catch (err) {
-    console.error('[Resend Welcome Exception]:', err);
-    return { success: false, error: err.message };
-  }
+  return sendSubscriptionEmail({ to: email, subject, html });
 }
 
-/**
- * Backward compatibility dispatcher
- */
 async function sendNotificationEmail({ type, to, name, otp }) {
   if (type === 'activation') {
     return sendActivationOtp(to, otp, name);
@@ -114,9 +619,6 @@ async function sendNotificationEmail({ type, to, name, otp }) {
   return { success: false, error: `Unknown email type: ${type}` };
 }
 
-// -------------------------------------------------------------
-// Verbatim HTML Templates
-// -------------------------------------------------------------
 function getWelcomeEmailHtml(name) {
   const greeting = name ? `Welcome aboard, ${name}.` : "Welcome aboard.";
   return `
@@ -239,4 +741,24 @@ module.exports = {
   sendResetOtp,
   sendWelcomeEmail,
   sendNotificationEmail,
+  sendSubscriptionEmail,
+  buildCloudGuardEmail,
+  // Template generators
+  generatePurchaseEmail,
+  generateUpgradeEmail,
+  generateScheduledDowngradeEmail,
+  generateDowngradeRevocationEmail,
+  generateQuotaGatePassEmail,
+  generateQuotaGateBlockedEmail,
+  generatePrepaidExpiryWarningEmail,
+  generate24HourPurgeAlertEmail,
+  generateHardPurgeCompletedEmail,
+  generateRefundAcknowledgmentEmail,
+  // Transactional dispatchers
+  sendScheduledDowngradeEmail,
+  sendDowngradeRevocationEmail,
+  sendPrepaidExpiryWarningEmail,
+  send24HourPurgeAlertEmail,
+  sendHardPurgeCompletedEmail,
+  sendRefundAcknowledgmentEmail,
 };

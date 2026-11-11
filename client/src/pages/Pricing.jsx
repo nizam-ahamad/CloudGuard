@@ -14,10 +14,26 @@ import {
 } from 'lucide-react';
 import CloudGuardLogo from '../CloudGuardLogo';
 import Footer from '../components/Footer';
+import axios from 'axios';
+import { API_BASE_URL } from '../config';
+import toast, { Toaster } from 'react-hot-toast';
+
+const api = axios.create({
+  baseURL: `${API_BASE_URL}/api`,
+});
+
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
 
 const TIERS_CONFIG = [
   {
     id: 'trial',
+    tierId: 'free',
     name: '14-Day Trial',
     tagline: 'Evaluation & security testing',
     storage: '5 GB',
@@ -36,6 +52,7 @@ const TIERS_CONFIG = [
   },
   {
     id: 'essential',
+    tierId: 'tier_50gb',
     name: 'Essential Vault',
     tagline: 'For individuals & personal archives',
     storage: '50 GB',
@@ -54,6 +71,7 @@ const TIERS_CONFIG = [
   },
   {
     id: 'pro',
+    tierId: 'tier_100gb',
     name: 'Pro Vault',
     tagline: 'For power users & professionals',
     storage: '100 GB',
@@ -72,6 +90,7 @@ const TIERS_CONFIG = [
   },
   {
     id: 'ultra',
+    tierId: 'tier_200gb',
     name: 'Ultra Vault',
     tagline: 'Maximum headroom for large datasets',
     storage: '200 GB',
@@ -123,9 +142,98 @@ export default function Pricing() {
   const [billingCycle, setBillingCycle] = useState('annual'); // 'monthly' | 'annual'
   const [selectedPlan, setSelectedPlan] = useState(null);
   const [checkoutNotice, setCheckoutNotice] = useState(false);
+  const [isProcessingPayment, setIsProcessingPayment] = useState(false);
+  const [paymentError, setPaymentError] = useState('');
+  const [currentPlanId, setCurrentPlanId] = useState('free');
+  const [userSubData, setUserSubData] = useState(null);
+
+  const [user, setUser] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('user') || sessionStorage.getItem('user') || 'null');
+    } catch (e) {
+      return null;
+    }
+  });
+
+  const [previews, setPreviews] = useState({});
+  const [loadingPlanId, setLoadingPlanId] = useState(null);
 
   const token = localStorage.getItem('token') || sessionStorage.getItem('token');
   const ctaLink = token ? '/dashboard' : '/login';
+
+  const loadCashfree = async () => {
+    if (typeof window.Cashfree === 'function') {
+      return window.Cashfree({ mode: 'sandbox' });
+    }
+    throw new Error('Cashfree SDK is not loaded. Please refresh and try again.');
+  };
+
+  const refreshUser = async () => {
+    if (token) {
+      try {
+        const res = await api.get('/payments/subscription-status');
+        if (res.data?.success) {
+          setUserSubData(res.data);
+          setUser((prev) => ({
+            ...(prev || {}),
+            ...res.data,
+            plan: res.data.plan || res.data.subscription?.planId || prev?.plan || 'free',
+            subscription: res.data.subscription || prev?.subscription,
+          }));
+          const sub = res.data.subscription;
+          if (sub && sub.status === 'active' && sub.planId && sub.planId !== 'free') {
+            setCurrentPlanId(sub.planId);
+          } else if (res.data.plan && res.data.plan !== 'free') {
+            setCurrentPlanId(res.data.plan);
+          } else {
+            setCurrentPlanId('free');
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load subscription status in pricing:', err);
+      }
+    }
+  };
+
+  useEffect(() => {
+    refreshUser();
+  }, [token]);
+
+  // Fetch preview deltas for all plans when billingCycle or user plan changes
+  useEffect(() => {
+    if (!user || user.plan === 'free') return;
+
+    const fetchPreviews = async () => {
+      try {
+        const planIds = ['tier_50gb', 'tier_100gb', 'tier_200gb'];
+        const results = {};
+        await Promise.all(
+          planIds.map(async (pId) => {
+            try {
+              const res = await api.post('/payments/preview-transition', {
+                targetPlanId: pId,
+                targetBillingCycle: billingCycle,
+              });
+              if (res.data.success) {
+                results[pId] = res.data;
+              }
+            } catch (e) {
+              // Silently ignore if preview fails for a tier
+            }
+          })
+        );
+        setPreviews(results);
+      } catch (err) {
+        console.error('Failed to load transition previews', err);
+      }
+    };
+
+    fetchPreviews();
+  }, [billingCycle, user]);
+
+  const userPlanId = user?.plan || userSubData?.subscription?.planId || userSubData?.plan || currentPlanId || 'free';
+  const userBillingCycle = user?.subscription?.billingCycle || userSubData?.subscription?.billingCycle || 'monthly';
+  const userSubStatus = user?.subscription?.status || userSubData?.subscription?.status || 'active';
 
   // Defensive currency & number formatter
   const formatPrice = (val) => {
@@ -150,6 +258,8 @@ export default function Pricing() {
     }
     setSelectedPlan(null);
     setCheckoutNotice(false);
+    setPaymentError('');
+    setIsProcessingPayment(false);
   };
 
   // Dismiss modal on Escape key
@@ -186,32 +296,118 @@ export default function Pricing() {
       if (token) {
         navigate('/dashboard');
       } else {
-        navigate('/auth?redirect=/pricing');
+        navigate('/login');
       }
       return;
     }
 
     // Paid tier for unauthenticated users
     if (!token) {
-      navigate('/auth?redirect=/pricing');
+      navigate('/login');
       return;
     }
 
     // Paid tier for authenticated users: Open Order Summary Modal
     try {
       setCheckoutNotice(false);
+      setPaymentError('');
       const planPrice = billingCycle === 'annual' ? tier.annualPrice : tier.monthlyPrice;
+      const storageGB = tier.id === 'ultra' ? 200 : (tier.id === 'pro' ? 100 : 50);
       setSelectedPlan({
         id: tier.id,
+        tierId: tier.tierId,
         name: tier.name || 'Selected Plan',
         quota: tier.storage || tier.quota || 'Storage Quota',
         price: planPrice,
+        storageGB: storageGB,
         annualPrice: tier.annualPrice,
         monthlyPrice: tier.monthlyPrice,
         billingCycle: billingCycle, // 'monthly' or 'annual'
       });
     } catch (err) {
       console.error('Failed to open order summary modal:', err);
+    }
+  };
+
+  const handleSubscribe = async (plan) => {
+    if (!plan) return;
+    if (!user && !token) {
+      navigate('/login');
+      return;
+    }
+
+    const targetTierId = plan.tierId || (plan.id === 'essential' ? 'tier_50gb' : plan.id === 'pro' ? 'tier_100gb' : plan.id === 'ultra' ? 'tier_200gb' : plan.id);
+
+    setLoadingPlanId(targetTierId);
+    setIsProcessingPayment(true);
+    setPaymentError('');
+
+    try {
+      const res = await api.post('/payments/create-order', {
+        planId: targetTierId,
+        billingCycle,
+      });
+
+      // CASE 1: Deferred Downgrade Scheduled (₹0 today)
+      if (res.data.isDowngradeScheduled) {
+        toast.success(res.data.message || 'Downgrade scheduled successfully.', {
+          duration: 6000,
+          style: {
+            background: '#18181b',
+            color: '#fff',
+            border: '1px solid #27272a',
+            fontSize: '13px',
+          },
+        });
+        // Refresh user profile data in context/state if available
+        if (typeof refreshUser === 'function') refreshUser();
+        setLoadingPlanId(null);
+        setIsProcessingPayment(false);
+        if (selectedPlan) setSelectedPlan(null);
+        return;
+      }
+
+      // CASE 2: Paid Transition / Standard Purchase via Cashfree
+      const { paymentSessionId, orderId } = res.data;
+      if (!paymentSessionId) throw new Error('Payment session initialization failed');
+
+      const cashfree = await loadCashfree();
+      const checkoutOptions = {
+        paymentSessionId,
+        redirectTarget: '_modal',
+      };
+
+      cashfree.checkout(checkoutOptions).then(async (result) => {
+        if (result.error) {
+          toast.error(result.error.message || 'Payment cancelled');
+          setLoadingPlanId(null);
+          setIsProcessingPayment(false);
+          return;
+        }
+        if (result.paymentDetails) {
+          try {
+            const verifyRes = await api.get(`/payments/verify/${orderId}`);
+            if (verifyRes.data.success) {
+              toast.success('Plan activated successfully!', {
+                style: { background: '#18181b', color: '#fff', border: '1px solid #27272a' },
+              });
+              if (typeof refreshUser === 'function') refreshUser();
+              navigate('/dashboard?view=settings');
+            }
+          } catch (vErr) {
+            toast.error('Payment verification failed. Please contact support.');
+          }
+        }
+        setLoadingPlanId(null);
+        setIsProcessingPayment(false);
+        if (selectedPlan) setSelectedPlan(null);
+      });
+    } catch (err) {
+      const errMsg = err.response?.data?.error || err.message || 'Failed to process plan change';
+      toast.error(errMsg);
+      setPaymentError(errMsg);
+      setLoadingPlanId(null);
+      setIsProcessingPayment(false);
     }
   };
 
@@ -313,7 +509,7 @@ export default function Pricing() {
                   : 'text-neutral-400 hover:text-white'
               }`}
             >
-              Monthly (UPI AutoPay / Card)
+              Monthly Billing
             </button>
             <button
               type="button"
@@ -324,7 +520,7 @@ export default function Pricing() {
                   : 'text-neutral-400 hover:text-white'
               }`}
             >
-              <span>Annual (1-Time UPI / NetBanking)</span>
+              <span>Annual Billing</span>
               <span className={`text-[10px] uppercase font-mono px-1.5 py-0.5 rounded ${
                 billingCycle === 'annual' ? 'bg-black/20 text-black' : 'bg-cyan-500/20 text-cyan-400'
               }`}>
@@ -336,69 +532,160 @@ export default function Pricing() {
 
         {/* Pricing Cards Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-16">
-          {tiers.map((tier) => (
-            <div
-              key={tier.id}
-              className={`relative rounded-2xl flex flex-col justify-between p-6 transition-all ${
-                tier.popular
-                  ? 'bg-[#141414] border-2 border-cyan-500/80 shadow-xl shadow-cyan-500/10'
-                  : 'bg-[#141414] border border-[#262626] hover:border-neutral-700'
-              }`}
-            >
-              {tier.badge && (
-                <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-                  <span className="px-3 py-1 rounded-full text-[10px] font-mono uppercase tracking-wider font-semibold bg-cyan-400 text-black shadow-md shadow-cyan-500/30">
-                    {tier.badge}
-                  </span>
-                </div>
-              )}
+          {tiers.map((plan) => {
+            const expiresAtDate = (user?.subscription?.expiresAt || userSubData?.subscription?.expiresAt)
+              ? new Date(user?.subscription?.expiresAt || userSubData?.subscription?.expiresAt)
+              : null;
+            const daysRemaining = expiresAtDate
+              ? Math.ceil((expiresAtDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+              : 0;
+            const isEligibleForRenewal = daysRemaining <= 5 || user?.subscription?.status === 'past_due' || userSubStatus === 'past_due';
 
-              <div>
-                <div className="mb-4">
-                  <h2 className="text-xl font-bold text-white tracking-tight">{tier.name}</h2>
-                  <p className="text-xs text-neutral-400 mt-1 min-h-[32px]">{tier.tagline}</p>
-                </div>
+            const isCurrentPlanTier =
+              (user?.plan === plan.tierId || userPlanId === plan.tierId) &&
+              (user?.subscription?.billingCycle === billingCycle || userBillingCycle === billingCycle) &&
+              (user?.subscription?.status === 'active' || userSubStatus === 'active');
 
-                <div className="py-4 border-y border-[#262626] mb-6">
-                  <div className="flex items-baseline gap-1">
-                    <span className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">{tier.price}</span>
-                    <span className="text-xs text-neutral-400 font-mono">{tier.periodText}</span>
-                  </div>
-                  <div className="mt-2 flex items-center justify-between text-xs">
-                    <span className="text-cyan-400 font-mono font-medium">{tier.storage} Storage</span>
-                    {billingCycle === 'annual' && tier.savings && (
-                      <span className="text-emerald-400 font-mono">{tier.savings}</span>
-                    )}
-                  </div>
-                </div>
+            // Only lock the button if they still have MORE than 5 days remaining
+            const isLockedCurrentPlan = isCurrentPlanTier && !isEligibleForRenewal;
 
-                <div className="space-y-3 mb-6">
-                  <span className="text-[11px] font-mono uppercase text-neutral-500 tracking-wider">Included Capacity</span>
-                  <ul className="space-y-2.5">
-                    {tier.features.map((feature, idx) => (
-                      <li key={idx} className="flex items-start gap-2.5 text-xs text-neutral-300">
-                        <Check size={14} className="text-cyan-400 mt-0.5 shrink-0" />
-                        <span>{feature}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              </div>
+            const preview = previews[plan.tierId];
+            const isScheduledTarget =
+              user?.subscription?.scheduledDowngrade?.targetPlanId === plan.tierId ||
+              userSubData?.subscription?.scheduledDowngrade?.targetPlanId === plan.tierId;
 
-              <button
-                type="button"
-                onClick={() => handlePlanSelect(tier)}
-                className={`w-full py-2.5 px-4 rounded-xl text-xs font-semibold text-center transition-all inline-flex items-center justify-center gap-2 cursor-pointer ${
-                  tier.popular
-                    ? 'bg-cyan-400 text-black hover:bg-cyan-300 shadow-md shadow-cyan-500/20'
-                    : 'bg-neutral-800 text-white hover:bg-neutral-700'
+            return (
+              <div
+                key={plan.id}
+                className={`relative rounded-2xl flex flex-col justify-between p-6 transition-all ${
+                  plan.popular
+                    ? 'bg-[#141414] border-2 border-cyan-500/80 shadow-xl shadow-cyan-500/10'
+                    : 'bg-[#141414] border border-[#262626] hover:border-neutral-700'
                 }`}
               >
-                <span>{tier.ctaText}</span>
-                <ArrowRight size={14} />
-              </button>
-            </div>
-          ))}
+                {plan.badge && (
+                  <div className="absolute -top-3 left-1/2 -translate-x-1/2">
+                    <span className="px-3 py-1 rounded-full text-[10px] font-mono uppercase tracking-wider font-semibold bg-cyan-400 text-black shadow-md shadow-cyan-500/30">
+                      {plan.badge}
+                    </span>
+                  </div>
+                )}
+
+                <div>
+                  <div className="mb-4">
+                    <h2 className="text-xl font-bold text-white tracking-tight">{plan.name}</h2>
+                    <p className="text-xs text-neutral-400 mt-1 min-h-[32px]">{plan.tagline}</p>
+                  </div>
+
+                  <div className="py-4 border-y border-[#262626] mb-6">
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">{plan.price}</span>
+                      <span className="text-xs text-neutral-400 font-mono">{plan.periodText}</span>
+                    </div>
+                    <div className="mt-2 flex items-center justify-between text-xs">
+                      <span className="text-cyan-400 font-mono font-medium">{plan.storage} Storage</span>
+                      {billingCycle === 'annual' && plan.savings && (
+                        <span className="text-emerald-400 font-mono">{plan.savings}</span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-3 mb-6">
+                    <span className="text-[11px] font-mono uppercase text-neutral-500 tracking-wider">Included Capacity</span>
+                    <ul className="space-y-2.5">
+                      {plan.features.map((feature, idx) => (
+                        <li key={idx} className="flex items-start gap-2.5 text-xs text-neutral-300">
+                          <Check size={14} className="text-cyan-400 mt-0.5 shrink-0" />
+                          <span>{feature}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+
+                {/* Plan Action Button */}
+                {plan.id === 'trial' ? (
+                  ['tier_50gb', 'tier_100gb', 'tier_200gb'].includes(user?.plan || userPlanId) ? (
+                    <button
+                      disabled
+                      type="button"
+                      className="w-full py-2.5 rounded-xl text-xs font-semibold bg-neutral-900/60 text-neutral-500 border border-neutral-800 cursor-not-allowed flex items-center justify-center gap-1.5"
+                    >
+                      <span>Evaluation Completed</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => navigate(token ? '/dashboard' : '/login')}
+                      className="w-full py-2.5 px-4 rounded-xl text-xs font-semibold text-center transition-all inline-flex items-center justify-center gap-2 cursor-pointer bg-neutral-800 text-white hover:bg-neutral-700"
+                    >
+                      <span>{token ? 'Active in Vault' : 'Start Free Trial'}</span>
+                      <ArrowRight size={14} />
+                    </button>
+                  )
+                ) : (() => {
+                  if (isLockedCurrentPlan) {
+                    return (
+                      <button
+                        disabled
+                        type="button"
+                        className="w-full py-2.5 rounded-xl text-xs font-semibold bg-neutral-800/80 text-emerald-400 border border-emerald-500/30 cursor-default flex items-center justify-center gap-1.5"
+                      >
+                        <span>✓ Current Plan</span>
+                      </button>
+                    );
+                  }
+
+                  if (isScheduledTarget) {
+                    return (
+                      <button
+                        disabled
+                        type="button"
+                        className="w-full py-2.5 rounded-xl text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/30 cursor-default flex items-center justify-center gap-1.5"
+                      >
+                        <span>Scheduled on Expiry</span>
+                      </button>
+                    );
+                  }
+
+                  let ctaText = billingCycle === 'annual' ? `Get ${plan.name}` : `Upgrade to ${plan.name}`;
+                  if (isCurrentPlanTier && isEligibleForRenewal) {
+                    const priceDisplay = preview?.payableAmount ? `₹${preview.payableAmount}` : (billingCycle === 'annual' ? plan.annualPrice : plan.monthlyPrice);
+                    const cycleDisplay = billingCycle === 'annual' ? '(+1 Year)' : '(+30 Days)';
+                    ctaText = `Renew for ${priceDisplay} ${cycleDisplay}`;
+                  } else if (preview) {
+                    if (preview.transitionType === 'SCHEDULED_DOWNGRADE') {
+                      ctaText = `Downgrade (₹0 Today)`;
+                    } else if (preview.transitionType === 'MONTHLY_UPGRADE') {
+                      ctaText = `Upgrade for ₹${preview.payableAmount}`;
+                    } else if (preview.transitionType === 'ANNUAL_UPGRADE') {
+                      ctaText = `Upgrade for ₹${preview.payableAmount} (Prorated)`;
+                    } else if (preview.transitionType === 'CYCLE_UPGRADE') {
+                      ctaText = `Switch to Annual (₹${preview.payableAmount})`;
+                    } else if (preview.transitionType === 'STACKED_RENEWAL') {
+                      const cycleDisplay = billingCycle === 'annual' ? '(+1 Year)' : '(+30 Days)';
+                      ctaText = `Renew for ₹${preview.payableAmount} ${cycleDisplay}`;
+                    }
+                  }
+
+                  return (
+                    <button
+                      type="button"
+                      disabled={loadingPlanId === plan.tierId}
+                      onClick={() => handleSubscribe(plan)}
+                      className={`w-full py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                        plan.popular
+                          ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-md'
+                          : 'bg-neutral-800 hover:bg-neutral-700 text-white'
+                      } disabled:opacity-50`}
+                    >
+                      {loadingPlanId === plan.tierId ? 'Processing...' : ctaText}
+                    </button>
+                  );
+                })()}
+              </div>
+            );
+          })}
         </div>
 
         {/* Uniform Security Standard Section */}
@@ -537,7 +824,7 @@ export default function Pricing() {
                 </p>
               </div>
 
-              {/* Inline Notification Banner */}
+              {/* Inline Notification & Error Banners */}
               {checkoutNotice && (
                 <div className="p-3.5 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 text-xs leading-relaxed flex items-start gap-2.5 animate-in fade-in duration-200">
                   <Info size={16} className="text-cyan-400 shrink-0 mt-0.5" />
@@ -547,14 +834,22 @@ export default function Pricing() {
                 </div>
               )}
 
+              {paymentError && (
+                <div className="p-3.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-xs leading-relaxed flex items-start gap-2.5 animate-in fade-in duration-200">
+                  <AlertTriangle size={16} className="text-red-400 shrink-0 mt-0.5" />
+                  <span>{paymentError}</span>
+                </div>
+              )}
+
               {/* Action Buttons */}
               <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">
                 <button
                   type="button"
-                  onClick={() => setCheckoutNotice(true)}
-                  className="w-full sm:flex-1 py-3 px-4 rounded-xl text-xs font-semibold text-black bg-cyan-400 hover:bg-cyan-300 shadow-lg shadow-cyan-500/20 transition-all cursor-pointer text-center"
+                  disabled={isProcessingPayment}
+                  onClick={() => handleSubscribe(selectedPlan)}
+                  className="w-full sm:flex-1 py-3 px-4 rounded-xl text-xs font-semibold text-black bg-cyan-400 hover:bg-cyan-300 shadow-lg shadow-cyan-500/20 transition-all cursor-pointer text-center disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Proceed to Secure Checkout
+                  {isProcessingPayment ? 'Initializing Checkout...' : 'Proceed to Secure Checkout'}
                 </button>
                 <button
                   type="button"
@@ -571,6 +866,7 @@ export default function Pricing() {
 
       {/* Universal Footer */}
       <Footer />
+      <Toaster position="bottom-right" reverseOrder={false} />
     </div>
   );
 }

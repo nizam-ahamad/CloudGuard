@@ -11,6 +11,7 @@ import FolderDetailsModal from './components/FolderDetailsModal';
 import DeleteConfirmModal from './components/DeleteConfirmModal';
 import ProfileSettings from './components/ProfileSettings';
 import CookieConsent from './components/CookieConsent';
+import QuotaUpgradeModal from './components/QuotaUpgradeModal';
 import LandingPage from './pages/LandingPage';
 import AuthPage from './pages/AuthPage';
 import PrivacyPolicy from './pages/PrivacyPolicy';
@@ -132,6 +133,35 @@ function App() {
       window.removeEventListener('storage', syncAuth);
     };
   }, [location.pathname]);
+
+  const refreshUser = async () => {
+    try {
+      const activeToken = getActiveToken();
+      if (!activeToken) return;
+      const res = await axios.get(`${API_BASE_URL}/api/payments/subscription-status`, {
+        headers: { Authorization: `Bearer ${activeToken}` }
+      });
+      if (res.data?.success) {
+        setUser((prev) => {
+          const updated = {
+            ...(prev || {}),
+            ...res.data,
+            plan: res.data.plan || res.data.subscription?.planId || prev?.plan || 'free',
+            subscription: res.data.subscription || prev?.subscription,
+            storageLimit: res.data.storageLimit || prev?.storageLimit
+          };
+          if (localStorage.getItem('token')) {
+            localStorage.setItem('user', JSON.stringify(updated));
+          } else {
+            sessionStorage.setItem('user', JSON.stringify(updated));
+          }
+          return updated;
+        });
+      }
+    } catch (err) {
+      console.error('Failed to refresh user subscription status:', err);
+    }
+  };
 
   // Clear ?expired=true from address bar on /login without full reload
   useEffect(() => {
@@ -358,7 +388,7 @@ function App() {
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
   
-  const { enqueueFiles } = useUpload();
+  const { enqueueFiles, quotaUpgradeState, resumePausedUpload, cancelPausedUpload } = useUpload();
   const [uploadQueue, setUploadQueue] = useState([]);
   const [isUploadDrawerOpen, setIsUploadDrawerOpen] = useState(true);
   const isQueueProcessing = useRef(false);
@@ -3344,6 +3374,13 @@ function App() {
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
       <CookieConsent />
+      <QuotaUpgradeModal
+        quotaData={quotaUpgradeState}
+        onResume={resumePausedUpload}
+        onCancel={cancelPausedUpload}
+        user={user}
+        refreshUser={refreshUser}
+      />
     </>
   );
 }

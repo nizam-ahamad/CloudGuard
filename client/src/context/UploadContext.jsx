@@ -26,6 +26,7 @@ export function UploadProvider({ children }) {
   const uploadQueue = queue;
   const [isOpen, setIsOpen] = useState(false);
   const [globalSpeed, setGlobalSpeed] = useState('');
+  const [quotaUpgradeState, setQuotaUpgradeState] = useState(null);
   const dropdownRef = useRef(null);
 
   const processingIdsRef = useRef(new Set());
@@ -119,7 +120,7 @@ export function UploadProvider({ children }) {
     if (activeUploads.length >= MAX_CONCURRENT_UPLOADS) return;
 
     const nextItem = queue.find(
-      (item) => item.status === 'queued' && !processingIdsRef.current.has(item.id)
+      (item) => (item.status === 'queued' || item.status === 'pending') && !processingIdsRef.current.has(item.id)
     );
     if (!nextItem) return;
 
@@ -162,10 +163,29 @@ export function UploadProvider({ children }) {
         ticket = ticketRes.data;
         thumbnail = thumb;
       } catch (err) {
+        const errorData = err.response?.data;
+        if (err.response?.status === 403 && errorData?.code === 'QUOTA_EXCEEDED') {
+          // 1. Mark upload state as paused_for_upgrade instead of failed
+          setQueue((prev) =>
+            prev.map((qItem) =>
+              qItem.id === id
+                ? { ...qItem, status: 'paused_for_upgrade', progress: 0 }
+                : qItem
+            )
+          );
+
+          // 2. Open Quota Upgrade Modal with error data and active file reference
+          setQuotaUpgradeState({
+            fileItem: item, // Preserves DOM File object
+            quotaInfo: errorData
+          });
+          return;
+        }
+
         if (err.response?.status === 403) {
           updateItem(id, {
             status: 'error',
-            error: 'Storage quota exceeded',
+            error: errorData?.error || 'Storage quota exceeded',
             progress: 100,
           });
           toast.error(`Not enough vault storage for "${file.name}".`, { id: `quota-${id}` });
@@ -263,18 +283,34 @@ export function UploadProvider({ children }) {
     }
   };
 
+  const resumePausedUpload = (fileId) => {
+    setQueue((prev) =>
+      prev.map((item) =>
+        item.id === fileId
+          ? { ...item, status: 'pending', error: null, progress: 0 }
+          : item
+      )
+    );
+    setQuotaUpgradeState(null);
+  };
+
+  const cancelPausedUpload = (fileId) => {
+    setQueue((prev) => prev.filter((item) => item.id !== fileId));
+    setQuotaUpgradeState(null);
+  };
+
   const removeQueueItem = (id) => {
     setQueue((prev) => prev.filter((item) => item.id !== id));
   };
 
   const clearFinished = () => {
     setQueue((prev) =>
-      prev.filter((item) => ['uploading', 'hashing', 'finalizing', 'queued'].includes(item.status))
+      prev.filter((item) => ['uploading', 'hashing', 'finalizing', 'queued', 'pending', 'paused_for_upgrade'].includes(item.status))
     );
   };
 
   const hasActiveTransfers = queue.some((i) =>
-    ['uploading', 'hashing', 'finalizing', 'queued'].includes(i.status)
+    ['uploading', 'hashing', 'finalizing', 'queued', 'pending'].includes(i.status)
   );
 
   return (
@@ -291,6 +327,9 @@ export function UploadProvider({ children }) {
         removeQueueItem,
         clearFinished,
         dropdownRef,
+        quotaUpgradeState,
+        resumePausedUpload,
+        cancelPausedUpload,
       }}
     >
       {children}
@@ -313,6 +352,9 @@ export const useUpload = () => {
       removeQueueItem: () => {},
       clearFinished: () => {},
       dropdownRef: { current: null },
+      quotaUpgradeState: null,
+      resumePausedUpload: () => {},
+      cancelPausedUpload: () => {},
     }
   );
 };
@@ -378,7 +420,8 @@ export const HeaderUploadButton = () => {
       i.status === 'pending' ||
       i.status === 'queued' ||
       i.status === 'hashing' ||
-      i.status === 'finalizing'
+      i.status === 'finalizing' ||
+      i.status === 'paused_for_upgrade'
   ).length;
 
   if (activeQueue.length === 0) return null;
@@ -456,6 +499,7 @@ export const HeaderUploadButton = () => {
                       {item.status === 'hashing' && `${formatBytes(item.file?.size || item.size)} • Preparing`}
                       {item.status === 'finalizing' && `${formatBytes(item.file?.size || item.size)} • Inspecting security`}
                       {item.status === 'queued' && `${formatBytes(item.file?.size || item.size)} • Queued`}
+                      {item.status === 'paused_for_upgrade' && `${formatBytes(item.file?.size || item.size)} • Paused (Upgrade Required)`}
                       {(item.status === 'completed' || item.status === 'clean') && `${formatBytes(item.file?.size || item.size)} • Safe`}
                       {(item.status === 'malicious' || item.status === 'threat_purged') && `${formatBytes(item.file?.size || item.size)} • Deleted`}
                       {item.status === 'error' && `${formatBytes(item.file?.size || item.size)} • ${item.error || 'Failed'}`}
@@ -468,6 +512,8 @@ export const HeaderUploadButton = () => {
                         ? 'Done'
                         : item.status === 'malicious' || item.status === 'threat_purged'
                         ? 'Deleted'
+                        : item.status === 'paused_for_upgrade'
+                        ? 'Paused'
                         : `${item.progress || 0}%`}
                     </span>
                     <button
@@ -487,6 +533,8 @@ export const HeaderUploadButton = () => {
                         ? 'bg-rose-500'
                         : item.status === 'completed' || item.status === 'clean'
                         ? 'bg-emerald-500'
+                        : item.status === 'paused_for_upgrade'
+                        ? 'bg-amber-500'
                         : 'bg-blue-600'
                     }`}
                     style={{ width: `${item.progress || 0}%` }}

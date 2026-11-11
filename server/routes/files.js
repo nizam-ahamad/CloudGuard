@@ -407,13 +407,44 @@ router.post('/presigned-url', authMiddleware, async (req, res) => {
     }
 
     // 2. Storage Quota Enforcement
-    const user = await User.findById(userId).select('storageUsed storageLimit').lean();
+    const user = await User.findById(userId).select('plan trialExpiresAt storageUsed storageLimit subscription').lean();
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    const currentUsed = user.storageUsed || 0;
-    const limit = user.storageLimit || 5368709120; // 5 GB fallback default
-    if (currentUsed + Number(fileSize) > limit) {
-      return res.status(403).json({ error: 'Storage quota exceeded. Upgrade required.' });
+    if (user.subscription?.status === 'past_due') {
+      return res.status(403).json({
+        error: 'Uploads locked: Your vault subscription is past due or over quota. Please delete excess files or renew your plan to restore upload privileges.',
+        code: 'SUBSCRIPTION_PAST_DUE'
+      });
+    }
+
+    const now = new Date();
+    if ((user.plan === 'trial' || user.subscription?.planId === 'trial') && user.trialExpiresAt && new Date(user.trialExpiresAt) <= now) {
+      return res.status(403).json({
+        error: 'Your 14-day evaluation trial has ended. Select a plan to restore upload privileges.',
+        code: 'TRIAL_EXPIRED'
+      });
+    }
+
+    // Storage Quota Enforcement
+    const uploadSize = Number(fileSize);
+    const storageLimit = user.storageLimit || 5368709120;
+    if ((user.storageUsed || 0) + uploadSize > storageLimit) {
+      // Determine suggested upgrade tier based on current quota
+      let suggestedUpgrade = 'tier_100gb';
+      if (storageLimit >= 200 * 1024 * 1024 * 1024) {
+        suggestedUpgrade = null; // Max tier reached
+      } else if (storageLimit >= 100 * 1024 * 1024 * 1024) {
+        suggestedUpgrade = 'tier_200gb';
+      }
+
+      return res.status(403).json({
+        error: 'Storage quota exceeded. Please upgrade your vault to complete this upload.',
+        code: 'QUOTA_EXCEEDED',
+        storageUsed: user.storageUsed || 0,
+        storageLimit,
+        requiredBytes: uploadSize,
+        suggestedUpgrade
+      });
     }
 
     const sanitized = String(fileName).replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -492,6 +523,17 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
 
     // Enforce storage quota against actual S3 bytes
     const user = await User.findById(rawUserId);
+    if (user && user.subscription?.status === 'past_due') {
+      try {
+        await s3Client.send(new DeleteObjectCommand({ Bucket: bucket, Key: file.s3Key }));
+      } catch (delErr) {}
+      await File.deleteOne({ _id: file._id });
+      return res.status(403).json({
+        success: false,
+        error: 'Uploads locked: subscription is past due or over quota.',
+        code: 'SUBSCRIPTION_PAST_DUE'
+      });
+    }
     if (user && user.storageUsed + actualBytes > user.storageLimit) {
       try {
         await s3Client.send(new DeleteObjectCommand({ Bucket: bucket, Key: file.s3Key }));
@@ -545,9 +587,17 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
       await file.save();
 
       if (previousSecurityStatus !== 'clean') {
-        await User.findByIdAndUpdate(rawUserId, {
-          $inc: { storageUsed: file.size },
-        });
+        const u = await User.findByIdAndUpdate(
+          rawUserId,
+          { $inc: { storageUsed: file.size } },
+          { new: true }
+        );
+        if (u && u.subscription) {
+          if (!u.subscription.peakStorageBytes || u.storageUsed > u.subscription.peakStorageBytes) {
+            u.subscription.peakStorageBytes = u.storageUsed;
+            await u.save();
+          }
+        }
       }
 
       return res.status(200).json({
@@ -726,9 +776,17 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
 
     // Only increment quota if the file was not already clean
     if (previousSecurityStatus !== 'clean') {
-      await User.findByIdAndUpdate(rawUserId || file.userId, {
-        $inc: { storageUsed: file.size },
-      });
+      const u = await User.findByIdAndUpdate(
+        rawUserId || file.userId,
+        { $inc: { storageUsed: file.size } },
+        { new: true }
+      );
+      if (u && u.subscription) {
+        if (!u.subscription.peakStorageBytes || u.storageUsed > u.subscription.peakStorageBytes) {
+          u.subscription.peakStorageBytes = u.storageUsed;
+          await u.save();
+        }
+      }
     }
 
     return res.status(200).json({
@@ -1040,7 +1098,16 @@ const getStorageStats = async (req, res) => {
     const actualStorageUsed = stats[0]?.actualUsedBytes || 0;
 
     // Synchronize user record in background
-    await User.findByIdAndUpdate(rawUserId, { storageUsed: actualStorageUsed });
+    const userDoc = await User.findById(rawUserId);
+    if (userDoc) {
+      userDoc.storageUsed = actualStorageUsed;
+      if (userDoc.subscription) {
+        if (!userDoc.subscription.peakStorageBytes || userDoc.storageUsed > userDoc.subscription.peakStorageBytes) {
+          userDoc.subscription.peakStorageBytes = userDoc.storageUsed;
+        }
+      }
+      await userDoc.save();
+    }
 
     const user = await User.findById(rawUserId).select('storageLimit').lean();
     const storageLimit = user?.storageLimit || 5368709120; // 5 GB
