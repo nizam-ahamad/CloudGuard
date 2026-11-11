@@ -103,6 +103,7 @@ export default function PhotosView({ token: propToken }) {
   // Multi-select state
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [isDownloadingItem, setIsDownloadingItem] = useState(false);
 
   // Layout view modes
   const [viewMode, setViewMode] = useState(() => {
@@ -409,33 +410,63 @@ export default function PhotosView({ token: propToken }) {
     startDownload(prepareDownloadPayload(downloadItem));
   }, [currentPreviewItem, fullMediaUrl, startDownload]);
 
-  const handleDownloadMedia = async (item) => {
-    if (!item) return;
-    try {
-      const token = propToken || (typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null);
-      // Prefer dedicated download-url endpoint if available, fallback to accessUrl/url
-      let downloadHref = fullMediaUrl || item.downloadUrl || item.accessUrl || item.url;
-      if (!downloadHref && item._id) {
+  const handleDownloadMedia = async (item, e) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    if (!item || isDownloadingItem) return;
+
+    setIsDownloadingItem(true);
+
+    const fileName = item.originalName || item.name || 'download';
+    let targetUrl = item.downloadUrl || item.accessUrl || item.url || fullMediaUrl;
+
+    if (!targetUrl && item._id) {
+      try {
+        const token = propToken || (typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null);
         const res = await axios.get(`/api/files/${item._id}/access`, {
           headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
-        downloadHref = res.data?.downloadUrl || res.data?.accessUrl || res.data?.url;
+        targetUrl = res.data?.downloadUrl || res.data?.accessUrl || res.data?.url;
+      } catch (err) {
+        console.warn('Failed to fetch access URL for download:', err);
+      }
+    }
+
+    try {
+      if (typeof startDownload === 'function') {
+        // DownloadContext handles queue and starting toast
+        await startDownload([{
+          _id: item._id,
+          id: item._id,
+          name: fileName,
+          url: targetUrl,
+          downloadUrl: targetUrl,
+          size: item.size || 0,
+        }]);
+        return; // Strict return: do NOT fall through
       }
 
-      if (!downloadHref) return;
-
-      // Trigger direct browser download
+      // Fallback ONLY if DownloadContext is unavailable
+      if (toast?.info) toast.info(`Downloading started: "${fileName}"`);
+      const res = await fetch(targetUrl);
+      if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+      const blob = await res.blob();
+      const blobUrl = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = downloadHref;
-      a.download = item.name || item.originalName || 'download';
+      a.href = blobUrl;
+      a.download = fileName;
       document.body.appendChild(a);
       a.click();
       a.remove();
+      window.URL.revokeObjectURL(blobUrl);
     } catch (err) {
-      console.error('Failed to download media item:', err);
-      if (item.url || item.accessUrl) {
-        window.open(item.url || item.accessUrl, '_blank');
-      }
+      console.error('Download failed:', err);
+      if (toast?.error) toast.error('Failed to download file');
+    } finally {
+      // Reset lock after short delay to prevent double-click bounce
+      setTimeout(() => setIsDownloadingItem(false), 1000);
     }
   };
 
@@ -995,15 +1026,13 @@ export default function PhotosView({ token: propToken }) {
               {/* Download Button (Left of Cross) */}
               <button
                 type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleDownloadMedia(currentPreviewItem);
-                }}
+                disabled={isDownloadingItem}
+                onClick={(e) => handleDownloadMedia(currentPreviewItem, e)}
                 title="Download media"
                 aria-label="Download media"
-                className="p-2 rounded-full bg-neutral-800/80 hover:bg-neutral-700 active:scale-95 text-neutral-200 hover:text-white backdrop-blur-md border border-neutral-700/50 transition-all cursor-pointer shrink-0"
+                className="p-2 rounded-full bg-neutral-800/80 hover:bg-neutral-700 active:scale-95 disabled:opacity-50 text-neutral-200 hover:text-white backdrop-blur-md border border-neutral-700/50 transition-all cursor-pointer shrink-0"
               >
-                <Download className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
+                <Download className="w-4 h-4 sm:w-4.5 sm:h-4.5"/>
               </button>
 
               {/* Existing Cross (✕) Close Button */}
