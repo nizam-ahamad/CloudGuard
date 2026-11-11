@@ -39,20 +39,12 @@ axios.interceptors.response.use(
   (response) => response,
   (error) => {
     const requestUrl = error.config?.url || '';
-    const isAuthRoute =
-      requestUrl.includes('/api/auth/login') ||
-      requestUrl.includes('/api/auth/register') ||
-      requestUrl.includes('/api/auth/google') ||
-      requestUrl.includes('/api/auth/verify-otp') ||
-      requestUrl.includes('/api/auth/forgot-password');
+    const isAuthRoute = requestUrl.includes('/api/auth/');
 
-    // Only redirect on 401 if it's an authenticated session request and NOT already on /login
+    // Never force redirect to /login if the error originated from an auth route
     if (error.response?.status === 401 && !isAuthRoute) {
-      globalStorageStatsCache = null;
       localStorage.removeItem('token');
       localStorage.removeItem('user');
-      sessionStorage.removeItem('token');
-      sessionStorage.removeItem('user');
       if (window.location.pathname !== '/login' && window.location.pathname !== '/login/') {
         window.location.href = '/login?expired=true';
       }
