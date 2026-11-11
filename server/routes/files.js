@@ -635,20 +635,22 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
       }
     }
 
-    // 3. AI Service Deep Scan (Extended 15s timeout for large binaries like AC4BFSP.exe)
+    // 3. AI Service Deep Scan (Extended 20s timeout for large binaries like AC4BFSP.exe)
     if (!isMalicious) {
       try {
-        const scanUrl = process.env.AI_SERVICE_URL || 'http://127.0.0.1:8000/scan';
+        const aiBase = process.env.AI_SERVICE_URL || 'http://127.0.0.1:8000';
+        const scanUrl = aiBase.endsWith('/scan') ? aiBase : `${aiBase}/scan`;
         const scanRes = await axios.post(
           scanUrl,
           { 
             s3Key: file.s3Key, 
             fileName: file.name, 
+            fileSize: file.size,
             sha256,
             fileKey: file.s3Key,
             filename: file.name
           },
-          { timeout: 15000 }
+          { timeout: 20000 } // 20s timeout for large executables
         );
 
         if (scanRes.data && (scanRes.data.isMalicious || scanRes.data.status === 'malicious')) {

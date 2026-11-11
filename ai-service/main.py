@@ -130,7 +130,7 @@ def query_malware_bazaar(sha256_hash: str) -> dict:
 
     return {"is_malicious": False, "threat": None}
 
-def stream_inspect_pe_headers(s3_key: str) -> dict:
+def stream_inspect_pe_headers(s3_key: str, file_name: str = "") -> dict:
     """
     Stream-safe PE inspection for large binaries (e.g. AC4BFSP.exe 43MB+).
     Fetches only the initial 2MB header range instead of downloading entire binary,
@@ -140,11 +140,12 @@ def stream_inspect_pe_headers(s3_key: str) -> dict:
         return None
 
     try:
+        # Check actual object size first to prevent S3 HTTP 416 (InvalidRange) on files < 2MB
         head_res = s3_client.head_object(Bucket=AWS_BUCKET_NAME, Key=s3_key)
         total_size = head_res.get('ContentLength', 0)
 
         if total_size <= 2097152:
-            # File is smaller than 2 MB: fetch full binary without out-of-bounds Range header
+            # File is smaller than or equal to 2 MB: fetch the entire binary safely
             response = s3_client.get_object(Bucket=AWS_BUCKET_NAME, Key=s3_key)
         else:
             # File is larger than 2 MB: stream only the first 2 MB
@@ -153,6 +154,7 @@ def stream_inspect_pe_headers(s3_key: str) -> dict:
                 Key=s3_key,
                 Range='bytes=0-2097151'
             )
+
         header_bytes = response['Body'].read()
 
         # Content-level EICAR fallback check
@@ -165,11 +167,16 @@ def stream_inspect_pe_headers(s3_key: str) -> dict:
                 "confidenceScore": 1.0
             }
 
-        if not header_bytes or len(header_bytes) < 512:
-            return None
+        # Check DOS magic bytes
+        if len(header_bytes) < 2 or header_bytes[:2] != b'MZ':
+            return {
+                "isMalicious": False,
+                "threatVerdict": "clean",
+                "reason": "Non-PE binary header",
+                "confidenceScore": 0.0
+            }
 
-        # Check DOS magic
-        if header_bytes[:2] != b'MZ':
+        if len(header_bytes) < 512:
             return None
 
         # Authenticode Signature Pass (MongoDB Compass, AC4BFSP)
@@ -266,7 +273,7 @@ async def scan_file(payload: ScanRequest):
 
     # 3. Stream-Safe PE Header / Random Forest Model Check for Executables
     if (file_name.endswith(".exe") or file_name.endswith(".dll")) and s3_key:
-        pe_result = stream_inspect_pe_headers(s3_key)
+        pe_result = stream_inspect_pe_headers(s3_key, file_name)
         if pe_result:
             if pe_result.get("isMalicious") or pe_result.get("status") == "malicious":
                 return {
