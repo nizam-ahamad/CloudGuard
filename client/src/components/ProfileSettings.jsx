@@ -48,12 +48,22 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
   const handleExecuteAccountDeletion = async () => {
     if (!isDeleteReady || isDeletingAccount) return;
 
+    // Final Confirmation Dialog Alert (Applies to both Social & Password accounts)
+    const isConfirmed = window.confirm(
+      "⚠️ FINAL CONFIRMATION\n\nAre you absolutely sure you want to permanently delete your account?\n\nThis will instantly and permanently erase:\n• Your account profile and credentials\n• All uploaded vault files in AWS S3\n• All generated thumbnails and directory trees\n\nThis action CANNOT be undone. Click OK to proceed with permanent deletion."
+    );
+
+    // If the user cancels the dialog, abort the deletion immediately
+    if (!isConfirmed) {
+      return;
+    }
+
     setIsDeletingAccount(true);
     try {
       const token = localStorage.getItem('token');
       await axios.delete(`${API_BASE_URL}/api/auth/account`, {
         data: {
-          password: deletePassword,
+          password: isOAuthUser ? undefined : deletePassword,
           confirmText: deleteConfirmText,
         },
         headers: { Authorization: `Bearer ${token}` },
