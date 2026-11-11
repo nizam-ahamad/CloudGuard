@@ -385,8 +385,6 @@ function App() {
   const [isFilesLoading, setIsFilesLoading] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
-  const [deleteConfirmationText, setDeleteConfirmationText] = useState('');
-  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
   const [activeMenuId, setActiveMenuId] = useState(null);
   const [activeFolderMenuId, setActiveFolderMenuId] = useState(null);
@@ -796,39 +794,6 @@ function App() {
     }
   };
 
-  const handleExecuteAccountDeletion = async () => {
-    if (deleteConfirmationText !== 'DELETE') return;
-    try {
-      setIsDeletingAccount(true);
-      const token = localStorage.getItem('token') || sessionStorage.getItem('token');
-      await axios.delete(`${API_BASE_URL}/api/auth/account`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        data: {
-          confirmText: 'DELETE',
-          confirmation: true,
-        },
-      });
-
-      localStorage.clear();
-      sessionStorage.clear();
-
-      window.dispatchEvent(new Event('cloudguard:auth-changed'));
-      window.dispatchEvent(new Event('auth-change'));
-      window.dispatchEvent(new Event('storage'));
-
-      addToast('success', 'Account and all personal data permanently erased.');
-      navigate('/login');
-      setTimeout(() => {
-        window.location.href = '/login';
-      }, 100);
-    } catch (err) {
-      console.error('Account erasure error:', err);
-      const msg = err.response?.data?.error || err.response?.data?.message || 'Failed to erase account and data.';
-      addToast('error', typeof msg === 'string' ? msg : JSON.stringify(msg));
-    } finally {
-      setIsDeletingAccount(false);
-    }
-  };
 
   const fetchFiles = useCallback(async (folderId = undefined, force = false) => {
     const targetId = folderId !== undefined
@@ -2376,128 +2341,6 @@ function App() {
               addToast={addToast} 
               onClose={handleCloseSettings} 
             />
-
-            {/* Legal & Policies Card */}
-            <div className="bg-white dark:bg-[#141414] border border-neutral-200 dark:border-[#262626] rounded-xl p-6 transition-colors shadow-sm dark:shadow-none">
-              <div className="mb-4">
-                <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-100">
-                  Legal & Policies
-                </h3>
-                <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
-                  Review our terms of service, privacy disclosures, and subscription policies.
-                </p>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                <Link className="flex items-center justify-between p-3 rounded-lg border border-neutral-200/80 dark:border-[#222222] bg-neutral-50/50 dark:bg-[#0d0d0d] hover:bg-neutral-100 dark:hover:bg-[#181818] transition-colors group" to="/pricing">
-                  <div>
-                    <div className="text-xs font-medium text-neutral-800 dark:text-neutral-200 group-hover:text-cyan-600 dark:group-hover:text-cyan-400 transition-colors">
-                      Subscription & Pricing
-                    </div>
-                    <div className="text-[11px] text-neutral-400 dark:text-neutral-500">
-                      Storage quotas & upgrade tiers
-                    </div>
-                  </div>
-                  <span className="text-neutral-400 dark:text-neutral-500 group-hover:translate-x-0.5 transition-transform text-xs">
-                    →
-                  </span>
-                </Link>
-
-                <Link className="flex items-center justify-between p-3 rounded-lg border border-neutral-200/80 dark:border-[#222222] bg-neutral-50/50 dark:bg-[#0d0d0d] hover:bg-neutral-100 dark:hover:bg-[#181818] transition-colors group" to="/terms">
-                  <div>
-                    <div className="text-xs font-medium text-neutral-800 dark:text-neutral-200 group-hover:text-cyan-600 dark:group-hover:text-cyan-400 transition-colors">
-                      Terms of Service
-                    </div>
-                    <div className="text-[11px] text-neutral-400 dark:text-neutral-500">
-                      Usage terms & Zero-Parking policy
-                    </div>
-                  </div>
-                  <span className="text-neutral-400 dark:text-neutral-500 group-hover:translate-x-0.5 transition-transform text-xs">
-                    →
-                  </span>
-                </Link>
-
-                <Link className="flex items-center justify-between p-3 rounded-lg border border-neutral-200/80 dark:border-[#222222] bg-neutral-50/50 dark:bg-[#0d0d0d] hover:bg-neutral-100 dark:hover:bg-[#181818] transition-colors group" to="/privacy">
-                  <div>
-                    <div className="text-xs font-medium text-neutral-800 dark:text-neutral-200 group-hover:text-cyan-600 dark:group-hover:text-cyan-400 transition-colors">
-                      Privacy Policy
-                    </div>
-                    <div className="text-[11px] text-neutral-400 dark:text-neutral-500">
-                      DPDP Act compliance & data erasure
-                    </div>
-                  </div>
-                  <span className="text-neutral-400 dark:text-neutral-500 group-hover:translate-x-0.5 transition-transform text-xs">
-                    →
-                  </span>
-                </Link>
-
-                <Link className="flex items-center justify-between p-3 rounded-lg border border-neutral-200/80 dark:border-[#222222] bg-neutral-50/50 dark:bg-[#0d0d0d] hover:bg-neutral-100 dark:hover:bg-[#181818] transition-colors group" to="/refund-policy">
-                  <div>
-                    <div className="text-xs font-medium text-neutral-800 dark:text-neutral-200 group-hover:text-cyan-600 dark:group-hover:text-cyan-400 transition-colors">
-                      Refund Policy
-                    </div>
-                    <div className="text-[11px] text-neutral-400 dark:text-neutral-500">
-                      5–7 day settlement & cancellations
-                    </div>
-                  </div>
-                  <span className="text-neutral-400 dark:text-neutral-500 group-hover:translate-x-0.5 transition-transform text-xs">
-                    →
-                  </span>
-                </Link>
-
-                <Link className="sm:col-span-2 flex items-center justify-between p-3 rounded-lg border border-neutral-200/80 dark:border-[#222222] bg-neutral-50/50 dark:bg-[#0d0d0d] hover:bg-neutral-100 dark:hover:bg-[#181818] transition-colors group" to="/contact">
-                  <div>
-                    <div className="text-xs font-medium text-neutral-800 dark:text-neutral-200 group-hover:text-cyan-600 dark:group-hover:text-cyan-400 transition-colors">
-                      Contact Support & Grievances
-                    </div>
-                    <div className="text-[11px] text-neutral-400 dark:text-neutral-500">
-                      support@cloudguard.site • Shaktifarm, Uttarakhand
-                    </div>
-                  </div>
-                  <span className="text-neutral-400 dark:text-neutral-500 group-hover:translate-x-0.5 transition-transform text-xs">
-                    →
-                  </span>
-                </Link>
-              </div>
-            </div>
-
-            {/* Unified Single Danger Zone */}
-            <div className="mt-8 rounded-2xl border border-red-950/60 bg-red-950/10 p-6">
-              <div className="flex items-center gap-2 text-red-500 font-semibold text-base mb-1">
-                <svg className="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                </svg>
-                Danger Zone: Delete Account
-              </div>
-              <p className="text-xs sm:text-sm text-neutral-400 leading-relaxed mb-4">
-                Permanently erase your account, files, preview thumbnails, and all personal data in accordance with Section 12 of India's DPDP Act, 2023. This action is irreversible.
-              </p>
-
-              <div className="space-y-3 max-w-md">
-                <label className="block text-xs font-medium text-neutral-300">
-                  To confirm permanent deletion, type <span className="font-bold text-red-400 select-all">DELETE</span> below:
-                </label>
-                <input
-                  type="text"
-                  value={deleteConfirmationText}
-                  onChange={(e) => setDeleteConfirmationText(e.target.value)}
-                  placeholder="Type DELETE to confirm"
-                  className="w-full px-3.5 py-2.5 rounded-lg bg-neutral-900/90 border border-neutral-800 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500"
-                />
-                <button
-                  type="button"
-                  disabled={deleteConfirmationText !== 'DELETE' || isDeletingAccount}
-                  onClick={handleExecuteAccountDeletion}
-                  className={`w-full py-2.5 px-4 rounded-lg text-sm font-semibold transition-all ${
-                    deleteConfirmationText === 'DELETE' && !isDeletingAccount
-                      ? 'bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-600/30 cursor-pointer'
-                      : 'bg-neutral-800/60 text-neutral-500 cursor-not-allowed border border-neutral-800'
-                  }`}
-                >
-                  {isDeletingAccount ? 'Erasing Account & Data...' : 'Permanently Delete Account'}
-                </button>
-              </div>
-            </div>
           </div>
         ) : location.pathname === '/dashboard/photos' ? (
           <PhotosView token={token} />

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import axios from 'axios';
 import { Loader2 } from 'lucide-react';
 import PasswordInput from '../PasswordInput';
@@ -268,8 +269,92 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
         </form>
       </div>
 
-      {/* Danger Zone: Consistent Dark UI */}
-      <div className="mt-8 rounded-2xl border border-red-500/20 bg-gradient-to-b from-red-500/[0.04] to-transparent p-6 sm:p-7 shadow-xl">
+      {/* Legal & Policies Card */}
+      <div className="bg-white dark:bg-[#141414] border border-neutral-200 dark:border-[#262626] rounded-xl p-6 transition-colors shadow-sm dark:shadow-none">
+        <div className="mb-4">
+          <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-100">
+            Legal & Policies
+          </h3>
+          <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+            Review our terms of service, privacy disclosures, and subscription policies.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+          <Link className="flex items-center justify-between p-3 rounded-lg border border-neutral-200/80 dark:border-[#222222] bg-neutral-50/50 dark:bg-[#0d0d0d] hover:bg-neutral-100 dark:hover:bg-[#181818] transition-colors group" to="/pricing">
+            <div>
+              <div className="text-xs font-medium text-neutral-800 dark:text-neutral-200 group-hover:text-cyan-600 dark:group-hover:text-cyan-400 transition-colors">
+                Subscription & Pricing
+              </div>
+              <div className="text-[11px] text-neutral-400 dark:text-neutral-500">
+                Storage quotas & upgrade tiers
+              </div>
+            </div>
+            <span className="text-neutral-400 dark:text-neutral-500 group-hover:translate-x-0.5 transition-transform text-xs">
+              →
+            </span>
+          </Link>
+
+          <Link className="flex items-center justify-between p-3 rounded-lg border border-neutral-200/80 dark:border-[#222222] bg-neutral-50/50 dark:bg-[#0d0d0d] hover:bg-neutral-100 dark:hover:bg-[#181818] transition-colors group" to="/terms">
+            <div>
+              <div className="text-xs font-medium text-neutral-800 dark:text-neutral-200 group-hover:text-cyan-600 dark:group-hover:text-cyan-400 transition-colors">
+                Terms of Service
+              </div>
+              <div className="text-[11px] text-neutral-400 dark:text-neutral-500">
+                Usage terms & Zero-Parking policy
+              </div>
+            </div>
+            <span className="text-neutral-400 dark:text-neutral-500 group-hover:translate-x-0.5 transition-transform text-xs">
+              →
+            </span>
+          </Link>
+
+          <Link className="flex items-center justify-between p-3 rounded-lg border border-neutral-200/80 dark:border-[#222222] bg-neutral-50/50 dark:bg-[#0d0d0d] hover:bg-neutral-100 dark:hover:bg-[#181818] transition-colors group" to="/privacy">
+            <div>
+              <div className="text-xs font-medium text-neutral-800 dark:text-neutral-200 group-hover:text-cyan-600 dark:group-hover:text-cyan-400 transition-colors">
+                Privacy Policy
+              </div>
+              <div className="text-[11px] text-neutral-400 dark:text-neutral-500">
+                DPDP Act compliance & data erasure
+              </div>
+            </div>
+            <span className="text-neutral-400 dark:text-neutral-500 group-hover:translate-x-0.5 transition-transform text-xs">
+              →
+            </span>
+          </Link>
+
+          <Link className="flex items-center justify-between p-3 rounded-lg border border-neutral-200/80 dark:border-[#222222] bg-neutral-50/50 dark:bg-[#0d0d0d] hover:bg-neutral-100 dark:hover:bg-[#181818] transition-colors group" to="/refund-policy">
+            <div>
+              <div className="text-xs font-medium text-neutral-800 dark:text-neutral-200 group-hover:text-cyan-600 dark:group-hover:text-cyan-400 transition-colors">
+                Refund Policy
+              </div>
+              <div className="text-[11px] text-neutral-400 dark:text-neutral-500">
+                5–7 day settlement & cancellations
+              </div>
+            </div>
+            <span className="text-neutral-400 dark:text-neutral-500 group-hover:translate-x-0.5 transition-transform text-xs">
+              →
+            </span>
+          </Link>
+
+          <Link className="sm:col-span-2 flex items-center justify-between p-3 rounded-lg border border-neutral-200/80 dark:border-[#222222] bg-neutral-50/50 dark:bg-[#0d0d0d] hover:bg-neutral-100 dark:hover:bg-[#181818] transition-colors group" to="/contact">
+            <div>
+              <div className="text-xs font-medium text-neutral-800 dark:text-neutral-200 group-hover:text-cyan-600 dark:group-hover:text-cyan-400 transition-colors">
+                Contact Support & Grievances
+              </div>
+              <div className="text-[11px] text-neutral-400 dark:text-neutral-500">
+                support@cloudguard.site • Shaktifarm, Uttarakhand
+              </div>
+            </div>
+            <span className="text-neutral-400 dark:text-neutral-500 group-hover:translate-x-0.5 transition-transform text-xs">
+              →
+            </span>
+          </Link>
+        </div>
+      </div>
+
+      {/* Single Danger Zone: Placed at the very bottom of Settings */}
+      <div className="mt-10 rounded-2xl border border-red-500/20 bg-gradient-to-b from-red-500/[0.04] to-transparent p-6 sm:p-7 shadow-xl">
         <div className="flex items-center justify-between pb-4 border-b border-red-500/10">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-400">
@@ -292,7 +377,7 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
         </p>
 
         <div className="mt-5 space-y-4 max-w-lg">
-          {/* Password Field (for non-OAuth users) */}
+          {/* Password Field: Required for password accounts; protected against browser autofill */}
           {!isOAuthUser && (
             <div>
               <label className="block text-xs font-medium text-neutral-300 mb-1.5">
@@ -301,7 +386,7 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
               <div className="relative">
                 <input
                   type={showDeletePassword ? 'text' : 'password'}
-                  name="cloudguard-verify-token-prompt"
+                  name="cloudguard-account-purge-verify"
                   id="danger-zone-verify-pass"
                   value={deletePassword}
                   onChange={(e) => setDeletePassword(e.target.value)}
@@ -348,11 +433,12 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
               value={deleteConfirmText}
               onChange={(e) => setDeleteConfirmText(e.target.value)}
               placeholder="Type DELETE to confirm"
+              autoComplete="off"
               className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-900/90 border border-neutral-800 text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-red-500/60 focus:ring-1 focus:ring-red-500/40 transition-colors"
             />
           </div>
 
-          {/* Action Button */}
+          {/* Delete Action Button */}
           <button
             type="button"
             disabled={!isDeleteReady || isDeletingAccount}
