@@ -27,9 +27,9 @@ export default function DeleteConfirmModal({
   const resolvedTitle = title || `Permanently delete ${count === 1 ? 'item' : `${count} items`}?`;
   const resolvedDescription =
     description ||
-    `Are you sure you want to permanently delete ${
-      count > 1 ? `these ${count} items` : 'this item'
-    }? This action will immediately remove the data from your storage.`;
+    (count > 1
+      ? `Are you sure you want to permanently delete these ${count} items? This action cannot be undone and will immediately free up your storage.`
+      : 'Are you sure you want to permanently delete this file? This action cannot be undone and will immediately free up your storage.');
 
   return (
     <div 
@@ -51,10 +51,13 @@ export default function DeleteConfirmModal({
           </div>
 
           <div className="flex-1 min-w-0 pr-2">
-            <h3 className="text-base font-semibold leading-6 text-neutral-900 dark:text-white">
+            <h3 
+              className="text-base font-semibold leading-6 text-neutral-900 dark:text-white truncate max-w-sm"
+              title={typeof resolvedTitle === 'string' ? resolvedTitle : undefined}
+            >
               {resolvedTitle}
             </h3>
-            <p className="mt-2 text-sm text-neutral-500 dark:text-neutral-400 leading-relaxed">
+            <p className="mt-2 text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
               {resolvedDescription}
             </p>
           </div>

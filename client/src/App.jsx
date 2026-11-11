@@ -28,7 +28,7 @@ import {
 } from './utils/downloadHelper';
 import { HeaderDownloadButton, useDownload } from './context/DownloadContext';
 import { HeaderUploadButton, useUpload, UploadProvider } from './context/UploadContext';
-import { Folder, FolderInput, X, Search, MoreVertical, Pencil, Info, LayoutGrid, List, Check, Trash2, Image, Play, ChevronLeft, ChevronRight, Download, Clock, UploadCloud, FolderPlus, Menu, Sun, Moon, Loader2 } from 'lucide-react';
+import { Folder, FolderInput, X, Search, MoreVertical, Pencil, Info, LayoutGrid, List, Check, Trash2, Image, Play, ChevronLeft, ChevronRight, Download, Clock, UploadCloud, FolderPlus, Menu, Sun, Moon, Loader2, FileText } from 'lucide-react';
 
 import { API_BASE_URL } from "./config";
 
@@ -1288,6 +1288,40 @@ function App() {
     return false;
   };
 
+  // Dedicated Undo Delete Handler
+  const handleUndoDelete = async (itemsToRestore) => {
+    try {
+      const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+      const headers = { Authorization: `Bearer ${token}` };
+
+      const folderIds = (itemsToRestore || []).filter(checkIsFolder).map((i) => i._id || i.id);
+      const fileIds = (itemsToRestore || []).filter((i) => !checkIsFolder(i)).map((i) => i._id || i.id);
+
+      await axios.post(
+        `${API_BASE_URL}/api/files/restore-batch`,
+        { fileIds, folderIds },
+        { headers }
+      );
+
+      showPillToast({ message: 'Deletion undone', duration: 3000 });
+      lastFetchedFolderIdRef.current = undefined;
+      const activeFolderId = currentFolderId || new URLSearchParams(window.location.search).get('folder') || null;
+      if (typeof fetchFiles === 'function') {
+        await fetchFiles(activeFolderId, true);
+      }
+      if (typeof fetchFolders === 'function') {
+        await fetchFolders(activeFolderId);
+      }
+      if (typeof fetchStorageStats === 'function') {
+        fetchStorageStats();
+      }
+      invalidatePhotosCache();
+    } catch (e) {
+      console.error('Failed to undo deletion:', e);
+      toast.error('Could not undo deletion');
+    }
+  };
+
   // Confirm Deletion Handler
   const handleConfirmPermanentDelete = async (customTarget) => {
     const target = itemToDelete || (customTarget && !Array.isArray(customTarget) ? customTarget : (Array.isArray(customTarget) && customTarget.length === 1 ? customTarget[0] : null)) || folderToDelete || fileToDelete;
@@ -1335,35 +1369,59 @@ function App() {
         fetchStorageStats();
         invalidatePhotosCache();
 
-        // 3. Native pill toast with Undo
-        showPillToast({
-          message: `Permanently deleted "${target.name || target.fileName || 'Item'}"`,
-          actionText: 'Undo',
-          onAction: async () => {
-            try {
-              await axios.post(
-                `${API_BASE_URL}/api/files/restore-batch`,
-                isFolder ? { folderIds: [targetId], fileIds: [] } : { folderIds: [], fileIds: [targetId] },
-                { headers }
-              );
-              showPillToast({ message: 'Deletion undone', duration: 3000 });
-              lastFetchedFolderIdRef.current = undefined;
-              const activeFolderId = currentFolderId || new URLSearchParams(window.location.search).get('folder') || null;
-              if (typeof fetchFiles === 'function') {
-                await fetchFiles(activeFolderId, true);
-              }
-              if (typeof fetchFolders === 'function') {
-                await fetchFolders(activeFolderId);
-              }
-              if (typeof fetchStorageStats === 'function') {
-                fetchStorageStats();
-              }
-            } catch (e) {
-              console.error('Failed to undo deletion:', e);
-              toast.error('Could not undo deletion');
+        // 3. Trigger toast with working interactive Undo callback
+        const itemsToRestore = [target];
+        const toastMessage = `Permanently deleted "${target.name || target.fileName || 'Item'}"`;
+
+        if (typeof showPillToast === 'function') {
+          showPillToast({
+            message: toastMessage,
+            actionText: 'Undo',
+            onAction: () => handleUndoDelete(itemsToRestore),
+            duration: 7000,
+          });
+        } else if (typeof toast?.custom === 'function') {
+          toast.custom(
+            (t) => (
+              <div
+                className={`${
+                  t.visible ? 'animate-enter' : 'animate-leave'
+                } flex items-center gap-3 bg-[#18181b]/95 text-zinc-200 px-4 py-2 rounded-full shadow-2xl border border-zinc-800/80 backdrop-blur-md pointer-events-auto transition-all`}
+              >
+                <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0 shadow-[0_0_6px_rgba(52,211,153,0.6)]" />
+                <span className="text-xs sm:text-sm font-medium text-zinc-200 truncate max-w-[240px] sm:max-w-[320px]">
+                  {toastMessage}
+                </span>
+                <button
+                  onClick={() => {
+                    toast.dismiss(t.id);
+                    handleUndoDelete(itemsToRestore);
+                  }}
+                  className="text-xs sm:text-sm font-semibold text-emerald-400 hover:text-emerald-300 underline underline-offset-2 ml-1 cursor-pointer transition-colors"
+                >
+                  Undo
+                </button>
+                <button
+                  onClick={() => toast.dismiss(t.id)}
+                  className="text-zinc-500 hover:text-zinc-300 text-xs sm:text-sm ml-1 transition-colors leading-none cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+            ),
+            {
+              duration: 7000,
+              position: 'bottom-center',
             }
-          },
-        });
+          );
+        } else if (typeof toast?.show === 'function') {
+          toast.show(toastMessage, {
+            type: 'success',
+            actionText: 'Undo',
+            onAction: () => handleUndoDelete(itemsToRestore),
+            duration: 7000,
+          });
+        }
       } catch (err) {
         console.error('Delete failed:', err);
         toast.error('Failed to delete item');
@@ -1405,34 +1463,59 @@ function App() {
         fetchStorageStats();
         invalidatePhotosCache();
 
-        showPillToast({
-          message: `Permanently deleted ${bulkTargets.length} items`,
-          actionText: 'Undo',
-          onAction: async () => {
-            try {
-              await axios.post(
-                `${API_BASE_URL}/api/files/restore-batch`,
-                { fileIds, folderIds },
-                { headers }
-              );
-              showPillToast({ message: 'Deletion undone', duration: 3000 });
-              lastFetchedFolderIdRef.current = undefined;
-              const activeFolderId = currentFolderId || new URLSearchParams(window.location.search).get('folder') || null;
-              if (typeof fetchFiles === 'function') {
-                await fetchFiles(activeFolderId, true);
-              }
-              if (typeof fetchFolders === 'function') {
-                await fetchFolders(activeFolderId);
-              }
-              if (typeof fetchStorageStats === 'function') {
-                fetchStorageStats();
-              }
-            } catch (e) {
-              console.error('Failed to undo deletion:', e);
-              toast.error('Could not undo deletion');
+        // 3. Trigger toast with working interactive Undo callback
+        const itemsToRestore = [...bulkTargets];
+        const toastMessage = `Permanently deleted ${itemsToRestore.length} items`;
+
+        if (typeof showPillToast === 'function') {
+          showPillToast({
+            message: toastMessage,
+            actionText: 'Undo',
+            onAction: () => handleUndoDelete(itemsToRestore),
+            duration: 7000,
+          });
+        } else if (typeof toast?.custom === 'function') {
+          toast.custom(
+            (t) => (
+              <div
+                className={`${
+                  t.visible ? 'animate-enter' : 'animate-leave'
+                } flex items-center gap-3 bg-[#18181b]/95 text-zinc-200 px-4 py-2 rounded-full shadow-2xl border border-zinc-800/80 backdrop-blur-md pointer-events-auto transition-all`}
+              >
+                <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0 shadow-[0_0_6px_rgba(52,211,153,0.6)]" />
+                <span className="text-xs sm:text-sm font-medium text-zinc-200 truncate max-w-[240px] sm:max-w-[320px]">
+                  {toastMessage}
+                </span>
+                <button
+                  onClick={() => {
+                    toast.dismiss(t.id);
+                    handleUndoDelete(itemsToRestore);
+                  }}
+                  className="text-xs sm:text-sm font-semibold text-emerald-400 hover:text-emerald-300 underline underline-offset-2 ml-1 cursor-pointer transition-colors"
+                >
+                  Undo
+                </button>
+                <button
+                  onClick={() => toast.dismiss(t.id)}
+                  className="text-zinc-500 hover:text-zinc-300 text-xs sm:text-sm ml-1 transition-colors leading-none cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+            ),
+            {
+              duration: 7000,
+              position: 'bottom-center',
             }
-          },
-        });
+          );
+        } else if (typeof toast?.show === 'function') {
+          toast.show(toastMessage, {
+            type: 'success',
+            actionText: 'Undo',
+            onAction: () => handleUndoDelete(itemsToRestore),
+            duration: 7000,
+          });
+        }
       } catch (err) {
         console.error('Bulk delete failed:', err);
         toast.error('Failed to delete items');
@@ -2841,8 +2924,32 @@ function App() {
                 <tbody className="block md:table-row-group font-body-md text-body-md text-on-surface dark:text-zinc-300 divide-y divide-outline-variant/50 dark:divide-zinc-800/50">
                   {filteredFiles.length === 0 ? (
                     <tr className="block md:table-row">
-                      <td colSpan="6" className="py-8 text-center text-on-surface-variant block md:table-cell">
-                        {files.length === 0 ? "No files have been uploaded yet." : "No files match your search."}
+                      <td colSpan="6" className="py-8 text-center block md:table-cell">
+                        {files.length === 0 ? (
+                          <div className="flex flex-col items-center justify-center py-16 text-center select-none">
+                            <div className="w-12 h-12 rounded-2xl bg-neutral-100 dark:bg-neutral-800/60 border border-neutral-200/60 dark:border-neutral-700/40 flex items-center justify-center text-neutral-400 dark:text-neutral-500 mb-3">
+                              <FileText className="w-6 h-6 stroke-[1.5]"/>
+                            </div>
+                            <p className="text-sm font-medium text-neutral-600 dark:text-neutral-300">
+                              No files uploaded yet
+                            </p>
+                            <p className="text-xs text-neutral-400 dark:text-neutral-500 mt-1 max-w-xs">
+                              Upload files or drag and drop documents into this folder to get started.
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-center justify-center py-16 text-center select-none">
+                            <div className="w-12 h-12 rounded-2xl bg-neutral-100 dark:bg-neutral-800/60 border border-neutral-200/60 dark:border-neutral-700/40 flex items-center justify-center text-neutral-400 dark:text-neutral-500 mb-3">
+                              <Search className="w-6 h-6 stroke-[1.5]"/>
+                            </div>
+                            <p className="text-sm font-medium text-neutral-600 dark:text-neutral-300">
+                              No files match your search
+                            </p>
+                            <p className="text-xs text-neutral-400 dark:text-neutral-500 mt-1 max-w-xs">
+                              Try searching for a different keyword or file extension.
+                            </p>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ) : 
@@ -3199,13 +3306,13 @@ function App() {
         onConfirm={showBulkDeleteModal ? handleBulkDelete : confirmDelete}
         title={
           showBulkDeleteModal
-            ? undefined
+            ? `Permanently delete ${selectedFolderIds.length + selectedFileIds.length} items?`
             : `Delete "${fileToDelete?.name}"?`
         }
         description={
           showBulkDeleteModal
-            ? `Are you sure you want to permanently delete the ${selectedFolderIds.length + selectedFileIds.length} selected item${selectedFolderIds.length + selectedFileIds.length === 1 ? '' : 's'}? This action will immediately remove the data from your storage.`
-            : `Are you sure you want to permanently delete "${fileToDelete?.name}"? This action will immediately remove the data from your storage.`
+            ? `Are you sure you want to permanently delete these ${selectedFolderIds.length + selectedFileIds.length} items? This action cannot be undone and will immediately free up your storage.`
+            : 'Are you sure you want to permanently delete this file? This action cannot be undone and will immediately free up your storage.'
         }
         confirmText="Permanently delete"
         count={showBulkDeleteModal ? (selectedFolderIds.length + selectedFileIds.length) : 1}

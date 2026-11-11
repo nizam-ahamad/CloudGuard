@@ -467,11 +467,16 @@ export default function PhotosView({ token: propToken }) {
           ? `Permanently deleted "${itemsToDelete[0].name}"`
           : `Permanently deleted ${itemsToDelete.length} items`;
 
-      showPillToast({
-        message: toastMessage,
-        actionText: 'Undo',
-        onAction: () => handleUndoDelete(itemsToDelete),
-      });
+      if (typeof showPillToast === 'function') {
+        showPillToast({
+          message: toastMessage,
+          actionText: 'Undo',
+          onAction: () => handleUndoDelete(itemsToDelete),
+          duration: 7000,
+        });
+      } else {
+        toast.success(toastMessage);
+      }
     } catch (err) {
       console.error('Delete error:', err);
       toast.error('Failed to delete selected items');
@@ -847,39 +852,46 @@ export default function PhotosView({ token: propToken }) {
       )}
 
       {/* Delete Confirmation Modal */}
-      {isDeleteModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-white dark:bg-[#18181b] border border-zinc-200 dark:border-zinc-800 rounded-2xl p-6 max-w-md w-full shadow-2xl transition-colors">
-            <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-              Permanently delete {selectedIds.size > 1 ? `${selectedIds.size} items` : 'item'}?
-            </h3>
-            <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-2">
-              Are you sure you want to permanently delete{' '}
-              <span className="font-semibold text-zinc-900 dark:text-zinc-200">
-                {selectedIds.size} {selectedIds.size === 1 ? 'item' : 'items'}
-              </span>
-              ? This action will immediately remove the media from your storage.
-            </p>
+      {isDeleteModalOpen && (() => {
+        const singleItem = selectedIds.size === 1 ? mediaList.find((m) => selectedIds.has(m._id)) : null;
+        const modalTitle = singleItem ? `Delete "${singleItem.name}"?` : `Permanently delete ${selectedIds.size} items?`;
+        const modalDesc = selectedIds.size > 1
+          ? `Are you sure you want to permanently delete these ${selectedIds.size} items? This action cannot be undone and will immediately free up your storage.`
+          : 'Are you sure you want to permanently delete this file? This action cannot be undone and will immediately free up your storage.';
 
-            <div className="flex flex-col-reverse sm:flex-row items-center justify-end gap-2.5 sm:gap-3 mt-6">
-              <button
-                type="button"
-                onClick={() => setIsDeleteModalOpen(false)}
-                className="w-full sm:w-auto px-4 py-2 text-sm font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-xl transition-colors cursor-pointer"
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+            <div className="bg-white dark:bg-[#18181b] border border-zinc-200 dark:border-zinc-800 rounded-2xl p-6 max-w-md w-full shadow-2xl transition-colors">
+              <h3 
+                className="text-base font-semibold text-zinc-900 dark:text-zinc-100 truncate max-w-sm"
+                title={modalTitle}
               >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmPermanentDelete}
-                className="w-full sm:w-auto px-4 py-2 text-sm font-medium bg-red-600 hover:bg-red-500 text-white rounded-xl shadow-lg shadow-red-600/25 transition-all cursor-pointer"
-              >
-                Permanently delete
-              </button>
+                {modalTitle}
+              </h3>
+              <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400 mt-2">
+                {modalDesc}
+              </p>
+
+              <div className="flex flex-col-reverse sm:flex-row items-center justify-end gap-2.5 sm:gap-3 mt-6">
+                <button
+                  type="button"
+                  onClick={() => setIsDeleteModalOpen(false)}
+                  className="w-full sm:w-auto px-4 py-2 text-sm font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-xl transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmPermanentDelete}
+                  className="w-full sm:w-auto px-4 py-2 text-sm font-medium bg-red-600 hover:bg-red-500 text-white rounded-xl shadow-lg shadow-red-600/25 transition-all cursor-pointer"
+                >
+                  Permanently delete
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Full Lightbox Carousel (Active <video> tag mounts ONLY here) */}
       {currentPreviewItem && (
