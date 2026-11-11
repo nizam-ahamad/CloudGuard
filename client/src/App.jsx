@@ -2581,11 +2581,11 @@ function App() {
 
                           {activeFolderMenuId === folder._id && (
                             <div
-                              className={`absolute top-full mt-1.5 w-44 sm:w-48 rounded-xl bg-white dark:bg-[#18181b] border border-neutral-200 dark:border-neutral-800 shadow-2xl p-1.5 z-50 animate-in fade-in zoom-in-95 ${
+                              className={`absolute top-full mt-1.5 w-44 sm:w-48 rounded-xl bg-white/95 dark:bg-[#18181b]/95 backdrop-blur-md border border-neutral-200 dark:border-neutral-800 shadow-2xl p-1.5 z-50 transform transition-all duration-150 ease-out ${
                                 isRightColumn 
-                                  ? 'right-0 sm:right-0 sm:left-auto' 
-                                  : 'left-0 sm:left-auto sm:right-0'
-                              }`}
+                                  ? 'right-0 sm:right-0 sm:left-auto origin-top-right' 
+                                  : 'left-0 sm:left-auto sm:right-0 origin-top-left'
+                              } animate-in fade-in zoom-in-95`}
                             >
                               <button 
                                 onClick={(e) => { 
@@ -2595,7 +2595,7 @@ function App() {
                                 }} 
                                 className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-neutral-700 dark:text-zinc-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition-colors cursor-pointer text-left"
                               >
-                                <FolderInput size={16} strokeWidth={2} />
+                                <FolderInput className="w-4 h-4 text-neutral-400 dark:text-zinc-400 shrink-0" />
                                 <span>Move</span>
                               </button>
                               <button 
@@ -2608,7 +2608,7 @@ function App() {
                                 }} 
                                 className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-neutral-700 dark:text-zinc-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition-colors cursor-pointer text-left"
                               >
-                                <Pencil size={16} strokeWidth={2} />
+                                <Pencil className="w-4 h-4 text-neutral-400 dark:text-zinc-400 shrink-0" />
                                 <span>Rename</span>
                               </button>
                               <button 
@@ -2620,19 +2620,19 @@ function App() {
                                 }} 
                                 className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-neutral-700 dark:text-zinc-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition-colors cursor-pointer text-left"
                               >
-                                <Info size={16} strokeWidth={2} />
+                                <Info className="w-4 h-4 text-neutral-400 dark:text-zinc-400 shrink-0" />
                                 <span>Folder Details</span>
                               </button>
-                              <div className="border-t border-neutral-200 dark:border-neutral-800 my-1"></div>
+                              <div className="h-[1px] bg-neutral-200 dark:bg-neutral-800 my-1" />
                               <button 
                                 onClick={(e) => { 
                                   e.stopPropagation(); 
                                   setFolderToDelete(folder); 
                                   setActiveFolderMenuId(null); 
                                 }} 
-                                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors cursor-pointer text-left"
+                                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-lg transition-colors cursor-pointer text-left"
                               >
-                                <span className="material-symbols-outlined text-[18px]">delete</span>
+                                <Trash2 className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0" />
                                 <span>Delete</span>
                               </button>
                             </div>
@@ -2710,7 +2710,7 @@ function App() {
                           </button>
 
                           {activeFolderMenuId === folder._id && (
-                            <div className="absolute right-0 top-full mt-1.5 w-44 sm:w-48 rounded-xl bg-white dark:bg-[#18181b] border border-neutral-200 dark:border-neutral-800 shadow-2xl p-1.5 z-50 animate-in fade-in zoom-in-95">
+                            <div className="absolute right-0 top-full mt-1.5 w-44 sm:w-48 rounded-xl bg-white/95 dark:bg-[#18181b]/95 backdrop-blur-md border border-neutral-200 dark:border-neutral-800 shadow-2xl p-1.5 z-50 transform transition-all duration-150 ease-out origin-top-right animate-in fade-in zoom-in-95">
                               <button 
                                 onClick={(e) => { 
                                   e.stopPropagation(); 
@@ -2719,7 +2719,7 @@ function App() {
                                 }} 
                                 className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-neutral-700 dark:text-zinc-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition-colors cursor-pointer text-left"
                               >
-                                <FolderInput size={16} strokeWidth={2} />
+                                <FolderInput className="w-4 h-4 text-neutral-400 dark:text-zinc-400 shrink-0" />
                                 <span>Move</span>
                               </button>
                               <button 
@@ -2732,7 +2732,7 @@ function App() {
                                 }} 
                                 className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-neutral-700 dark:text-zinc-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition-colors cursor-pointer text-left"
                               >
-                                <Pencil size={16} strokeWidth={2} />
+                                <Pencil className="w-4 h-4 text-neutral-400 dark:text-zinc-400 shrink-0" />
                                 <span>Rename</span>
                               </button>
                               <button 
@@ -2744,19 +2744,19 @@ function App() {
                                 }} 
                                 className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-neutral-700 dark:text-zinc-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition-colors cursor-pointer text-left"
                               >
-                                <Info size={16} strokeWidth={2} />
+                                <Info className="w-4 h-4 text-neutral-400 dark:text-zinc-400 shrink-0" />
                                 <span>Folder Details</span>
                               </button>
-                              <div className="border-t border-neutral-200 dark:border-neutral-800 my-1"></div>
+                              <div className="h-[1px] bg-neutral-200 dark:bg-neutral-800 my-1" />
                               <button 
                                 onClick={(e) => { 
                                   e.stopPropagation(); 
                                   setFolderToDelete(folder); 
                                   setActiveFolderMenuId(null); 
                                 }} 
-                                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors cursor-pointer text-left"
+                                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-lg transition-colors cursor-pointer text-left"
                               >
-                                <span className="material-symbols-outlined text-[18px]">delete</span>
+                                <Trash2 className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0" />
                                 <span>Delete</span>
                               </button>
                             </div>

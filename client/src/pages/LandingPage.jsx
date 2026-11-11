@@ -11,6 +11,7 @@ import {
   PlayCircle
 } from 'lucide-react';
 import CloudGuardLogo from '../CloudGuardLogo';
+import Footer from '../components/Footer';
 
 export default function LandingPage() {
   const [heroText, setHeroText] = useState('');
@@ -311,22 +312,7 @@ export default function LandingPage() {
       </section>
 
       {/* Footer */}
-      <footer className="border-t border-neutral-900 bg-black/60 py-8 px-4">
-        <div className="max-w-7xl mx-auto flex flex-col items-center justify-center gap-4 text-center text-xs text-neutral-400">
-          <div className="flex flex-wrap justify-center gap-6 text-xs text-neutral-400 mb-4">
-            <Link className="hover:text-white transition-colors" to="/pricing">Pricing</Link>
-            <span>•</span>
-            <Link className="hover:text-white transition-colors" to="/terms">Terms of Service</Link>
-            <span>•</span>
-            <Link className="hover:text-white transition-colors" to="/privacy">Privacy Policy</Link>
-            <span>•</span>
-            <Link className="hover:text-white transition-colors" to="/refund-policy">Refund Policy</Link>
-            <span>•</span>
-            <Link className="hover:text-white transition-colors" to="/contact">Contact Us</Link>
-          </div>
-          <p className="text-xs text-neutral-500">© 2026 CloudGuard. All rights reserved.</p>
-        </div>
-      </footer>
+      <Footer />
 
     </div>
   );
