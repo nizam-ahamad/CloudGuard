@@ -193,7 +193,6 @@ function App() {
   const [previewFile, setPreviewFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState("");
   const [previewText, setPreviewText] = useState("");
-  const [isAccountDeleteModalOpen, setIsAccountDeleteModalOpen] = useState(false);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -386,7 +385,7 @@ function App() {
   const [isFilesLoading, setIsFilesLoading] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
-  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [deleteConfirmationText, setDeleteConfirmationText] = useState('');
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
   const [activeMenuId, setActiveMenuId] = useState(null);
@@ -797,13 +796,38 @@ function App() {
     }
   };
 
-  const handleAccountDelete = async (e) => {
-    e.preventDefault();
-    if (deleteConfirmText !== 'DELETE') {
-      addToast('error', 'Please type DELETE to confirm.');
-      return;
+  const handleExecuteAccountDeletion = async () => {
+    if (deleteConfirmationText !== 'DELETE') return;
+    try {
+      setIsDeletingAccount(true);
+      const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+      await axios.delete(`${API_BASE_URL}/api/auth/account`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        data: {
+          confirmText: 'DELETE',
+          confirmation: true,
+        },
+      });
+
+      localStorage.clear();
+      sessionStorage.clear();
+
+      window.dispatchEvent(new Event('cloudguard:auth-changed'));
+      window.dispatchEvent(new Event('auth-change'));
+      window.dispatchEvent(new Event('storage'));
+
+      addToast('success', 'Account and all personal data permanently erased.');
+      navigate('/login');
+      setTimeout(() => {
+        window.location.href = '/login';
+      }, 100);
+    } catch (err) {
+      console.error('Account erasure error:', err);
+      const msg = err.response?.data?.error || err.response?.data?.message || 'Failed to erase account and data.';
+      addToast('error', typeof msg === 'string' ? msg : JSON.stringify(msg));
+    } finally {
+      setIsDeletingAccount(false);
     }
-    setIsAccountDeleteModalOpen(true);
   };
 
   const fetchFiles = useCallback(async (folderId = undefined, force = false) => {
@@ -2437,25 +2461,42 @@ function App() {
               </div>
             </div>
 
-            <div className="border border-red-200 dark:border-red-500/50 bg-red-50/50 dark:bg-transparent px-6 py-4 dark:text-red-200 shadow-sm dark:shadow-none">
-              <h3 className="font-title-md text-error dark:text-red-200 mb-2">Danger Zone</h3>
-              <p className="text-sm text-on-surface-variant dark:text-red-200/80 mb-4">Once you delete your account, there is no going back. Please be certain.</p>
-              <form onSubmit={handleAccountDelete} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-on-surface-variant dark:text-red-200 mb-1">To verify, type <strong>DELETE</strong> below:</label>
-                  <input type="text" value={deleteConfirmText} onChange={e => setDeleteConfirmText(e.target.value)} className="w-full bg-surface dark:bg-[#1e1f20] text-on-surface dark:text-zinc-200 border border-outline-variant dark:border-zinc-700 focus:ring-2 focus:ring-error rounded-lg px-4 py-2 outline-none" />
-                </div>
-                <button type="submit" disabled={deleteConfirmText !== 'DELETE' || isDeletingAccount} className={`w-full h-12 border border-red-500 text-red-500 hover:bg-red-500 hover:text-white bg-transparent font-mono text-sm tracking-wider uppercase transition-colors ${deleteConfirmText !== 'DELETE' || isDeletingAccount ? 'opacity-50 cursor-not-allowed hover:bg-transparent hover:text-red-500' : ''}`}>
-                  {isDeletingAccount ? (
-                    <span className="flex items-center justify-center gap-2">
-                      <span className="animate-spin inline-block w-4 h-4 border-[2px] border-current border-t-transparent rounded-full" role="status" aria-label="loading"></span>
-                      Deleting...
-                    </span>
-                  ) : (
-                    'Delete Account'
-                  )}
+            {/* Unified Single Danger Zone */}
+            <div className="mt-8 rounded-2xl border border-red-950/60 bg-red-950/10 p-6">
+              <div className="flex items-center gap-2 text-red-500 font-semibold text-base mb-1">
+                <svg className="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                Danger Zone: Delete Account
+              </div>
+              <p className="text-xs sm:text-sm text-neutral-400 leading-relaxed mb-4">
+                Permanently erase your account, files, preview thumbnails, and all personal data in accordance with Section 12 of India's DPDP Act, 2023. This action is irreversible.
+              </p>
+
+              <div className="space-y-3 max-w-md">
+                <label className="block text-xs font-medium text-neutral-300">
+                  To confirm permanent deletion, type <span className="font-bold text-red-400 select-all">DELETE</span> below:
+                </label>
+                <input
+                  type="text"
+                  value={deleteConfirmationText}
+                  onChange={(e) => setDeleteConfirmationText(e.target.value)}
+                  placeholder="Type DELETE to confirm"
+                  className="w-full px-3.5 py-2.5 rounded-lg bg-neutral-900/90 border border-neutral-800 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500"
+                />
+                <button
+                  type="button"
+                  disabled={deleteConfirmationText !== 'DELETE' || isDeletingAccount}
+                  onClick={handleExecuteAccountDeletion}
+                  className={`w-full py-2.5 px-4 rounded-lg text-sm font-semibold transition-all ${
+                    deleteConfirmationText === 'DELETE' && !isDeletingAccount
+                      ? 'bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-600/30 cursor-pointer'
+                      : 'bg-neutral-800/60 text-neutral-500 cursor-not-allowed border border-neutral-800'
+                  }`}
+                >
+                  {isDeletingAccount ? 'Erasing Account & Data...' : 'Permanently Delete Account'}
                 </button>
-              </form>
+              </div>
             </div>
           </div>
         ) : location.pathname === '/dashboard/photos' ? (
@@ -3361,44 +3402,6 @@ function App() {
         </div>
       )}
 
-
-      {isAccountDeleteModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-          <div className="w-full max-w-md p-6 bg-white rounded-lg shadow-xl dark:bg-[#1a1a1a] border border-transparent dark:border-[#333]">
-            <h3 className="mb-2 text-lg font-semibold text-gray-900 dark:text-white">Confirm Delete</h3>
-            <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
-              Are you sure you want to permanently delete your CloudGuard account? All files will be lost.
-            </p>
-            <div className="flex justify-end gap-3">
-              <button
-                onClick={() => setIsAccountDeleteModalOpen(false)}
-                className="px-4 py-2 text-sm font-medium text-gray-700 transition-colors rounded-md dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={async () => {
-                  setIsAccountDeleteModalOpen(false);
-                  setIsDeletingAccount(true);
-                  try {
-                    await axios.delete(`${API_BASE_URL}/api/auth/account`);
-                    localStorage.clear();
-                    sessionStorage.clear();
-                    window.location.href = '/login';
-                  } catch {
-                    addToast('error', 'Failed to delete account.');
-                  } finally {
-                    setIsDeletingAccount(false);
-                  }
-                }}
-                className="px-4 py-2 text-sm font-medium text-white transition-colors bg-red-600 rounded-md hover:bg-red-700"
-              >
-                Yes, Delete
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
       {/* New Folder Modal */}
       {showNewFolderModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm select-none animate-in fade-in">
