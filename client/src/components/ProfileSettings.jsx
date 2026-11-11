@@ -361,7 +361,7 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
       </div>
 
       {/* Single Danger Zone: Placed at the very bottom of Settings */}
-      <div className="mt-10 rounded-2xl border border-red-200 dark:border-red-500/20 bg-red-50/40 dark:bg-gradient-to-b dark:from-red-500/[0.04] dark:to-transparent p-6 sm:p-7 shadow-sm dark:shadow-xl">
+      <div className="mt-10 rounded-2xl border border-red-200 dark:border-red-500/30 bg-red-50/40 dark:bg-red-950/10 p-6 sm:p-7 shadow-sm dark:shadow-2xl">
         <div className="flex items-center justify-between pb-4 border-b border-red-500/10">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-400">
@@ -379,7 +379,7 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
           </span>
         </div>
 
-        <p className="text-xs sm:text-sm text-neutral-600 dark:text-neutral-400 leading-relaxed mt-4">
+        <p className="text-xs sm:text-sm text-neutral-600 dark:text-zinc-300 leading-relaxed mt-4">
           Permanently erases your account, files, thumbnails, and cloud vault data from AWS S3 and MongoDB. This action cannot be undone.
         </p>
 
@@ -387,7 +387,7 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
           {/* Password Field: Required for password accounts; protected against browser autofill */}
           {!isOAuthUser && (
             <div>
-              <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1.5">
+              <label className="block text-xs font-medium text-neutral-700 dark:text-zinc-200 mb-1.5">
                 Account Password
               </label>
               <div className="relative">
@@ -408,12 +408,12 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
                   onFocus={(e) => {
                     e.target.readOnly = false;
                   }}
-                  className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-800 text-sm text-neutral-900 dark:text-white placeholder-neutral-400 dark:placeholder-neutral-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500/30 transition-colors shadow-sm"
+                  className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-white dark:bg-[#121212] border border-neutral-300 dark:border-neutral-700 text-sm text-neutral-900 dark:text-white placeholder-neutral-400 dark:placeholder-zinc-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500/30 transition-colors shadow-sm"
                 />
                 <button
                   type="button"
                   onClick={() => setShowDeletePassword(!showDeletePassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 dark:text-neutral-500 dark:hover:text-neutral-300 transition-colors cursor-pointer"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 dark:text-zinc-400 dark:hover:text-zinc-200 transition-colors cursor-pointer"
                 >
                   {showDeletePassword ? (
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -432,8 +432,8 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
 
           {/* Confirmation Phrase Field */}
           <div>
-            <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1.5">
-              To confirm, type <span className="font-bold text-red-400 select-all tracking-wider">DELETE</span> below:
+            <label className="block text-xs font-medium text-neutral-700 dark:text-zinc-200 mb-1.5">
+              To confirm, type <span className="font-bold text-red-600 dark:text-red-400 select-all tracking-wider">DELETE</span> below:
             </label>
             <input
               type="text"
@@ -441,7 +441,7 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
               onChange={(e) => setDeleteConfirmText(e.target.value)}
               placeholder="Type DELETE to confirm"
               autoComplete="off"
-              className="w-full px-3.5 py-2.5 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-800 text-sm text-neutral-900 dark:text-white placeholder-neutral-400 dark:placeholder-neutral-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500/30 transition-colors shadow-sm"
+              className="w-full px-3.5 py-2.5 rounded-xl bg-white dark:bg-[#121212] border border-neutral-300 dark:border-neutral-700 text-sm text-neutral-900 dark:text-white placeholder-neutral-400 dark:placeholder-zinc-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500/30 transition-colors shadow-sm"
             />
           </div>
 

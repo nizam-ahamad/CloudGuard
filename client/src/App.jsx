@@ -2532,8 +2532,9 @@ function App() {
               </div>
               {folderView === 'grid' ? (
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                  {folders.map(folder => {
+                  {folders.map((folder, index) => {
                     const isSelected = selectedFolderIds.includes(String(folder._id));
+                    const isRightColumn = index % 2 === 1;
                     return (
                       <div 
                         key={folder._id}
@@ -2579,16 +2580,23 @@ function App() {
                           </button>
 
                           {activeFolderMenuId === folder._id && (
-                            <div className="absolute left-0 sm:left-auto sm:right-0 top-full mt-1.5 w-44 sm:w-48 rounded-xl bg-white/95 dark:bg-neutral-900/95 backdrop-blur-md border border-neutral-200 dark:border-neutral-800 shadow-2xl p-1.5 z-50 animate-in fade-in zoom-in-95">
+                            <div
+                              className={`absolute top-full mt-1.5 w-44 sm:w-48 rounded-xl bg-white dark:bg-[#18181b] border border-neutral-200 dark:border-neutral-800 shadow-2xl p-1.5 z-50 animate-in fade-in zoom-in-95 ${
+                                isRightColumn 
+                                  ? 'right-0 sm:right-0 sm:left-auto' 
+                                  : 'left-0 sm:left-auto sm:right-0'
+                              }`}
+                            >
                               <button 
                                 onClick={(e) => { 
                                   e.stopPropagation(); 
                                   openMoveModal({ ...folder, isFolder: true });
                                   setActiveFolderMenuId(null); 
                                 }} 
-                                className="w-full text-left px-3 py-2 text-xs sm:text-sm text-neutral-700 dark:text-[#e3e3e3] hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition-colors flex items-center gap-2 cursor-pointer"
+                                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-neutral-700 dark:text-zinc-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition-colors cursor-pointer text-left"
                               >
-                                <FolderInput size={16} strokeWidth={2} /> Move
+                                <FolderInput size={16} strokeWidth={2} />
+                                <span>Move</span>
                               </button>
                               <button 
                                 onClick={(e) => { 
@@ -2598,9 +2606,10 @@ function App() {
                                   setShowRenameFolderModal(true);
                                   setActiveFolderMenuId(null); 
                                 }} 
-                                className="w-full text-left px-3 py-2 text-xs sm:text-sm text-neutral-700 dark:text-[#e3e3e3] hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition-colors flex items-center gap-2 cursor-pointer"
+                                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-neutral-700 dark:text-zinc-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition-colors cursor-pointer text-left"
                               >
-                                <Pencil size={16} strokeWidth={2} /> Rename
+                                <Pencil size={16} strokeWidth={2} />
+                                <span>Rename</span>
                               </button>
                               <button 
                                 onClick={(e) => { 
@@ -2609,20 +2618,22 @@ function App() {
                                   setShowFolderDetailsModal(true);
                                   setActiveFolderMenuId(null); 
                                 }} 
-                                className="w-full text-left px-3 py-2 text-xs sm:text-sm text-neutral-700 dark:text-[#e3e3e3] hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition-colors flex items-center gap-2 cursor-pointer"
+                                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-neutral-700 dark:text-zinc-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition-colors cursor-pointer text-left"
                               >
-                                <Info size={16} strokeWidth={2} /> Folder Details
+                                <Info size={16} strokeWidth={2} />
+                                <span>Folder Details</span>
                               </button>
-                              <div className="border-t border-neutral-200 dark:border-neutral-700 my-1"></div>
+                              <div className="border-t border-neutral-200 dark:border-neutral-800 my-1"></div>
                               <button 
                                 onClick={(e) => { 
                                   e.stopPropagation(); 
                                   setFolderToDelete(folder); 
                                   setActiveFolderMenuId(null); 
                                 }} 
-                                className="w-full text-left px-3 py-2 text-xs sm:text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors flex items-center gap-2 cursor-pointer"
+                                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors cursor-pointer text-left"
                               >
-                                <span className="material-symbols-outlined text-[18px]">delete</span> Delete
+                                <span className="material-symbols-outlined text-[18px]">delete</span>
+                                <span>Delete</span>
                               </button>
                             </div>
                           )}
@@ -2699,16 +2710,17 @@ function App() {
                           </button>
 
                           {activeFolderMenuId === folder._id && (
-                            <div className="absolute right-0 top-full mt-1.5 w-44 sm:w-48 rounded-xl bg-white/95 dark:bg-neutral-900/95 backdrop-blur-md border border-neutral-200 dark:border-neutral-800 shadow-2xl p-1.5 z-50 animate-in fade-in zoom-in-95">
+                            <div className="absolute right-0 top-full mt-1.5 w-44 sm:w-48 rounded-xl bg-white dark:bg-[#18181b] border border-neutral-200 dark:border-neutral-800 shadow-2xl p-1.5 z-50 animate-in fade-in zoom-in-95">
                               <button 
                                 onClick={(e) => { 
                                   e.stopPropagation(); 
                                   openMoveModal({ ...folder, isFolder: true });
                                   setActiveFolderMenuId(null); 
                                 }} 
-                                className="w-full text-left px-3 py-2 text-xs sm:text-sm text-neutral-700 dark:text-[#e3e3e3] hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition-colors flex items-center gap-2 cursor-pointer"
+                                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-neutral-700 dark:text-zinc-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition-colors cursor-pointer text-left"
                               >
-                                <FolderInput size={16} strokeWidth={2} /> Move
+                                <FolderInput size={16} strokeWidth={2} />
+                                <span>Move</span>
                               </button>
                               <button 
                                 onClick={(e) => { 
@@ -2718,9 +2730,10 @@ function App() {
                                   setShowRenameFolderModal(true);
                                   setActiveFolderMenuId(null); 
                                 }} 
-                                className="w-full text-left px-3 py-2 text-xs sm:text-sm text-neutral-700 dark:text-[#e3e3e3] hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition-colors flex items-center gap-2 cursor-pointer"
+                                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-neutral-700 dark:text-zinc-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition-colors cursor-pointer text-left"
                               >
-                                <Pencil size={16} strokeWidth={2} /> Rename
+                                <Pencil size={16} strokeWidth={2} />
+                                <span>Rename</span>
                               </button>
                               <button 
                                 onClick={(e) => { 
@@ -2729,20 +2742,22 @@ function App() {
                                   setShowFolderDetailsModal(true);
                                   setActiveFolderMenuId(null); 
                                 }} 
-                                className="w-full text-left px-3 py-2 text-xs sm:text-sm text-neutral-700 dark:text-[#e3e3e3] hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition-colors flex items-center gap-2 cursor-pointer"
+                                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-neutral-700 dark:text-zinc-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition-colors cursor-pointer text-left"
                               >
-                                <Info size={16} strokeWidth={2} /> Folder Details
+                                <Info size={16} strokeWidth={2} />
+                                <span>Folder Details</span>
                               </button>
-                              <div className="border-t border-neutral-200 dark:border-neutral-700 my-1"></div>
+                              <div className="border-t border-neutral-200 dark:border-neutral-800 my-1"></div>
                               <button 
                                 onClick={(e) => { 
                                   e.stopPropagation(); 
                                   setFolderToDelete(folder); 
                                   setActiveFolderMenuId(null); 
                                 }} 
-                                className="w-full text-left px-3 py-2 text-xs sm:text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors flex items-center gap-2 cursor-pointer"
+                                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors cursor-pointer text-left"
                               >
-                                <span className="material-symbols-outlined text-[18px]">delete</span> Delete
+                                <span className="material-symbols-outlined text-[18px]">delete</span>
+                                <span>Delete</span>
                               </button>
                             </div>
                           )}
