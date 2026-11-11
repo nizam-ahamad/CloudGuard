@@ -590,28 +590,23 @@ router.put('/password', verifyToken, async (req, res) => {
 router.delete('/account', authMiddleware, async (req, res) => {
   try {
     const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
-    if (!rawUserId) {
-      return res.status(401).json({ error: 'Unauthorized: User identifier missing.' });
-    }
+    const { password, confirmText } = req.body || {};
 
-    const { password, confirmation, confirmText } = req.body;
+    if (confirmText !== 'DELETE') {
+      return res.status(400).json({ error: 'Please type DELETE in capital letters to confirm.' });
+    }
 
     const user = await User.findById(rawUserId);
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    // Verify password if user has a password set (non-OAuth)
-    if (user.password) {
+    // Verify password ONLY if account has a password set (non-OAuth)
+    if (user.password && user.authProvider !== 'google') {
       if (!password) {
-        return res.status(400).json({ error: 'Password is required to confirm account deletion' });
+        return res.status(400).json({ error: 'Please enter your account password to confirm deletion.' });
       }
       const isMatch = await bcrypt.compare(password, user.password);
       if (!isMatch) {
-        return res.status(401).json({ error: 'Incorrect password' });
-      }
-    } else {
-      // For OAuth users without a password, accept confirmation flag or confirmText 'DELETE'
-      if (confirmation !== true && confirmText !== 'DELETE' && password !== 'DELETE') {
-        return res.status(400).json({ error: 'Please confirm account deletion by typing DELETE' });
+        return res.status(401).json({ error: 'Incorrect password. Deletion cancelled.' });
       }
     }
 
@@ -622,14 +617,12 @@ router.delete('/account', authMiddleware, async (req, res) => {
       `${userIdStr}/`,
     ];
 
-    const bucketName = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME;
-
-    // Purge all S3 objects across user prefixes in batches of up to 1,000
+    // Purge AWS S3 objects in batches of 1,000
     for (const prefix of prefixes) {
       let token = null;
       do {
         const listRes = await s3Client.send(new ListObjectsV2Command({
-          Bucket: bucketName,
+          Bucket: process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME,
           Prefix: prefix,
           ContinuationToken: token,
         }));
@@ -639,7 +632,7 @@ router.delete('/account', authMiddleware, async (req, res) => {
           const keys = items.map((i) => ({ Key: i.Key }));
           for (let i = 0; i < keys.length; i += 1000) {
             await s3Client.send(new DeleteObjectsCommand({
-              Bucket: bucketName,
+              Bucket: process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME,
               Delete: { Objects: keys.slice(i, i + 1000), Quiet: true },
             }));
           }
@@ -663,7 +656,7 @@ router.delete('/account', authMiddleware, async (req, res) => {
       ],
     };
 
-    // Purge all user database records
+    // Purge database records
     await File.deleteMany(userMatch);
     await Folder.deleteMany(userMatch);
     await User.findByIdAndDelete(rawUserId);
