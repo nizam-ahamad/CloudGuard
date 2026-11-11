@@ -3,10 +3,23 @@ const router = express.Router();
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const mongoose = require('mongoose');
+const { S3Client, ListObjectsV2Command, DeleteObjectsCommand } = require('@aws-sdk/client-s3');
 const { OAuth2Client } = require('google-auth-library');
 const User = require('../models/User');
+const File = require('../models/File');
+const Folder = require('../models/Folder');
+const authMiddleware = require('../middleware/auth');
 const { sendActivationOtp, sendResetOtp, sendWelcomeEmail, sendNotificationEmail } = require('../utils/emailService');
 const { authLimiter, otpLimiter } = require('../middleware/rateLimiter');
+
+const s3Client = new S3Client({
+  region: process.env.AWS_REGION || 'ap-south-1',
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  },
+});
 
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
@@ -568,6 +581,100 @@ router.put('/password', verifyToken, async (req, res) => {
   } catch (err) {
     console.error('Password update error:', err);
     return res.status(500).json({ error: err.message || 'Failed to update password' });
+  }
+});
+
+// ==========================================
+// 8. ACCOUNT DELETION & RIGHT TO ERASURE (DPDP Act 2023 Section 12)
+// ==========================================
+router.delete('/account', authMiddleware, async (req, res) => {
+  try {
+    const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
+    if (!rawUserId) {
+      return res.status(401).json({ error: 'Unauthorized: User identifier missing.' });
+    }
+
+    const { password, confirmation, confirmText } = req.body;
+
+    const user = await User.findById(rawUserId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    // Verify password if user has a password set (non-OAuth)
+    if (user.password) {
+      if (!password) {
+        return res.status(400).json({ error: 'Password is required to confirm account deletion' });
+      }
+      const isMatch = await bcrypt.compare(password, user.password);
+      if (!isMatch) {
+        return res.status(401).json({ error: 'Incorrect password' });
+      }
+    } else {
+      // For OAuth users without a password, accept confirmation flag or confirmText 'DELETE'
+      if (confirmation !== true && confirmText !== 'DELETE' && password !== 'DELETE') {
+        return res.status(400).json({ error: 'Please confirm account deletion by typing DELETE' });
+      }
+    }
+
+    const userIdStr = String(rawUserId);
+    const prefixes = [
+      `uploads/${userIdStr}/`,
+      `thumbnails/${userIdStr}/`,
+      `${userIdStr}/`,
+    ];
+
+    const bucketName = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME;
+
+    // Purge all S3 objects across user prefixes in batches of up to 1,000
+    for (const prefix of prefixes) {
+      let token = null;
+      do {
+        const listRes = await s3Client.send(new ListObjectsV2Command({
+          Bucket: bucketName,
+          Prefix: prefix,
+          ContinuationToken: token,
+        }));
+
+        const items = listRes.Contents || [];
+        if (items.length > 0) {
+          const keys = items.map((i) => ({ Key: i.Key }));
+          for (let i = 0; i < keys.length; i += 1000) {
+            await s3Client.send(new DeleteObjectsCommand({
+              Bucket: bucketName,
+              Delete: { Objects: keys.slice(i, i + 1000), Quiet: true },
+            }));
+          }
+        }
+        token = listRes.NextContinuationToken;
+      } while (token);
+    }
+
+    const userIdObj = mongoose.Types.ObjectId.isValid(rawUserId)
+      ? new mongoose.Types.ObjectId(rawUserId)
+      : rawUserId;
+
+    const userMatch = {
+      $or: [
+        { userId: userIdObj },
+        { user: userIdObj },
+        { userId: rawUserId },
+        { user: rawUserId },
+        { userId: userIdStr },
+        { user: userIdStr },
+      ],
+    };
+
+    // Purge all user database records
+    await File.deleteMany(userMatch);
+    await Folder.deleteMany(userMatch);
+    await User.findByIdAndDelete(rawUserId);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Account and all associated personal data permanently erased.',
+    });
+  } catch (err) {
+    console.error('Account erasure error:', err);
+    return res.status(500).json({ error: 'Failed to erase account and data' });
   }
 });
 
