@@ -23,6 +23,7 @@ export function formatBytes(bytes) {
 
 export function UploadProvider({ children }) {
   const [queue, setQueue] = useState([]);
+  const uploadQueue = queue;
   const [isOpen, setIsOpen] = useState(false);
   const [globalSpeed, setGlobalSpeed] = useState('');
   const dropdownRef = useRef(null);
@@ -37,13 +38,13 @@ export function UploadProvider({ children }) {
   };
 
   // Keep a live ref to queue so the speed timer does not re-trigger on every render
-  const queueRef = useRef(queue);
+  const queueRef = useRef(uploadQueue);
   useEffect(() => {
-    queueRef.current = queue;
-  }, [queue]);
+    queueRef.current = uploadQueue;
+  }, [uploadQueue]);
 
   const speedTrackerRef = useRef({ lastBytes: 0, lastTime: Date.now() });
-  const isAnyUploading = queue.some((i) => i.status === 'uploading');
+  const isAnyUploading = uploadQueue.some((i) => i.status === 'uploading');
 
   useEffect(() => {
     if (!isAnyUploading) {
@@ -65,9 +66,10 @@ export function UploadProvider({ children }) {
         const bytesPerSec = bytesDiff / timeDiff;
 
         if (bytesPerSec > 0) {
-          const speedStr = bytesPerSec >= 1024 * 1024
-            ? `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`
-            : `${Math.round(bytesPerSec / 1024)} KB/s`;
+          const speedStr =
+            bytesPerSec >= 1024 * 1024
+              ? `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`
+              : `${Math.round(bytesPerSec / 1024)} KB/s`;
           setGlobalSpeed(speedStr);
         }
         speedTrackerRef.current = { lastBytes: totalUploadedBytes, lastTime: now };
@@ -405,13 +407,13 @@ export const HeaderUploadButton = () => {
         >
           {/* Header */}
           <div className="flex items-center justify-between p-3.5 border-b border-neutral-200 dark:border-neutral-800 bg-neutral-50/50 dark:bg-neutral-800/40">
-            <div className="flex items-center gap-1.5 sm:gap-2">
-              <span className="font-semibold text-xs sm:text-sm text-neutral-900 dark:text-white">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-neutral-900 dark:text-white">
                 {isWorking ? `Uploading (${activeCount} left)` : 'Uploads Complete'}
               </span>
               {isWorking && globalSpeed && (
-                <span className="text-[11px] sm:text-xs font-normal tabular-nums text-neutral-500 dark:text-neutral-400 select-none">
-                  • {globalSpeed}
+                <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold tabular-nums bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border border-blue-200/50 dark:border-blue-800/40 animate-in fade-in duration-150">
+                  {globalSpeed}
                 </span>
               )}
             </div>
@@ -419,7 +421,7 @@ export const HeaderUploadButton = () => {
               {!isWorking && (
                 <button
                   type="button"
-                  onClick={activeClear}
+                  onClick={clearCompleted}
                   className="text-[11px] text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white px-2 py-0.5 rounded hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
                 >
                   Clear all
@@ -430,7 +432,7 @@ export const HeaderUploadButton = () => {
                 onClick={() => setIsOpen(false)}
                 className="p-1 text-neutral-400 hover:text-neutral-700 dark:hover:text-white rounded hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
               >
-                <X className="w-4 h-4" />
+                <X className="w-4 h-4"/>
               </button>
             </div>
           </div>
