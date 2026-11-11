@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import axios from 'axios';
-import { Loader2, AlertTriangle, X } from 'lucide-react';
+import { Loader2, AlertTriangle, X, Smartphone, Check, Download, ExternalLink } from 'lucide-react';
 import toast, { Toaster } from 'react-hot-toast';
 import PasswordInput from '../PasswordInput';
 import { API_BASE_URL } from '../config';
 import { useToast } from '../context/ToastContext';
+import { usePWAInstall } from '../hooks/usePWAInstall';
 
 const api = axios.create({
   baseURL: `${API_BASE_URL}/api`,
@@ -18,6 +19,68 @@ api.interceptors.request.use((config) => {
   }
   return config;
 });
+
+function PWAInstallCard() {
+  const { isInstalled, isIOS, triggerInstall, isInstallable } = usePWAInstall();
+  const [showIOSGuide, setShowIOSGuide] = useState(false);
+
+  const handleInstallClick = async () => {
+    const res = await triggerInstall();
+    if (res?.method === 'ios') {
+      setShowIOSGuide(true);
+    }
+  };
+
+  return (
+    <div className="p-4 sm:p-5 rounded-2xl border transition-colors bg-neutral-900/60 dark:bg-neutral-900/60 border-neutral-800/80 dark:border-neutral-800/80 mt-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        {/* Left: Icon & Text Cluster */}
+        <div className="flex items-start gap-3.5">
+          <div className="w-10 h-10 rounded-xl bg-blue-500/10 text-blue-500 dark:text-blue-400 flex items-center justify-center shrink-0 mt-0.5 sm:mt-0 border border-blue-500/20">
+            <Smartphone className="w-5 h-5 stroke-[2]"/>
+          </div>
+          <div className="min-w-0 flex-1">
+            <h4 className="text-sm font-semibold text-neutral-100 dark:text-white tracking-tight">
+              Install CloudGuard App
+            </h4>
+            <p className="text-xs text-neutral-400 dark:text-neutral-400 mt-1 leading-relaxed">
+              Add CloudGuard to your home screen or desktop for 1-tap full-screen access.
+            </p>
+          </div>
+        </div>
+
+        {/* Right / Bottom Action: Full-width on mobile, auto-width on desktop */}
+        <div className="w-full sm:w-auto shrink-0 pt-1 sm:pt-0">
+          {isInstalled ? (
+            <div className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-3.5 py-2.5 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs font-semibold select-none">
+              <Check className="w-4 h-4 stroke-[2.5]"/>
+              <span>Installed</span>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={handleInstallClick}
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 active:bg-blue-700 shadow-sm shadow-blue-600/20 transition-all cursor-pointer whitespace-nowrap active:scale-[0.99]"
+            >
+              <Download className="w-4 h-4"/>
+              <span>Install on Device</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* iOS Safari Instructions Helper */}
+      {showIOSGuide && (
+        <div className="mt-3.5 pt-3 border-t border-neutral-800 text-xs text-neutral-300 flex items-start gap-2 animate-in fade-in">
+          <span className="text-blue-400 font-bold shrink-0">iOS:</span>
+          <span>
+            Tap the <span className="font-semibold underline text-white">Share</span> button in Safari, then scroll down and tap <span className="font-semibold underline text-white">"Add to Home Screen"</span>.
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function ProfileSettings({ user, setUser, addToast, onClose }) {
   const [showCancelModal, setShowCancelModal] = useState(false);
@@ -572,6 +635,9 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
           </div>
         )}
       </div>
+
+      {/* Install App Card */}
+      <PWAInstallCard />
 
       {/* Legal & Policies Card */}
       <div className="bg-white dark:bg-[#141414] border border-neutral-200 dark:border-[#262626] rounded-xl p-6 transition-colors shadow-sm dark:shadow-none">

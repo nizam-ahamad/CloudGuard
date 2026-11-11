@@ -10,6 +10,25 @@
   <link rel="alternate icon" type="image/x-icon" href="/favicon.ico" />
   <link rel="apple-touch-icon" href="/cloudguard-logo-fav.svg" />
 
+  <!-- PWA Manifest & Meta -->
+  <link rel="manifest" href="/manifest.json" />
+  <meta name="theme-color" content="#09090b" media="(prefers-color-scheme: dark)" />
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="CloudGuard" />
+  <link rel="apple-touch-icon" href="/cloudguard-logo.svg" />
+
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js').catch((err) => {
+          console.warn('PWA Service Worker registration skipped:', err);
+        });
+      });
+    }
+  </script>
+
   <title>CloudGuard Vault – Secure Cloud Storage & AI Malware Detection</title>
   <meta name="description"
     content="CloudGuard Vault is an encrypted cloud storage system featuring real-time AI malware scanning and zero-trust file management." />

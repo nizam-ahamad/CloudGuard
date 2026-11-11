@@ -1,0 +1,25 @@
+{
+  "short_name": "CloudGuard",
+  "name": "CloudGuard",
+  "description": "Secure cloud storage with AI-powered malware scanning and instant file management.",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/x-icon"
+    },
+    {
+      "src": "/cloudguard-logo.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/dashboard",
+  "display": "standalone",
+  "theme_color": "#09090b",
+  "background_color": "#09090b",
+  "orientation": "portrait-primary",
+  "categories": ["productivity", "utilities"]
+}
+
