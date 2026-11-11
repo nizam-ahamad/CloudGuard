@@ -90,12 +90,12 @@ export default function ContactUs() {
             </div>
             <div>
               <span className="text-xs font-mono uppercase text-neutral-500 tracking-wider">Statutory Grievance Mechanism</span>
-              <h2 className="text-xl font-bold text-white tracking-tight mt-1">Privacy &amp; DPDP Desk</h2>
+              <h2 className="text-xl font-bold text-white tracking-tight mt-1">Nizam Ahamad (Grievance Officer)</h2>
             </div>
             <p className="text-sm text-neutral-400 leading-relaxed">
-              Designated Grievance Redressal Officer under the Digital Personal Data Protection (DPDP) Act and SPDI Rules:
+              Designated Data Protection &amp; Grievance Redressal Officer under the Digital Personal Data Protection (DPDP) Act, 2023:
             </p>
-            <div className="pt-2">
+            <div className="pt-2 space-y-2">
               <a 
                 href="mailto:privacy@cloudguard.site" 
                 className="inline-flex items-center gap-2 text-sm font-semibold text-emerald-400 hover:text-emerald-300 transition-colors font-mono"
@@ -103,8 +103,11 @@ export default function ContactUs() {
                 <span>privacy@cloudguard.site</span>
                 <span>&rarr;</span>
               </a>
-              <p className="text-xs text-neutral-500 mt-2 font-mono">
-                Statutory SLA: Resolved within 15 business days
+              <p className="text-xs text-neutral-500 font-mono">
+                Statutory SLA: Acknowledged within 48 hours, resolved within 30 days.
+              </p>
+              <p className="text-[11px] text-neutral-400 leading-relaxed pt-2 border-t border-[#262626]">
+                Supervisory Authority: Under Section 13(4) of the DPDP Act, unresolved grievances may be escalated to the <span className="text-neutral-200 font-medium">Data Protection Board of India (DPBI)</span>.
               </p>
             </div>
           </div>

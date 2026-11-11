@@ -196,33 +196,43 @@ export default function PrivacyPolicy() {
                 <span className="text-xs font-mono font-semibold px-2.5 py-1 rounded-md bg-neutral-800 text-neutral-300 border border-neutral-700">
                   05
                 </span>
-                <h2 className="text-xl lg:text-2xl font-bold text-white tracking-tight">Third-Party Service Providers</h2>
+                <h2 className="text-xl lg:text-2xl font-bold text-white tracking-tight">Third-Party Services &amp; Data Processors</h2>
               </div>
               <p className="text-neutral-300 text-sm sm:text-base leading-relaxed">
-                We partner with specialized infrastructure providers to deliver our services:
+                In compliance with Sections 5 and 16 of the Digital Personal Data Protection (DPDP) Act, 2023, the itemized schedule below identifies all third-party Data Processors engaged by CloudGuard:
               </p>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-4">
-                <div className="p-4 md:p-5 bg-neutral-950/80 border border-neutral-800/80 rounded-xl space-y-2">
-                  <Database size={20} className="text-blue-400 mb-1" />
-                  <h3 className="text-sm font-semibold text-white">Storage &amp; Edge CDN</h3>
-                  <p className="text-xs text-neutral-400 leading-normal">
-                    Backblaze B2, AWS, and Cloudflare for global caching, zero-egress delivery, and distributed asset storage.
-                  </p>
-                </div>
-                <div className="p-4 md:p-5 bg-neutral-950/80 border border-neutral-800/80 rounded-xl space-y-2">
-                  <Lock size={20} className="text-emerald-400 mb-1" />
-                  <h3 className="text-sm font-semibold text-white">Payment Gateways</h3>
-                  <p className="text-xs text-neutral-400 leading-normal">
-                    PCI-DSS Level 1 compliant processors (such as Razorpay / Stripe) to securely process payments without storing sensitive card data.
-                  </p>
-                </div>
-                <div className="p-4 md:p-5 bg-neutral-950/80 border border-neutral-800/80 rounded-xl space-y-2">
-                  <Server size={20} className="text-purple-400 mb-1" />
-                  <h3 className="text-sm font-semibold text-white">Database &amp; Compute</h3>
-                  <p className="text-xs text-neutral-400 leading-normal">
-                    MongoDB Atlas (encrypted at rest) and dedicated Tier-IV data center instances for backend computing.
-                  </p>
-                </div>
+              <div className="mt-4 overflow-hidden rounded-xl border border-neutral-800 bg-neutral-900/40">
+                <table className="w-full text-left text-xs sm:text-sm">
+                  <thead className="border-b border-neutral-800 bg-neutral-900/80 text-neutral-400">
+                    <tr>
+                      <th className="px-4 py-3 font-semibold">Entity / Processor</th>
+                      <th className="px-4 py-3 font-semibold">Purpose</th>
+                      <th className="px-4 py-3 font-semibold">Processing Location</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-800/60 text-neutral-300">
+                    <tr>
+                      <td className="px-4 py-3 font-medium text-white">Amazon Web Services (AWS)</td>
+                      <td className="px-4 py-3">Encrypted object storage (S3) &amp; EC2 hosting</td>
+                      <td className="px-4 py-3 text-emerald-400">Mumbai, India (ap-south-1)</td>
+                    </tr>
+                    <tr>
+                      <td className="px-4 py-3 font-medium text-white">Google LLC</td>
+                      <td className="px-4 py-3">Federated single sign-on (OAuth 2.0)</td>
+                      <td className="px-4 py-3">United States / Global</td>
+                    </tr>
+                    <tr>
+                      <td className="px-4 py-3 font-medium text-white">Resend, Inc.</td>
+                      <td className="px-4 py-3">Transactional OTP &amp; verification email routing</td>
+                      <td className="px-4 py-3">United States</td>
+                    </tr>
+                    <tr>
+                      <td className="px-4 py-3 font-medium text-white">Abuse.ch / CIRCL</td>
+                      <td className="px-4 py-3">Cryptographic SHA-256 hash threat reputation lookup</td>
+                      <td className="px-4 py-3">Switzerland / Luxembourg</td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
             </section>
 
@@ -273,16 +283,27 @@ export default function PrivacyPolicy() {
                 </span>
                 <h2 className="text-xl lg:text-2xl font-bold text-white tracking-tight">Grievance Officer &amp; Contact Details</h2>
               </div>
-              <p className="text-neutral-300 text-sm sm:text-base leading-relaxed">
-                In accordance with Information Technology rules and applicable privacy regulations, our designated contact for privacy concerns, data inquiries, or billing disputes is:
-              </p>
-              <ul className="list-disc list-inside space-y-2.5 pl-2 text-neutral-400 text-sm sm:text-base">
-                <li><strong className="text-neutral-200">Grievance Officer / DPO:</strong> Privacy &amp; Security Desk</li>
-                <li><strong className="text-neutral-200">Privacy &amp; Grievance Email:</strong> <a href="mailto:privacy@cloudguard.site" className="text-emerald-400 hover:underline"><code className="text-xs font-mono px-1.5 py-0.5 rounded bg-neutral-800 text-emerald-300">privacy@cloudguard.site</code></a></li>
-                <li><strong className="text-neutral-200">General Support:</strong> <a href="mailto:support@cloudguard.site" className="text-emerald-400 hover:underline"><code className="text-xs font-mono px-1.5 py-0.5 rounded bg-neutral-800 text-emerald-300">support@cloudguard.site</code></a></li>
-                <li><strong className="text-neutral-200">Registered Business Address:</strong> House No. 120, Main Market, Ward No. 3, Shaktifarm, Udham Singh Nagar, Uttarakhand - 263151</li>
-                <li><strong className="text-neutral-200">Resolution Window:</strong> Privacy grievances are investigated and resolved within 15 business days.</li>
-              </ul>
+              <div className="rounded-2xl border border-neutral-800 bg-neutral-900/50 p-6 space-y-3">
+                <h3 className="text-base font-semibold text-white">Data Protection Grievance Officer</h3>
+                <p className="text-sm text-neutral-400 leading-relaxed">
+                  In accordance with the Digital Personal Data Protection Act, 2023 (DPDP Act) and applicable rules, 
+                  the details of the designated Grievance Officer for CloudGuard are published below:
+                </p>
+                <div className="text-sm text-neutral-300 space-y-1.5 pt-1">
+                  <p><strong className="text-white">Name:</strong> Nizam Ahamad</p>
+                  <p><strong className="text-white">Designation:</strong> Data Protection &amp; Grievance Officer</p>
+                  <p><strong className="text-white">Email:</strong> <a href="mailto:privacy@cloudguard.site" className="text-emerald-400 hover:underline"><code className="text-xs font-mono px-1.5 py-0.5 rounded bg-neutral-800 text-emerald-300">privacy@cloudguard.site</code></a></p>
+                  <p><strong className="text-white">General Support:</strong> <a href="mailto:support@cloudguard.site" className="text-emerald-400 hover:underline"><code className="text-xs font-mono px-1.5 py-0.5 rounded bg-neutral-800 text-emerald-300">support@cloudguard.site</code></a></p>
+                  <p><strong className="text-white">Registered Business Address:</strong> House No. 120, Main Market, Ward No. 3, Shaktifarm, Udham Singh Nagar, Uttarakhand - 263151, India</p>
+                  <p><strong className="text-white">Redressal Timeline:</strong> All grievances are acknowledged within 48 hours and resolved within 30 days.</p>
+                </div>
+                <div className="mt-4 pt-3 border-t border-neutral-800 text-xs text-neutral-400 leading-relaxed">
+                  <strong className="text-neutral-200">Statutory Right of Escalation:</strong> If your privacy concern or data grievance 
+                  is not resolved to your satisfaction within the prescribed timeline, you have the statutory right under Section 13(4) 
+                  of the DPDP Act, 2023 to register an appeal or complaint with the{' '}
+                  <span className="text-neutral-200 font-medium">Data Protection Board of India (DPBI)</span>.
+                </div>
+              </div>
             </section>
           </main>
         </div>
