@@ -22,6 +22,7 @@ export default function AuthPage() {
   const [timer, setTimer] = useState(60);
   const [otpAttempts, setOtpAttempts] = useState(0);
   const [pendingEmail, setPendingEmail] = useState('');
+  const [consentAgreed, setConsentAgreed] = useState(false);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -129,6 +130,8 @@ export default function AuthPage() {
           name: formData.name || targetEmail.split('@')[0],
           email: targetEmail,
           password: formData.password || 'tempFallback123',
+          consentGiven: true,
+          isAdultConfirmed: true,
         });
       }
       setTimer(60);
@@ -286,6 +289,13 @@ export default function AuthPage() {
 
       // 4. Handling Sign Up
       if (isSignUp) {
+        if (!consentAgreed) {
+          setFormError('Please confirm you are 18+ and accept the privacy notice to create an account.');
+          toast.error('Please confirm you are 18+ and accept the privacy notice to create an account.');
+          setIsLoading(false);
+          return;
+        }
+
         if (formData.password.length < 8 || !/[a-zA-Z]/.test(formData.password) || !/\d/.test(formData.password)) {
           setFormError('Min. 8 characters, 1 letter, and 1 number.');
           setIsLoading(false);
@@ -293,9 +303,11 @@ export default function AuthPage() {
         }
 
         const res = await axios.post(`${API_BASE_URL}/api/auth/register`, {
-          name: formData.name,
-          email: formData.email,
+          name: formData.name.trim(),
+          email: formData.email.trim(),
           password: formData.password,
+          consentGiven: true,
+          isAdultConfirmed: true,
         });
 
         if (res.data?.requireOtp) {
@@ -622,6 +634,7 @@ export default function AuthPage() {
                 onClick={() => {
                   setIsSignUp(false);
                   setFormError('');
+                  setConsentAgreed(false);
                 }}
                 className={`pb-1.5 text-sm font-semibold transition-colors cursor-pointer mr-5 ${
                   !isSignUp ? 'text-white border-b-2 border-white' : 'text-neutral-500 hover:text-neutral-300'
@@ -634,6 +647,7 @@ export default function AuthPage() {
                 onClick={() => {
                   setIsSignUp(true);
                   setFormError('');
+                  setConsentAgreed(false);
                 }}
                 className={`pb-1.5 text-sm font-semibold transition-colors cursor-pointer ${
                   isSignUp ? 'text-white border-b-2 border-white' : 'text-neutral-500 hover:text-neutral-300'
@@ -746,11 +760,37 @@ export default function AuthPage() {
                 <p className="text-[11px] text-red-400 text-center">{formError}</p>
               )}
 
+              {/* DPDP Act 2023 Statutory Consent & Age Gating Checkbox */}
+              {isSignUp && (
+                <div className="flex items-start gap-2.5 my-3 text-left">
+                  <input
+                    type="checkbox"
+                    id="dpdp-consent"
+                    checked={consentAgreed}
+                    onChange={(e) => {
+                      setConsentAgreed(e.target.checked);
+                      if (formError) setFormError('');
+                    }}
+                    className="mt-0.5 h-4 w-4 rounded border-neutral-700 bg-neutral-900 text-emerald-500 focus:ring-emerald-500/20 cursor-pointer"
+                  />
+                  <label htmlFor="dpdp-consent" className="text-xs text-neutral-400 leading-snug cursor-pointer select-none">
+                    I confirm I am 18 years of age or older, and I consent to the collection and processing of my personal data as described in the{' '}
+                    <a href="/privacy" target="_blank" rel="noreferrer" className="text-emerald-400 hover:underline">
+                      Privacy Policy
+                    </a>{' '}
+                    and{' '}
+                    <a href="/terms" target="_blank" rel="noreferrer" className="text-emerald-400 hover:underline">
+                      Terms of Service
+                    </a>.
+                  </label>
+                </div>
+              )}
+
               {/* Submit Button */}
               <button
                 type="submit"
-                disabled={isLoading}
-                className="w-full mt-2 flex items-center justify-center gap-2 py-2 px-4 text-xs font-semibold rounded-xl bg-white text-neutral-900 hover:bg-neutral-200 active:scale-[0.99] transition-all cursor-pointer disabled:opacity-50"
+                disabled={isLoading || (isSignUp && !consentAgreed)}
+                className="w-full mt-2 flex items-center justify-center gap-2 py-2 px-4 text-xs font-semibold rounded-xl bg-white text-neutral-900 hover:bg-neutral-200 active:scale-[0.99] transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isLoading ? (
                   <Loader2 className="w-4 h-4 animate-spin" />
@@ -766,16 +806,18 @@ export default function AuthPage() {
         )}
 
         {/* 4. Terms Disclaimer */}
-        <p className="mt-3.5 text-[10px] text-center text-neutral-500 leading-relaxed">
-          By continuing, you agree to CloudGuard's{' '}
-          <Link className="underline hover:text-neutral-300" to="/terms">
-            Terms of Service
-          </Link>{' '}
-          and{' '}
-          <Link className="underline hover:text-neutral-300" to="/privacy">
-            Privacy Policy
-          </Link>.
-        </p>
+        {!isSignUp && (
+          <p className="mt-3.5 text-[10px] text-center text-neutral-500 leading-relaxed">
+            By continuing, you agree to CloudGuard's{' '}
+            <Link className="underline hover:text-neutral-300" to="/terms">
+              Terms of Service
+            </Link>{' '}
+            and{' '}
+            <Link className="underline hover:text-neutral-300" to="/privacy">
+              Privacy Policy
+            </Link>.
+          </p>
+        )}
 
       </div>
     </div>

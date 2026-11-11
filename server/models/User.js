@@ -64,6 +64,22 @@ const userSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    consentGiven: {
+      type: Boolean,
+      default: true,
+    },
+    consentTimestamp: {
+      type: Date,
+      default: Date.now,
+    },
+    consentVersion: {
+      type: String,
+      default: '1.0',
+    },
+    isAdultConfirmed: {
+      type: Boolean,
+      default: true,
+    },
   },
   { timestamps: true }
 );

@@ -114,8 +114,15 @@ router.post('/google', async (req, res) => {
 // ==========================================
 router.post('/register', authLimiter, async (req, res) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, consentGiven, isAdultConfirmed } = req.body;
     if (!name || !email || !password) return res.status(400).json({ error: 'All fields are required' });
+
+    // Statutory DPDP Act 2023 Consent & Age-Gating Verification
+    if (!consentGiven || !isAdultConfirmed) {
+      return res.status(400).json({
+        error: 'Under the DPDP Act 2023, you must confirm you are 18+ and explicitly accept the privacy notice.',
+      });
+    }
 
     const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/;
     if (!passwordRegex.test(password)) {
@@ -135,6 +142,10 @@ router.post('/register', authLimiter, async (req, res) => {
       existingUser.name = name.trim();
       existingUser.otp = generateOtp();
       existingUser.otpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
+      existingUser.consentGiven = true;
+      existingUser.isAdultConfirmed = true;
+      existingUser.consentTimestamp = new Date();
+      existingUser.consentVersion = '1.0';
       await existingUser.save();
 
       sendActivationOtp(existingUser.email, existingUser.otp, existingUser.name);
@@ -161,6 +172,10 @@ router.post('/register', authLimiter, async (req, res) => {
       otpExpires: new Date(Date.now() + 10 * 60 * 1000),
       storageUsed: 0,
       storageLimit: 5368709120,
+      consentGiven: true,
+      isAdultConfirmed: true,
+      consentTimestamp: new Date(),
+      consentVersion: '1.0',
     });
 
     // Send Activation OTP email
