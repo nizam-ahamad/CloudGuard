@@ -6,6 +6,7 @@ const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const File = require('../models/File');
 const authMiddleware = require('../middleware/auth');
 const { buildTenantQuery } = require('../utils/tenantQuery');
+const { applyCdnToUrl } = require('../utils/cdnHelper');
 
 const s3Client = new S3Client({
   region: process.env.AWS_REGION || 'eu-central-003',
@@ -58,6 +59,7 @@ const handleGetPhotos = async (req, res) => {
               }),
               { expiresIn: 86400 } // 24 hours
             );
+            thumbnailUrl = applyCdnToUrl(thumbnailUrl);
           } catch (e) {
             console.warn(`Failed to sign thumbnail URL for ${item.name}:`, e.message);
           }

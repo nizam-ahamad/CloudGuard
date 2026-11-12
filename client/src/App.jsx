@@ -28,6 +28,7 @@ import {
 } from './utils/downloadHelper';
 import { HeaderDownloadButton, useDownload } from './context/DownloadContext';
 import { HeaderUploadButton, useUpload, UploadProvider } from './context/UploadContext';
+import { getCachedAccessUrl, fetchAccessUrl, prefetchAccessUrl } from './utils/accessUrlCache';
 import { Folder, FolderInput, X, Search, MoreVertical, Pencil, Info, LayoutGrid, List, Check, Trash2, Image, Play, ChevronLeft, ChevronRight, Download, Clock, UploadCloud, FolderPlus, Menu, Sun, Moon, Loader2, FileText } from 'lucide-react';
 
 import { API_BASE_URL } from "./config";
@@ -1820,16 +1821,28 @@ function App() {
     if (!file.diskName || (file.status !== 'Safe' && file.status !== 'unscanned_too_large')) return;
     
     try {
+      const type = (file.type || '').toLowerCase();
+      const cachedUrl = getCachedAccessUrl(file._id);
+
+      if (cachedUrl) {
+        setPreviewUrl(cachedUrl);
+        setPreviewFile(file);
+
+        if (type === 'txt' || type === 'md') {
+          const textResponse = await fetch(cachedUrl);
+          if (!textResponse.ok) throw new Error("Failed to fetch file content");
+          const text = await textResponse.text();
+          setPreviewText(text);
+        }
+        return;
+      }
+
       setPreviewText('Loading...');
-      const response = await fetch(`${API_BASE_URL}/api/files/${file._id}/access`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (!response.ok) throw new Error("Could not fetch secure access URL");
-      const { url } = await response.json();
+      const url = await fetchAccessUrl(file._id, token);
+      if (!url) throw new Error("Could not fetch secure access URL");
       setPreviewUrl(url);
       setPreviewFile(file);
 
-      const type = file.type.toLowerCase();
       if (type === 'txt' || type === 'md') {
         const textResponse = await fetch(url);
         if (!textResponse.ok) throw new Error("Failed to fetch file content");
@@ -2955,6 +2968,8 @@ function App() {
                     <ErrorBoundary key={file?._id || file?.id || Math.random()}>
                     <tr 
                       onClick={() => file.isFolder ? setCurrentDirectory(file.diskName) : handlePreview(file)}
+                      onMouseEnter={() => !file.isFolder && prefetchAccessUrl(file._id, token)}
+                      onTouchStart={() => !file.isFolder && prefetchAccessUrl(file._id, token)}
                       className={`flex flex-wrap md:table-row items-center py-3 px-4 md:p-0 hover:bg-surface-bright dark:hover:bg-zinc-800/70 dark:text-zinc-300 transition-colors group md:h-14 ${
                         selectedFileIds.includes(String(file._id)) ? 'bg-neutral-100 dark:bg-zinc-800/60' : ''
                       } ${file.isFolder || (file.diskName && (file.status === 'Safe' || file.status === 'unscanned_too_large')) ? 'cursor-pointer' : ''}`}
@@ -3033,7 +3048,12 @@ function App() {
                           
                           <div className={`absolute right-0 w-44 bg-white dark:bg-[#1e1f20] rounded-xl shadow-xl border border-outline-variant dark:border-zinc-800 z-[60] overflow-hidden flex flex-col py-1 transition-all duration-200 ease-out ${index >= filteredFiles.length - 2 && filteredFiles.length > 3 ? 'bottom-full mb-2 origin-bottom-right' : 'top-full mt-2 origin-top-right'} ${activeMenuId === (file._id || file.id) ? 'opacity-100 scale-100 pointer-events-auto' : 'opacity-0 scale-95 pointer-events-none'}`}>
                             {!file.isFolder && (
-                              <button onClick={(e) => { e.stopPropagation(); handlePreview(file); setActiveMenuId(null); }} className="w-full text-left px-4 py-2.5 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-neutral-700 transition-colors flex items-center gap-3">
+                              <button 
+                                onClick={(e) => { e.stopPropagation(); handlePreview(file); setActiveMenuId(null); }} 
+                                onMouseEnter={() => prefetchAccessUrl(file._id, token)}
+                                onTouchStart={() => prefetchAccessUrl(file._id, token)}
+                                className="w-full text-left px-4 py-2.5 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-neutral-700 transition-colors flex items-center gap-3"
+                              >
                                 <span className="material-symbols-outlined text-[18px]">visibility</span> Preview
                               </button>
                             )}
@@ -3252,6 +3272,7 @@ function App() {
                 controls
                 autoPlay
                 playsInline
+                preload="auto"
                 className="max-w-full max-h-[80vh] rounded-lg object-contain shadow-2xl bg-black"
               >
                 Your browser does not support the video tag.

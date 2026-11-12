@@ -18,6 +18,7 @@ import {
 import { useToast } from '../context/ToastContext';
 import { useDownload } from '../context/DownloadContext';
 import CentralizedFloatingBar from '../components/FloatingBar';
+import { getCachedAccessUrl, fetchAccessUrl, prefetchAccessUrl } from '../utils/accessUrlCache';
 
 // --------------------------------------------------------------------------
 // MODULE-LEVEL CACHES: Persist across tab switching to prevent network refetching
@@ -325,8 +326,10 @@ export default function PhotosView({ token: propToken }) {
     const fileId = item._id;
 
     // Check cache first for 0ms instant display and 0 network requests
-    if (urlCacheRef.current.has(fileId)) {
-      setOriginalUrl(urlCacheRef.current.get(fileId));
+    const cachedUrl = getCachedAccessUrl(fileId) || urlCacheRef.current.get(fileId);
+    if (cachedUrl) {
+      urlCacheRef.current.set(fileId, cachedUrl);
+      setOriginalUrl(cachedUrl);
       setLoadingOriginal(false);
       return;
     }
@@ -342,11 +345,7 @@ export default function PhotosView({ token: propToken }) {
 
     try {
       const token = propToken || (typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null);
-      const res = await axios.get(`/api/files/${fileId}/access`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-
-      const accessUrl = res.data?.accessUrl || res.data?.url;
+      const accessUrl = await fetchAccessUrl(fileId, token);
       if (accessUrl) {
         urlCacheRef.current.set(fileId, accessUrl);
       }
@@ -425,10 +424,7 @@ export default function PhotosView({ token: propToken }) {
     if (!targetUrl && item._id) {
       try {
         const token = propToken || (typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null);
-        const res = await axios.get(`/api/files/${item._id}/access`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        });
-        targetUrl = res.data?.downloadUrl || res.data?.accessUrl || res.data?.url;
+        targetUrl = getCachedAccessUrl(item._id) || (await fetchAccessUrl(item._id, token));
       } catch (err) {
         console.warn('Failed to fetch access URL for download:', err);
       }
@@ -764,6 +760,8 @@ export default function PhotosView({ token: propToken }) {
                     <div
                       key={item._id}
                       onClick={() => openPreview(item, globalIndex)}
+                      onMouseEnter={() => prefetchAccessUrl(item._id, propToken)}
+                      onTouchStart={() => prefetchAccessUrl(item._id, propToken)}
                       className={`group relative aspect-square bg-white dark:bg-zinc-900 rounded-lg sm:rounded-xl overflow-hidden border transition-all shadow-sm active:scale-95 touch-manipulation cursor-pointer ${
                         isSelected
                           ? 'ring-2 ring-emerald-500 border-emerald-500 dark:border-emerald-500'
@@ -860,6 +858,8 @@ export default function PhotosView({ token: propToken }) {
                     <div
                       key={item._id}
                       onClick={() => openPreview(item, globalIndex)}
+                      onMouseEnter={() => prefetchAccessUrl(item._id, propToken)}
+                      onTouchStart={() => prefetchAccessUrl(item._id, propToken)}
                       className={`flex items-center justify-between p-3 cursor-pointer transition-colors ${
                         isSelected
                           ? 'bg-emerald-500/10 dark:bg-emerald-500/15'
@@ -1085,6 +1085,7 @@ export default function PhotosView({ token: propToken }) {
                   controls
                   autoPlay
                   playsInline
+                  preload="auto"
                   className="max-h-[80vh] w-auto max-w-full rounded-lg shadow-2xl bg-black"
                 />
               ) : (

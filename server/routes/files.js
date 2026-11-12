@@ -21,6 +21,12 @@ const File = require('../models/File');
 const Folder = require('../models/Folder');
 const { buildTenantQuery } = require('../utils/tenantQuery');
 const { permanentlyDeleteS3Keys } = require('../utils/s3Delete');
+const { applyCdnToUrl } = require('../utils/cdnHelper');
+
+// In-memory cache for presigned preview/access URLs (30-minute TTL)
+// Key: `${file._id}:${file.s3Key}` -> Value: { url: string, expiresAt: number }
+const accessUrlCache = new Map();
+const ACCESS_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
 const escapeRegex = (string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -315,14 +321,51 @@ router.get('/:id/access', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'S3 Key missing' });
     }
 
+    const isDownload = req.query.download === 'true';
+    const cacheKey = `${file._id}:${targetKey}`;
+
+    if (!isDownload) {
+      const cached = accessUrlCache.get(cacheKey);
+      if (cached && cached.expiresAt > Date.now()) {
+        return res.json({
+          success: true,
+          accessUrl: cached.url,
+          downloadUrl: cached.url,
+          url: cached.url,
+          file,
+        });
+      }
+    }
+
     const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
+    const disposition = isDownload
+      ? `attachment; filename="${encodeURIComponent(file.name || file.originalName || 'file')}"`
+      : `inline; filename="${encodeURIComponent(file.name || file.originalName || 'file')}"`;
+
     const command = new GetObjectCommand({
       Bucket: bucket,
       Key: targetKey,
-      ResponseContentDisposition: `inline; filename="${encodeURIComponent(file.name || file.originalName || 'file')}"`,
+      ResponseContentDisposition: disposition,
     });
 
-    const accessUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
+    // 2-hour signature validity (7200 seconds) so Cloudflare and browser can cache responses
+    const rawUrl = await getSignedUrl(s3Client, command, { expiresIn: 7200 });
+    const accessUrl = applyCdnToUrl(rawUrl);
+
+    if (!isDownload) {
+      accessUrlCache.set(cacheKey, {
+        url: accessUrl,
+        expiresAt: Date.now() + ACCESS_CACHE_TTL_MS, // 30-minute TTL
+      });
+
+      // Periodic memory guard
+      if (accessUrlCache.size > 2000) {
+        const now = Date.now();
+        for (const [k, v] of accessUrlCache.entries()) {
+          if (v.expiresAt <= now) accessUrlCache.delete(k);
+        }
+      }
+    }
 
     return res.json({
       success: true,
@@ -1389,7 +1432,7 @@ router.get('/:id/download-url', authMiddleware, async (req, res) => {
     });
 
     const downloadUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
-    return res.json({ downloadUrl, name: fileName, size: file.size || 0 });
+    return res.json({ downloadUrl: applyCdnToUrl(downloadUrl), name: fileName, size: file.size || 0 });
   } catch (err) {
     console.error('Failed to generate presigned download URL:', err);
     return res.status(500).json({ error: 'Failed to generate download link' });
