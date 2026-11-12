@@ -3,7 +3,18 @@ const router = express.Router();
 const crypto = require('crypto');
 const axios = require('axios');
 const mongoose = require('mongoose');
-const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, DeleteObjectsCommand, HeadObjectCommand } = require('@aws-sdk/client-s3');
+const {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+  DeleteObjectCommand,
+  DeleteObjectsCommand,
+  HeadObjectCommand,
+  CreateMultipartUploadCommand,
+  UploadPartCommand,
+  CompleteMultipartUploadCommand,
+  AbortMultipartUploadCommand,
+} = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const User = require('../models/User');
 const File = require('../models/File');
@@ -460,6 +471,164 @@ router.post('/presigned-url', authMiddleware, async (req, res) => {
   } catch (err) {
     console.error('Presigned URL error:', err);
     return res.status(500).json({ error: 'Failed to generate upload ticket' });
+  }
+});
+
+// POST /api/files/multipart/init — Initialize multipart upload for large files (>= 100 MB)
+router.post('/multipart/init', authMiddleware, async (req, res) => {
+  try {
+    const { fileName, fileSize, mimeType, folderId, folder } = req.body;
+    const userId = req.user.id || req.user._id;
+    const activeFolder = folderId || folder || null;
+
+    if (!fileName || !fileSize) {
+      return res.status(400).json({ error: 'Filename and file size are required' });
+    }
+
+    // 1. Pre-flight storage quota check (identical to single-PUT)
+    const user = await User.findById(userId).select('storageUsed storageLimit').lean();
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const currentUsed = user.storageUsed || 0;
+    const limit = user.storageLimit || 5368709120;
+    if (currentUsed + Number(fileSize) > limit) {
+      return res.status(403).json({ error: 'Storage quota exceeded. Upgrade required.' });
+    }
+
+    // 2. Key generation & MongoDB pre-creation
+    const sanitized = String(fileName).replace(/[^a-zA-Z0-9._-]/g, '_');
+    const s3Key = `uploads/${userId}/${Date.now()}-${sanitized}`;
+    const contentType = mimeType || 'application/octet-stream';
+
+    const newFile = await File.create({
+      name: fileName,
+      originalName: fileName,
+      sanitizedName: sanitized,
+      diskName: sanitized,
+      size: Number(fileSize),
+      mimeType: contentType,
+      mimetype: contentType,
+      s3Key,
+      userId,
+      user: userId,
+      folder: activeFolder,
+      folderId: activeFolder,
+      isTrash: false,
+      isDeleted: false,
+      isMalicious: false,
+      securityStatus: 'pending_scan',
+      uploadedAt: new Date(),
+      createdAt: new Date(),
+    });
+
+    const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
+
+    // 3. Initiate S3 / Backblaze B2 Multipart Session
+    const createCmd = new CreateMultipartUploadCommand({
+      Bucket: bucket,
+      Key: s3Key,
+      ContentType: contentType,
+    });
+
+    const { UploadId } = await s3Client.send(createCmd);
+
+    // 4. Generate 50 MB chunk presigned URLs (4-hour validity for multi-GB transfers)
+    const partSize = 50 * 1024 * 1024; // 50 MB
+    const totalParts = Math.ceil(Number(fileSize) / partSize);
+
+    const partUrls = await Promise.all(
+      Array.from({ length: totalParts }, async (_, idx) => {
+        const partNumber = idx + 1;
+        const partCmd = new UploadPartCommand({
+          Bucket: bucket,
+          Key: s3Key,
+          UploadId,
+          PartNumber: partNumber,
+        });
+        const signedUrl = await getSignedUrl(s3Client, partCmd, { expiresIn: 14400 });
+        return { partNumber, signedUrl };
+      })
+    );
+
+    return res.status(200).json({
+      fileId: newFile._id,
+      s3Key,
+      uploadId: UploadId,
+      partSize,
+      totalParts,
+      partUrls,
+    });
+  } catch (err) {
+    console.error('[Multipart Init Error]:', err);
+    return res.status(500).json({ error: 'Failed to initialize multipart upload' });
+  }
+});
+
+// POST /api/files/multipart/complete — Assemble uploaded chunks into final object
+router.post('/multipart/complete', authMiddleware, async (req, res) => {
+  try {
+    const { fileId, s3Key, uploadId, parts } = req.body;
+    const userId = req.user.id || req.user._id;
+
+    if (!fileId || !s3Key || !uploadId || !Array.isArray(parts) || parts.length === 0) {
+      return res.status(400).json({ error: 'Missing required multipart completion parameters' });
+    }
+
+    const file = await File.findOne({ _id: fileId, userId });
+    if (!file) return res.status(404).json({ error: 'File record not found' });
+
+    // S3 and Backblaze B2 strictly require parts sorted ascending by PartNumber
+    const sortedParts = [...parts]
+      .sort((a, b) => Number(a.PartNumber) - Number(b.PartNumber))
+      .map((p) => ({
+        PartNumber: Number(p.PartNumber),
+        ETag: p.ETag,
+      }));
+
+    const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
+    await s3Client.send(
+      new CompleteMultipartUploadCommand({
+        Bucket: bucket,
+        Key: s3Key,
+        UploadId: uploadId,
+        MultipartUpload: { Parts: sortedParts },
+      })
+    );
+
+    return res.status(200).json({ success: true, fileId, s3Key });
+  } catch (err) {
+    console.error('[Multipart Complete Error]:', err);
+    return res.status(500).json({ error: 'Failed to assemble multipart upload' });
+  }
+});
+
+// POST /api/files/multipart/abort — Clean up incomplete chunks & pending DB record on failure/cancel
+router.post('/multipart/abort', authMiddleware, async (req, res) => {
+  try {
+    const { fileId, s3Key, uploadId } = req.body;
+    const userId = req.user.id || req.user._id;
+
+    if (s3Key && uploadId) {
+      const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
+      await s3Client
+        .send(
+          new AbortMultipartUploadCommand({
+            Bucket: bucket,
+            Key: s3Key,
+            UploadId: uploadId,
+          })
+        )
+        .catch((e) => console.warn('[Multipart Abort S3 Notice]:', e.message));
+    }
+
+    if (fileId) {
+      await File.deleteOne({ _id: fileId, userId, securityStatus: 'pending_scan' });
+    }
+
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error('[Multipart Abort Error]:', err);
+    return res.status(500).json({ error: 'Failed to abort multipart upload' });
   }
 });
 
