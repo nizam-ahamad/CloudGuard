@@ -20,6 +20,7 @@ const User = require('../models/User');
 const File = require('../models/File');
 const Folder = require('../models/Folder');
 const { buildTenantQuery } = require('../utils/tenantQuery');
+const { applyCdnToUrl } = require('../utils/cdnHelper');
 
 const escapeRegex = (string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -286,12 +287,13 @@ router.get('/:id/access', authMiddleware, async (req, res) => {
     });
 
     const accessUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
+    const finalAccessUrl = applyCdnToUrl(accessUrl);
 
     return res.json({
       success: true,
-      accessUrl,
-      downloadUrl: accessUrl,
-      url: accessUrl,
+      accessUrl: finalAccessUrl,
+      downloadUrl: finalAccessUrl,
+      url: finalAccessUrl,
       file,
     });
   } catch (err) {
@@ -1278,7 +1280,7 @@ router.get('/:id/download-url', authMiddleware, async (req, res) => {
     });
 
     const downloadUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
-    return res.json({ downloadUrl, name: fileName, size: file.size || 0 });
+    return res.json({ downloadUrl: applyCdnToUrl(downloadUrl), name: fileName, size: file.size || 0 });
   } catch (err) {
     console.error('Failed to generate presigned download URL:', err);
     return res.status(500).json({ error: 'Failed to generate download link' });

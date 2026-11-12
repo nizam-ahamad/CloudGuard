@@ -21,6 +21,7 @@ const crypto = require('crypto');
 const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand, ListObjectsV2Command, DeleteObjectsCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { buildTenantQuery } = require('./utils/tenantQuery');
+const { applyCdnToUrl } = require('./utils/cdnHelper');
 const { apiLimiter } = require('./middleware/rateLimiter');
 const { sendActivationOtp, sendResetOtp, sendWelcomeEmail } = require('./utils/emailService');
 
@@ -1008,8 +1009,9 @@ app.post('/api/upload', verifyToken, async (req, res) => {
             Key: targetKey
           });
           const signedUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
-          fileObj.s3Url = signedUrl;
-          fileObj.url = signedUrl;
+          const cdnSignedUrl = applyCdnToUrl(signedUrl);
+          fileObj.s3Url = cdnSignedUrl;
+          fileObj.url = cdnSignedUrl;
         } catch (err) {
           console.error('Error signing URL for uploaded media asset:', err.message);
         }
@@ -1630,7 +1632,8 @@ app.get('/api/files/photos', verifyToken, async (req, res) => {
                 Bucket: process.env.AWS_BUCKET_NAME,
                 Key: targetKey
               });
-              presignedUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
+              const signed = await getSignedUrl(s3, command, { expiresIn: 3600 });
+              presignedUrl = applyCdnToUrl(signed);
             } catch (err) {
               console.error('Error signing URL for media asset:', err.message);
             }
@@ -1980,7 +1983,7 @@ app.get('/api/files/:id/access', verifyToken, async (req, res) => {
     });
 
     const url = await getSignedUrl(s3, command, { expiresIn: 60 });
-    res.json({ url });
+    res.json({ url: applyCdnToUrl(url) });
   } catch (error) {
     console.error('Access URL generation error:', error);
     res.status(500).json({ error: 'Failed to generate access URL' });
@@ -2032,7 +2035,7 @@ app.get('/api/files/:id/download', verifyToken, async (req, res) => {
     // Valid for 5 minutes (300 seconds)
     const downloadUrl = await getSignedUrl(s3, command, { expiresIn: 300 });
 
-    res.json({ success: true, downloadUrl });
+    res.json({ success: true, downloadUrl: applyCdnToUrl(downloadUrl) });
   } catch (err) {
     console.error('Error generating download url:', err);
     res.status(500).json({ success: false, message: 'Download failed' });
@@ -2083,7 +2086,7 @@ app.get('/api/files/:id/download-url', verifyToken, async (req, res) => {
     });
 
     const downloadUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
-    return res.json({ downloadUrl, name: fileName, size: file.size || 0 });
+    return res.json({ downloadUrl: applyCdnToUrl(downloadUrl), name: fileName, size: file.size || 0 });
   } catch (err) {
     console.error('Failed to generate presigned download URL:', err);
     return res.status(500).json({ error: 'Failed to generate download link' });
