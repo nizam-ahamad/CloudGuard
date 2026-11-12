@@ -215,7 +215,7 @@ export default function PrivacyPolicy() {
                     <tr>
                       <td className="px-4 py-3 font-medium text-white">Amazon Web Services (AWS)</td>
                       <td className="px-4 py-3">Cloud compute &amp; application server hosting (EC2)</td>
-                      <td className="px-4 py-3 text-emerald-400">Mumbai, India (ap-south-1)</td>
+                      <td className="px-4 py-3 text-emerald-400">Stockholm, Sweden (eu-north-1 / EU)</td>
                     </tr>
                     <tr>
                       <td className="px-4 py-3 font-medium text-white">Backblaze, Inc. (Backblaze B2)</td>
@@ -314,10 +314,7 @@ export default function PrivacyPolicy() {
                   <p><strong className="text-white">Redressal Timeline:</strong> All grievances are acknowledged within 48 hours and resolved within 30 days.</p>
                 </div>
                 <div className="mt-4 pt-3 border-t border-neutral-800 text-xs text-neutral-400 leading-relaxed">
-                  <strong className="text-neutral-200">Statutory Right of Escalation:</strong> If your privacy concern or data grievance 
-                  is not resolved to your satisfaction within the prescribed timeline, you have the statutory right under Section 13(4) 
-                  of the DPDP Act, 2023 to register an appeal or complaint with the{' '}
-                  <span className="text-neutral-200 font-medium">Data Protection Board of India (DPBI)</span>.
+                  If a privacy grievance remains unresolved after 30 days, you may escalate the matter to the Data Protection Board of India in accordance with the DPDP Act, 2023.
                 </div>
               </div>
             </section>
