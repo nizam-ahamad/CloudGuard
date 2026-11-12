@@ -21,6 +21,7 @@ const File = require('../models/File');
 const Folder = require('../models/Folder');
 const { buildTenantQuery } = require('../utils/tenantQuery');
 const { applyCdnToUrl } = require('../utils/cdnHelper');
+const { permanentlyDeleteS3Keys } = require('../utils/s3Delete');
 
 const escapeRegex = (string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -97,17 +98,9 @@ const scheduleFilePurge = (fileId, rawUserId, delayMs = 12000) => {
       const file = await File.findOne({ _id: fileId, isTrash: true, ...userMatch });
       if (!file) return; // Restored via Undo or already removed
 
-      if (file.s3Key) {
-        await s3Client.send(new DeleteObjectCommand({
-          Bucket: bucket,
-          Key: file.s3Key,
-        })).catch(e => console.warn(`[S3 Purge Warning] ${e.message}`));
-      }
-      if (file.thumbnailKey) {
-        await s3Client.send(new DeleteObjectCommand({
-          Bucket: bucket,
-          Key: file.thumbnailKey,
-        })).catch(e => console.warn(`[S3 Thumb Purge Warning] ${e.message}`));
+      const keysToPurge = [file.s3Key, file.thumbnailKey].filter(Boolean);
+      if (keysToPurge.length > 0) {
+        await permanentlyDeleteS3Keys(s3Client, bucket, keysToPurge).catch(e => console.warn(`[S3 Purge Warning] ${e.message}`));
       }
 
       await File.deleteOne({ _id: file._id });
@@ -135,17 +128,12 @@ const scheduleBatchPurge = (fileIds = [], folderIds = [], rawUserId, delayMs = 1
 
         const keys = [];
         for (const f of trashedFiles) {
-          if (f.s3Key) keys.push({ Key: f.s3Key });
-          if (f.thumbnailKey) keys.push({ Key: f.thumbnailKey });
+          if (f.s3Key) keys.push(f.s3Key);
+          if (f.thumbnailKey) keys.push(f.thumbnailKey);
         }
 
         if (keys.length > 0) {
-          for (let i = 0; i < keys.length; i += 1000) {
-            await s3Client.send(new DeleteObjectsCommand({
-              Bucket: bucket,
-              Delete: { Objects: keys.slice(i, i + 1000), Quiet: true },
-            })).catch(e => console.warn(`[S3 Batch Purge Warning] ${e.message}`));
-          }
+          await permanentlyDeleteS3Keys(s3Client, bucket, keys).catch(e => console.warn(`[S3 Batch Purge Warning] ${e.message}`));
         }
 
         await File.deleteMany({
@@ -179,17 +167,12 @@ const scheduleBatchPurge = (fileIds = [], folderIds = [], rawUserId, delayMs = 1
 
           const childKeys = [];
           for (const cf of childFiles) {
-            if (cf.s3Key) childKeys.push({ Key: cf.s3Key });
-            if (cf.thumbnailKey) childKeys.push({ Key: cf.thumbnailKey });
+            if (cf.s3Key) childKeys.push(cf.s3Key);
+            if (cf.thumbnailKey) childKeys.push(cf.thumbnailKey);
           }
 
           if (childKeys.length > 0) {
-            for (let i = 0; i < childKeys.length; i += 1000) {
-              await s3Client.send(new DeleteObjectsCommand({
-                Bucket: bucket,
-                Delete: { Objects: childKeys.slice(i, i + 1000), Quiet: true },
-              })).catch(e => console.warn(`[S3 Folder Child Purge Warning] ${e.message}`));
-            }
+            await permanentlyDeleteS3Keys(s3Client, bucket, childKeys).catch(e => console.warn(`[S3 Folder Child Purge Warning] ${e.message}`));
           }
 
           await File.deleteMany({
@@ -666,7 +649,7 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
     const user = await User.findById(rawUserId);
     if (user && user.storageUsed + actualBytes > user.storageLimit) {
       try {
-        await s3Client.send(new DeleteObjectCommand({ Bucket: bucket, Key: file.s3Key }));
+        await permanentlyDeleteS3Keys(s3Client, bucket, file.s3Key);
       } catch (delErr) {}
       await File.deleteOne({ _id: file._id });
       return res.status(403).json({ success: false, error: 'Storage limit exceeded by uploaded file.' });
@@ -779,16 +762,7 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
         ) {
           console.log(`[CloudGuard Security] Threat intercepted: EICAR content signature detected in ${file.s3Key}`);
           try {
-            await s3Client.send(new DeleteObjectCommand({
-              Bucket: bucket,
-              Key: file.s3Key,
-            }));
-            if (file.thumbnailKey) {
-              await s3Client.send(new DeleteObjectCommand({
-                Bucket: bucket,
-                Key: file.thumbnailKey,
-              }));
-            }
+            await permanentlyDeleteS3Keys(s3Client, bucket, [file.s3Key, file.thumbnailKey].filter(Boolean));
           } catch (delErr) {
             console.error('[S3 Delete Error on EICAR]:', delErr.message);
           }
@@ -851,17 +825,7 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
 
       try {
         const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
-        await s3Client.send(new DeleteObjectCommand({
-          Bucket: bucket,
-          Key: file.s3Key,
-        }));
-
-        if (file.thumbnailKey) {
-          await s3Client.send(new DeleteObjectCommand({
-            Bucket: bucket,
-            Key: file.thumbnailKey,
-          }));
-        }
+        await permanentlyDeleteS3Keys(s3Client, bucket, [file.s3Key, file.thumbnailKey].filter(Boolean));
       } catch (delErr) {
         console.error('[S3 Delete Error]:', delErr.message);
       }
@@ -930,12 +894,14 @@ router.delete('/purge-test-threats', authMiddleware, async (req, res) => {
     });
 
     const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
+    const threatKeys = [];
     for (const f of threats) {
+      if (f.s3Key) threatKeys.push(f.s3Key);
+      if (f.thumbnailKey) threatKeys.push(f.thumbnailKey);
+    }
+    if (threatKeys.length > 0) {
       try {
-        await s3Client.send(new DeleteObjectCommand({
-          Bucket: bucket,
-          Key: f.s3Key,
-        }));
+        await permanentlyDeleteS3Keys(s3Client, bucket, threatKeys);
       } catch (e) {}
     }
 

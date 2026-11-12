@@ -22,6 +22,7 @@ const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, HeadO
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { buildTenantQuery } = require('./utils/tenantQuery');
 const { applyCdnToUrl } = require('./utils/cdnHelper');
+const { permanentlyDeleteS3Keys } = require('./utils/s3Delete');
 const { apiLimiter } = require('./middleware/rateLimiter');
 const { sendActivationOtp, sendResetOtp, sendWelcomeEmail } = require('./utils/emailService');
 
@@ -609,11 +610,11 @@ app.delete('/api/auth/account', verifyToken, async (req, res) => {
           Prefix: `${userId}/` 
       }));
       if (listedObjects.Contents && listedObjects.Contents.length > 0) {
-          const deleteParams = {
-              Bucket: process.env.AWS_BUCKET_NAME,
-              Delete: { Objects: listedObjects.Contents.map(obj => ({ Key: obj.Key })) }
-          };
-          await s3.send(new DeleteObjectsCommand(deleteParams));
+          await permanentlyDeleteS3Keys(
+              s3,
+              process.env.AWS_BUCKET_NAME,
+              listedObjects.Contents.map(obj => obj.Key)
+          );
       }
     } catch (e) {
       console.error("Failed to delete from S3 during account removal", e.message);
@@ -763,7 +764,7 @@ app.post('/api/upload', verifyToken, async (req, res) => {
 
   if (currentStorageUsed + incomingSize > 5368709120) {
     for (const f of filesToProcess) {
-      if (f.key) await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: f.key }));
+      if (f.key) await permanentlyDeleteS3Keys(s3, process.env.AWS_BUCKET_NAME, f.key);
     }
     return res.status(400).json({ error: "Upload Failed: Insufficient storage space. This file exceeds your 5 GB account limit." });
   }
@@ -786,7 +787,7 @@ app.post('/api/upload', verifyToken, async (req, res) => {
         console.error('[Upload Error] Invalid or unauthorized file record for:', targetFile.key);
         if (targetFile.key) {
           try {
-            await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key }));
+            await permanentlyDeleteS3Keys(s3, process.env.AWS_BUCKET_NAME, targetFile.key);
           } catch (e) {
             console.error('[Upload Error] S3 Cleanup Failed for orphaned object:', targetFile.key, 'Error:', e.message);
           }
@@ -883,7 +884,7 @@ app.post('/api/upload', verifyToken, async (req, res) => {
       if (isMZ && !isExecExt) {
         console.error('[Spoofing Detected] File has MZ magic bytes but non-executable extension:', targetFile.originalname);
         if (targetFile.key) {
-          try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key })); } catch (e) {}
+          try { await permanentlyDeleteS3Keys(s3, process.env.AWS_BUCKET_NAME, targetFile.key); } catch (e) {}
         }
         fileRecord.isMalicious = true;
         fileRecord.securityStatus = 'threat_purged';
@@ -935,7 +936,7 @@ app.post('/api/upload', verifyToken, async (req, res) => {
 
           if (scanResult === 'malicious') {
              if (targetFile.key) {
-               try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key })); } catch (e) { console.error('[Upload Error] S3 Cleanup Failed for malicious object:', targetFile.key, 'Error:', e.message); }
+               try { await permanentlyDeleteS3Keys(s3, process.env.AWS_BUCKET_NAME, targetFile.key); } catch (e) { console.error('[Upload Error] S3 Cleanup Failed for malicious object:', targetFile.key, 'Error:', e.message); }
              }
              fileRecord.isMalicious = true;
              fileRecord.securityStatus = 'threat_purged';
@@ -972,7 +973,7 @@ app.post('/api/upload', verifyToken, async (req, res) => {
       console.error('File processing error:', error);
       if (targetFile.key) {
         try {
-          await s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: targetFile.key }));
+          await permanentlyDeleteS3Keys(s3, process.env.AWS_BUCKET_NAME, targetFile.key);
         } catch (e) {
           console.error('[Upload Error] S3 Cleanup Failed during file processing error:', targetFile.key, 'Error:', e.message);
         }
@@ -1405,22 +1406,17 @@ app.delete('/api/folders/:id', verifyToken, async (req, res) => {
     const files = await FileModel.find({ folderId: folderId, userId: req.user._id });
     
     // Batch delete from S3
-    const objectsToDelete = files
-      .map(file => {
-        const key = file.s3Key || (file.location ? new URL(file.location).pathname.slice(1) : null);
-        return key ? { Key: key } : null;
-      })
-      .filter(Boolean);
+    const objectsToDelete = [];
+    for (const file of files) {
+      if (file.s3Key) objectsToDelete.push(file.s3Key);
+      if (file.thumbnailKey) objectsToDelete.push(file.thumbnailKey);
+      if (!file.s3Key && file.location) {
+        try { objectsToDelete.push(new URL(file.location).pathname.slice(1)); } catch (_) {}
+      }
+    }
 
     if (objectsToDelete.length > 0) {
-      // Chunking in batches of 1000 to adhere to S3 limits
-      for (let i = 0; i < objectsToDelete.length; i += 1000) {
-        const batch = objectsToDelete.slice(i, i + 1000);
-        await s3.send(new DeleteObjectsCommand({
-          Bucket: process.env.AWS_BUCKET_NAME,
-          Delete: { Objects: batch }
-        }));
-      }
+      await permanentlyDeleteS3Keys(s3, process.env.AWS_BUCKET_NAME, objectsToDelete);
     }
 
     // Delete all files in the DB
