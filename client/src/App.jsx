@@ -2036,8 +2036,11 @@ function App() {
           <Route path="/login" element={<AuthPage />} />
           <Route path="/pricing" element={<Pricing />} />
           <Route path="/privacy" element={<PrivacyPolicy />} />
+          <Route path="/privacy-policy" element={<Navigate to="/privacy" replace />} />
           <Route path="/terms" element={<TermsOfService />} />
+          <Route path="/terms-and-conditions" element={<Navigate to="/terms" replace />} />
           <Route path="/refund-policy" element={<RefundPolicy />} />
+          <Route path="/refund" element={<Navigate to="/refund-policy" replace />} />
           <Route path="/contact" element={<ContactUs />} />
           <Route path="/reset-password/:token" element={authContent} />
           <Route path="*" element={<Navigate to="/login" replace />} />
@@ -2266,7 +2269,7 @@ function App() {
               <div className={`absolute right-0 mt-2 w-48 bg-surface-container-lowest dark:bg-[#1e1f20] border border-outline-variant dark:border-zinc-800 shadow-lg rounded-xl overflow-hidden z-50 transition-all duration-200 ease-out origin-top-right ${showProfileMenu ? 'opacity-100 scale-100 visible translate-y-0' : 'opacity-0 scale-95 invisible -translate-y-2 pointer-events-none'}`}>
                 <div className="px-4 py-3 border-b border-outline-variant dark:border-zinc-800 bg-surface-container-low dark:bg-[#131314] cursor-default">
                   <p className="text-sm font-bold text-on-surface dark:text-[#e3e3e3] truncate">{user?.name || 'User'}</p>
-                  <p className="text-xs text-on-surface-variant dark:text-[#c4c7c5] truncate">{user?.email || 'user@example.com'}</p>
+                  <p className="text-xs text-on-surface-variant dark:text-[#c4c7c5] truncate">{user?.email || ''}</p>
                 </div>
                 <button 
                   type="button"
@@ -3338,8 +3341,11 @@ function App() {
         <Route path="/dashboard/photos" element={dashboardContent} />
         <Route path="/pricing" element={<Pricing />} />
         <Route path="/privacy" element={<PrivacyPolicy />} />
+        <Route path="/privacy-policy" element={<Navigate to="/privacy" replace />} />
         <Route path="/terms" element={<TermsOfService />} />
+        <Route path="/terms-and-conditions" element={<Navigate to="/terms" replace />} />
         <Route path="/refund-policy" element={<RefundPolicy />} />
+        <Route path="/refund" element={<Navigate to="/refund-policy" replace />} />
         <Route path="/contact" element={<ContactUs />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>

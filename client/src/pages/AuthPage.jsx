@@ -599,7 +599,7 @@ export default function AuthPage() {
                   disabled={isLoading}
                   value={formData.email}
                   onChange={handleInputChange}
-                  placeholder="name@example.com"
+                  placeholder="name@domain.com"
                   className="w-full px-3 py-2 text-xs rounded-xl bg-neutral-800/90 border border-neutral-700 text-white placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
                 />
               </div>
@@ -712,7 +712,7 @@ export default function AuthPage() {
                   disabled={isLoading}
                   value={formData.email}
                   onChange={handleInputChange}
-                  placeholder="name@example.com"
+                  placeholder="name@domain.com"
                   className="w-full px-3 py-2 text-xs rounded-xl bg-neutral-800/90 border border-neutral-700 text-white placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
                 />
               </div>
