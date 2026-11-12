@@ -4,7 +4,8 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '../.env') });
 
 const s3 = new S3Client({
-  region: process.env.AWS_REGION || 'ap-south-1',
+  region: process.env.AWS_REGION || 'eu-central-003',
+  ...(process.env.AWS_ENDPOINT ? { endpoint: process.env.AWS_ENDPOINT } : {}),
   credentials: {
     accessKeyId: process.env.AWS_ACCESS_KEY_ID,
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
