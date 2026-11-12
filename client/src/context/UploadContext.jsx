@@ -8,8 +8,8 @@ import { API_BASE_URL } from '../config';
 
 const UploadContext = createContext(null);
 const MAX_CONCURRENT_UPLOADS = 2;
-const MULTIPART_THRESHOLD = 100 * 1024 * 1024; // 100 MB
-const MULTIPART_PART_CONCURRENCY = 3;
+const MULTIPART_THRESHOLD = 25 * 1024 * 1024; // 25 MB
+const MULTIPART_PART_CONCURRENCY = 6;
 const MAX_PART_RETRIES = 5; // ~30s total resilience window (1s, 2s, 4s, 8s, 15s backoff)
 
 // Dedicated Axios instance without default Authorization header for direct S3 PUTs
@@ -229,7 +229,7 @@ export function UploadProvider({ children }) {
     };
 
     try {
-      // 2. Stream chunks with 3 parallel workers + compute header SHA-256 concurrently
+      // 2. Stream chunks with 6 parallel workers + compute header SHA-256 concurrently
       const runWorkers = async () => {
         const workers = Array.from(
           { length: Math.min(MULTIPART_PART_CONCURRENCY, partUrls.length) },

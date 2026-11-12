@@ -543,7 +543,7 @@ router.post('/presigned-url', authMiddleware, async (req, res) => {
   }
 });
 
-// POST /api/files/multipart/init — Initialize multipart upload for large files (>= 100 MB)
+// POST /api/files/multipart/init — Initialize multipart upload for large files (>= 25 MB)
 router.post('/multipart/init', authMiddleware, async (req, res) => {
   try {
     const { fileName, fileSize, mimeType, folderId, folder } = req.body;
@@ -601,9 +601,15 @@ router.post('/multipart/init', authMiddleware, async (req, res) => {
 
     const { UploadId } = await s3Client.send(createCmd);
 
-    // 4. Generate 50 MB chunk presigned URLs (4-hour validity for multi-GB transfers)
-    const partSize = 50 * 1024 * 1024; // 50 MB
-    const totalParts = Math.ceil(Number(fileSize) / partSize);
+    // 4. Adaptive part sizing (>= 10 MB: strictly above Backblaze B2's 5 MB minimum, well under 10k parts)
+    const numericFileSize = Number(fileSize);
+    let partSize = 10 * 1024 * 1024; // 10 MB for files < 250 MB
+    if (numericFileSize >= 1024 * 1024 * 1024) {
+      partSize = 50 * 1024 * 1024; // 50 MB for files >= 1 GB
+    } else if (numericFileSize >= 250 * 1024 * 1024) {
+      partSize = 25 * 1024 * 1024; // 25 MB for files 250 MB to < 1 GB
+    }
+    const totalParts = Math.ceil(numericFileSize / partSize);
 
     const partUrls = await Promise.all(
       Array.from({ length: totalParts }, async (_, idx) => {
