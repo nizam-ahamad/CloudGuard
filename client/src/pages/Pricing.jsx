@@ -829,7 +829,11 @@ export default function Pricing() {
                 <div className="p-3.5 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 text-xs leading-relaxed flex items-start gap-2.5 animate-in fade-in duration-200">
                   <Info size={16} className="text-cyan-400 shrink-0 mt-0.5" />
                   <span>
-                    <strong>Merchant Gateway Verification:</strong> Production checkout is being enabled. Please check back shortly.
+                    <strong>Online Upgrades Activating Shortly:</strong> Production checkout via Cashfree Payments is being finalized. Contact{' '}
+                    <a href="mailto:support@cloudguard.site" className="text-cyan-300 font-semibold underline hover:text-white">
+                      support@cloudguard.site
+                    </a>{' '}
+                    for immediate account activation.
                   </span>
                 </div>
               )}

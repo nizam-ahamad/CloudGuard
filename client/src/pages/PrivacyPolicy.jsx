@@ -142,7 +142,7 @@ export default function PrivacyPolicy() {
                   <strong className="text-neutral-200">Account Information:</strong> Name, email address, password hash (salted bcrypt/argon2), and OAuth profile identifiers (when authenticating via Google).
                 </li>
                 <li>
-                  <strong className="text-neutral-200">Billing &amp; Transaction Data:</strong> Payment status, transaction ID, plan type, and billing address provided during checkout. All credit card, UPI, and net-banking transactions are processed directly by certified payment gateways; CloudGuard never stores card numbers or CVVs.
+                  <strong className="text-neutral-200">Billing &amp; Transaction Data:</strong> Payment status, transaction ID, plan type, and billing address provided during checkout. All credit card, UPI, and net-banking transactions are processed directly by certified PCI-DSS Level 1 compliant payment gateways (Cashfree Payments); CloudGuard never stores card numbers, CVVs, or sensitive banking credentials on its servers.
                 </li>
                 <li>
                   <strong className="text-neutral-200">Vault Metadata:</strong> File names, file sizes, MIME types, directory structures, and storage utilization counters necessary to organize your vault.
