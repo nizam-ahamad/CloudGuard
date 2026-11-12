@@ -227,7 +227,7 @@ export default function TermsOfService() {
                   <strong className="text-neutral-200">Plan Downgrades:</strong> Downgrades take effect strictly at the conclusion of the active prepaid billing cycle. To complete a downgrade, current aggregate stored volume must be less than or equal to the target tier quota.
                 </li>
                 <li>
-                  <strong className="text-neutral-200">Payment Processing:</strong> Payment processing is handled by certified, PCI-DSS compliant third-party payment gateways (e.g., Razorpay, Stripe). CloudGuard does not collect, store, or process full credit/debit card numbers or sensitive banking PINs on its servers.
+                  <strong className="text-neutral-200">Payment Processing:</strong> Payment processing is handled by certified, PCI-DSS compliant third-party payment gateways (e.g., Cashfree Payments). CloudGuard does not collect, store, or process full credit/debit card numbers or sensitive banking PINs on its servers.
                 </li>
                 <li>
                   <strong className="text-neutral-200">Automatic Renewal:</strong> Recurring subscriptions renew automatically at the end of each billing cycle unless cancelled prior to the renewal date via your account settings.

@@ -138,7 +138,7 @@ export default function RefundPolicy() {
               Approved refunds are processed and credited back to the customer's original payment method within 5 to 7 business days, subject to the issuing bank's clearing cycle.
             </p>
             <p className="text-xs text-neutral-400 leading-relaxed">
-              Refunds are issued through our PCI-DSS Level 1 certified processors (Razorpay / Stripe) directly to the source bank account, credit card, or UPI VPA used during purchase. CloudGuard does not issue cash or third-party transfer refunds.
+              Refunds are issued through our PCI-DSS Level 1 certified processors (Cashfree Payments) directly to the source bank account, credit card, or UPI VPA used during purchase. CloudGuard does not issue cash or third-party transfer refunds.
             </p>
           </div>
 
