@@ -743,7 +743,7 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
         </div>
 
         <p className="text-xs sm:text-sm text-neutral-600 dark:text-zinc-300 leading-relaxed mt-4">
-          Permanently erases your account, files, thumbnails, and cloud vault data from AWS S3 and MongoDB. This action cannot be undone.
+          Permanently erases your account, files, thumbnails, and cloud vault data from Backblaze B2 object storage and MongoDB. This action cannot be undone.
         </p>
 
         <div className="mt-5 space-y-4 max-w-lg">
@@ -848,7 +848,7 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
               <div className="p-3 rounded-xl bg-neutral-100 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-700/60 text-neutral-700 dark:text-neutral-300 text-xs space-y-1">
                 <p className="font-semibold text-neutral-900 dark:text-neutral-200 mb-1">This will permanently erase:</p>
                 <p>• Your profile, credentials, and settings</p>
-                <p>• All uploaded vault files stored in AWS S3</p>
+                <p>• All uploaded vault files stored in Backblaze B2</p>
                 <p>• All generated preview thumbnails & folders</p>
               </div>
               <p className="text-red-500 font-medium text-xs pt-1">

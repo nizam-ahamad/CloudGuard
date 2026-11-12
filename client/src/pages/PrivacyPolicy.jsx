@@ -183,7 +183,7 @@ export default function PrivacyPolicy() {
                   <strong className="text-neutral-200">Encryption in Transit:</strong> All communication between your client browser, our Node.js gateway, and storage clusters is enforced via Transport Layer Security (TLS 1.3).
                 </li>
                 <li>
-                  <strong className="text-neutral-200">Storage Encryption:</strong> Files are stored using AES-256 server-side encryption across distributed, redundant object storage repositories (Backblaze B2 / AWS S3).
+                  <strong className="text-neutral-200">Storage Encryption:</strong> Files are stored using AES-256 server-side encryption across Backblaze B2 (S3-compatible encrypted object storage), with application and compute servers hosted on AWS EC2.
                 </li>
                 <li>
                   <strong className="text-neutral-200">Access Control:</strong> File access is restricted via short-lived, cryptographically signed URLs (HMAC SHA-256). Files cannot be indexed or crawled by search engine bots unless explicitly shared via public link.
@@ -214,8 +214,23 @@ export default function PrivacyPolicy() {
                   <tbody className="divide-y divide-neutral-800/60 text-neutral-300">
                     <tr>
                       <td className="px-4 py-3 font-medium text-white">Amazon Web Services (AWS)</td>
-                      <td className="px-4 py-3">Encrypted object storage (S3) &amp; EC2 hosting</td>
+                      <td className="px-4 py-3">Cloud compute &amp; application server hosting (EC2)</td>
                       <td className="px-4 py-3 text-emerald-400">Mumbai, India (ap-south-1)</td>
+                    </tr>
+                    <tr>
+                      <td className="px-4 py-3 font-medium text-white">Backblaze, Inc. (Backblaze B2)</td>
+                      <td className="px-4 py-3">Encrypted zero-knowledge object storage</td>
+                      <td className="px-4 py-3 text-cyan-400">Amsterdam, Netherlands (eu-central-003 / EU)</td>
+                    </tr>
+                    <tr>
+                      <td className="px-4 py-3 font-medium text-white">Cloudflare, Inc.</td>
+                      <td className="px-4 py-3">CDN edge delivery, DDoS protection &amp; DNS routing</td>
+                      <td className="px-4 py-3">Global Edge Network</td>
+                    </tr>
+                    <tr>
+                      <td className="px-4 py-3 font-medium text-white">Cashfree Payments India Pvt. Ltd.</td>
+                      <td className="px-4 py-3">PCI-DSS Level 1 payment gateway &amp; subscription billing</td>
+                      <td className="px-4 py-3 text-emerald-400">India</td>
                     </tr>
                     <tr>
                       <td className="px-4 py-3 font-medium text-white">Google LLC</td>
