@@ -5,7 +5,8 @@ const { S3Client, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const File = require('../models/File');
 
 const s3Client = new S3Client({
-  region: process.env.AWS_REGION || 'eu-north-1',
+  region: process.env.AWS_REGION || 'eu-central-003',
+  ...(process.env.AWS_ENDPOINT ? { endpoint: process.env.AWS_ENDPOINT } : {}),
   credentials: {
     accessKeyId: process.env.AWS_ACCESS_KEY_ID,
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
