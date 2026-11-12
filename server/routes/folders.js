@@ -7,6 +7,7 @@ const File = require('../models/File');
 const User = require('../models/User');
 const authMiddleware = require('../middleware/auth');
 const { buildTenantQuery } = require('../utils/tenantQuery');
+const { permanentlyDeleteS3Keys } = require('../utils/s3Delete');
 
 const s3Client = new S3Client({
   region: process.env.AWS_REGION || 'eu-central-003',
@@ -718,18 +719,13 @@ router.delete('/:id', authMiddleware, async (req, res) => {
 
         const keys = [];
         for (const cf of childFiles) {
-          if (cf.s3Key) keys.push({ Key: cf.s3Key });
-          if (cf.thumbnailKey) keys.push({ Key: cf.thumbnailKey });
+          if (cf.s3Key) keys.push(cf.s3Key);
+          if (cf.thumbnailKey) keys.push(cf.thumbnailKey);
         }
 
         if (keys.length > 0) {
           const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || 'cloudguard-vault-mumbai-2026';
-          for (let i = 0; i < keys.length; i += 1000) {
-            await s3Client.send(new DeleteObjectsCommand({
-              Bucket: bucket,
-              Delete: { Objects: keys.slice(i, i + 1000), Quiet: true },
-            })).catch((e) => console.warn(`[Folder Child Purge Warning] ${e.message}`));
-          }
+          await permanentlyDeleteS3Keys(s3Client, bucket, keys).catch((e) => console.warn(`[Folder Child Purge Warning] ${e.message}`));
         }
 
         await File.deleteMany({

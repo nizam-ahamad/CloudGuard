@@ -12,6 +12,7 @@ const Folder = require('../models/Folder');
 const authMiddleware = require('../middleware/auth');
 const { sendActivationOtp, sendResetOtp, sendWelcomeEmail, sendNotificationEmail } = require('../utils/emailService');
 const { authLimiter, otpLimiter } = require('../middleware/rateLimiter');
+const { permanentlyDeleteS3Keys } = require('../utils/s3Delete');
 
 const s3Client = new S3Client({
   region: process.env.AWS_REGION || 'eu-central-003',
@@ -630,13 +631,9 @@ router.delete('/account', authMiddleware, async (req, res) => {
 
         const items = listRes.Contents || [];
         if (items.length > 0) {
-          const keys = items.map((i) => ({ Key: i.Key }));
-          for (let i = 0; i < keys.length; i += 1000) {
-            await s3Client.send(new DeleteObjectsCommand({
-              Bucket: process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME,
-              Delete: { Objects: keys.slice(i, i + 1000), Quiet: true },
-            }));
-          }
+          const keys = items.map((i) => i.Key).filter(Boolean);
+          const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME;
+          await permanentlyDeleteS3Keys(s3Client, bucket, keys).catch((e) => console.warn(`[Auth S3 Purge Warning] ${e.message}`));
         }
         token = listRes.NextContinuationToken;
       } while (token);
