@@ -75,7 +75,7 @@ export default function SubscriptionAlertBanner() {
   const hasScheduledDowngrade = !!(scheduled?.targetPlanId && daysRemaining > 0 && daysRemaining <= 7);
 
   // Suppress for users on free plan without expiration, or active with plenty of time remaining
-  if (plan === 'free' && !rawExpiry && !isPastDue) {
+  if (plan === 'free' && !rawExpiry && !isPastDue && status !== 'expired') {
     return null;
   }
 
@@ -96,7 +96,7 @@ export default function SubscriptionAlertBanner() {
       targetTimestamp: rawGraceEnd.getTime(),
       barClass: 'bg-gradient-to-r from-red-600 via-rose-600 to-red-700 text-white shadow-lg shadow-red-950/20',
       icon: ShieldAlert,
-      text: `Final Warning: Your vault files will be permanently purged in under 24 hours (${formattedDeadline}). Renew now to prevent data loss.`,
+      text: `Final Warning: Your vault files will be permanently deleted in under 24 hours (${formattedDeadline}). Renew now to prevent data loss.`,
       ctaText: 'Save My Files',
       ctaUrl: '/pricing',
       ctaClass: 'bg-white text-red-700 hover:bg-neutral-100 shadow-sm',
@@ -105,10 +105,10 @@ export default function SubscriptionAlertBanner() {
   // Priority 2: GRACE_PERIOD_LOCK
   else if (isPastDue && rawGraceEnd && msGraceRemaining > 24 * 60 * 60 * 1000) {
     const formattedGraceEnd = rawGraceEnd.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-    let text = `Vault in Read-Only Grace Period: File uploads are disabled. Renew within ${graceDaysLeft} days (${formattedGraceEnd}) before your stored files are purged.`;
+    let text = `Vault in Read-Only Grace Period: File uploads are disabled. Renew within ${graceDaysLeft} days (${formattedGraceEnd}) before your stored files are permanently deleted.`;
     if (storageUsed > storageLimit) {
       const excessGB = ((storageUsed - storageLimit) / (1024 ** 3)).toFixed(1);
-      text = `Vault Write-Locked (Read-Only): You are ${excessGB} GB over quota. Delete excess files or upgrade within ${graceDaysLeft} days (${formattedGraceEnd}) before automatic purge.`;
+      text = `Vault Write-Locked (Read-Only): You are ${excessGB} GB over quota. Delete excess files or upgrade within ${graceDaysLeft} days (${formattedGraceEnd}) before automatic deletion.`;
     }
     bannerConfig = {
       stage: 'GRACE_PERIOD_LOCK',
@@ -119,6 +119,19 @@ export default function SubscriptionAlertBanner() {
       ctaText: 'Restore Uploads',
       ctaUrl: '/pricing',
       ctaClass: 'bg-white text-rose-700 hover:bg-neutral-100 shadow-sm',
+    };
+  }
+  // Priority 2b: SUBSCRIPTION_EXPIRED
+  else if (status === 'expired') {
+    bannerConfig = {
+      stage: 'SUBSCRIPTION_EXPIRED',
+      targetTimestamp: sub.expiresAt ? new Date(sub.expiresAt).getTime() : 0,
+      barClass: 'bg-neutral-900 border border-rose-500/40 text-white shadow-md',
+      icon: AlertTriangle,
+      text: 'Subscription Expired: Your previous plan ended and inactive vault files were permanently deleted. Select a plan to unlock uploads.',
+      ctaText: 'View Plans',
+      ctaUrl: '/pricing',
+      ctaClass: 'bg-rose-600 text-white hover:bg-rose-500 shadow-sm',
     };
   }
   // Priority 3: EXPIRING_24H

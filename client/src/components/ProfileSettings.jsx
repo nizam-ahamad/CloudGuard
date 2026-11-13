@@ -453,11 +453,21 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
       {/* Subscription & Vault Plan Card */}
       <div className="bg-white dark:bg-[#141414] border border-neutral-200 dark:border-[#262626] rounded-xl p-6 transition-colors shadow-sm dark:shadow-none">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
+          <div className="flex-1 min-w-0 pr-4">
             <div className="flex items-center gap-2">
               <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-100">
                 Subscription & Vault Plan
               </h3>
+              {subData?.subscription?.status === 'expired' && (
+                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 font-semibold">
+                  EXPIRED
+                </span>
+              )}
+              {subData?.subscription?.status === 'past_due' && (
+                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20 font-semibold">
+                  GRACE PERIOD • WRITE-LOCKED
+                </span>
+              )}
               {subData?.subscription?.status === 'active' && subData.subscription.planId !== 'free' && (
                 <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 font-semibold">
                   Active
@@ -470,66 +480,88 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
               )}
             </div>
             <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
-              Current Tier: <strong className="text-neutral-800 dark:text-neutral-200 capitalize">
-                {subData?.subscription?.planId ? subData.subscription.planId.replace('_', ' ') : 'Free Trial (5 GB)'}
-              </strong>
-              {subData?.subscription?.expiresAt && subData.subscription.planId !== 'free' ? (
-                <>
-                  {' '}• Billing Cycle: <span className="capitalize font-semibold text-neutral-800 dark:text-neutral-200">{subData.subscription.billingCycle || 'Monthly'}</span>
-                  <br />
-                  {subData.subscription.status === 'cancelled'
-                    ? `Access remains active until: ${new Date(subData.subscription.expiresAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })} (No further billing)`
-                    : `Next renewal: ${new Date(subData.subscription.expiresAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`}
-                </>
+              {subData?.subscription?.status === 'expired' ? (
+                'Your previous subscription has ended and vault uploads are locked. Choose a plan to restore storage and upload access.'
+              ) : subData?.subscription?.status === 'past_due' ? (
+                'Uploads are temporarily locked. Renew or free up space before your grace period ends to prevent permanent file deletion.'
               ) : (
-                ' • Standard 5 GB secure zero-trust storage. Upgrade to increase capacity.'
+                <>
+                  Current Tier: <strong className="text-neutral-800 dark:text-neutral-200 capitalize">
+                    {subData?.subscription?.planId ? subData.subscription.planId.replace('_', ' ') : 'Free Trial (5 GB)'}
+                  </strong>
+                  {subData?.subscription?.expiresAt && subData.subscription.planId !== 'free' ? (
+                    <>
+                      {' '}• Billing Cycle: <span className="capitalize font-semibold text-neutral-800 dark:text-neutral-200">{subData.subscription.billingCycle || 'Monthly'}</span>
+                      <br />
+                      {subData.subscription.status === 'cancelled'
+                        ? `Access remains active until: ${new Date(subData.subscription.expiresAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })} (No further billing)`
+                        : `Next renewal: ${new Date(subData.subscription.expiresAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`}
+                    </>
+                  ) : (
+                    ' • Standard 5 GB secure zero-trust storage. Upgrade to increase capacity.'
+                  )}
+                </>
               )}
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
-            {(!subData?.subscription || subData.subscription.planId === 'free' || subData.subscription.status === 'expired') ? (
+          <div className="flex items-center gap-3 shrink-0">
+            {subData?.subscription?.status === 'expired' ? (
               <a
                 href="/pricing"
-                className="text-xs font-semibold px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white transition-colors"
+                className="text-xs font-semibold px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white transition-colors shrink-0 whitespace-nowrap"
+              >
+                Choose a Plan
+              </a>
+            ) : subData?.subscription?.status === 'past_due' ? (
+              <a
+                href="/pricing"
+                className="text-xs font-semibold px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white transition-colors shadow-sm shrink-0 whitespace-nowrap"
+              >
+                Restore Access
+              </a>
+            ) : (!subData?.subscription || subData.subscription.planId === 'free') ? (
+              <a
+                href="/pricing"
+                className="text-xs font-semibold px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white transition-colors shrink-0 whitespace-nowrap"
               >
                 Upgrade Storage
               </a>
             ) : subData.subscription.status === 'cancelled' ? (
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 shrink-0">
                 <button
                   type="button"
                   onClick={handleResumeSub}
                   disabled={isResumingSub}
-                  className="text-xs font-semibold px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition-colors cursor-pointer disabled:opacity-50"
+                  className="text-xs font-semibold px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition-colors cursor-pointer disabled:opacity-50 shrink-0 whitespace-nowrap"
                 >
                   {isResumingSub ? 'Resuming...' : 'Resume Subscription'}
                 </button>
                 <a
                   href="/pricing"
-                  className="text-xs font-medium px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
+                  className="text-xs font-medium px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors shrink-0 whitespace-nowrap"
                 >
                   Change Plan
                 </a>
               </div>
             ) : subData.subscription.status === 'active' ? (
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 shrink-0">
                 <a
                   href="/pricing"
-                  className="text-xs font-medium px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
+                  className="text-xs font-medium px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors shrink-0 whitespace-nowrap"
                 >
                   Change Plan
                 </a>
                 <button
                   type="button"
                   onClick={() => setShowCancelModal(true)}
-                  className="text-xs font-medium text-red-600 dark:text-red-400 hover:text-red-700 px-3 py-1.5 rounded-lg border border-red-200 dark:border-red-900/40 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors cursor-pointer"
+                  className="text-xs font-medium text-red-600 dark:text-red-400 hover:text-red-700 px-3 py-1.5 rounded-lg border border-red-200 dark:border-red-900/40 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors cursor-pointer shrink-0 whitespace-nowrap"
                 >
                   Cancel Subscription
                 </button>
               </div>
             ) : (
-              <span className="text-xs text-amber-500 font-medium">
+              <span className="text-xs text-amber-500 font-medium shrink-0 whitespace-nowrap">
                 Cancellation scheduled
               </span>
             )}
@@ -928,6 +960,15 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
               <p>
                 • None of your existing files will be deleted.
               </p>
+              {subData?.subscription?.billingCycle === 'annual' && (
+                <p>
+                  • <strong>Refund Policy:</strong> {((subData?.subscription?.peakStorageBytes || subData?.peakStorageBytes || 0) <= 2 * 1024 * 1024 * 1024 && subData?.refundEligible) ? (
+                    'Your annual subscription is within the 7-day evaluation window (peak storage under 2 GB). Contact support@cloudguard.site to request a refund review.'
+                  ) : (
+                    'Annual subscriptions are eligible for refund review only within the first 7 days if peak storage has never exceeded 2 GB.'
+                  )}
+                </p>
+              )}
             </div>
 
             <div className="flex items-center justify-end gap-3 pt-2">

@@ -22,6 +22,8 @@ const CASHFREE_BASE_URL =
     ? 'https://api.cashfree.com/pg'
     : 'https://sandbox.cashfree.com/pg';
 
+const REFUND_MAX_PEAK_BYTES = 2 * 1024 * 1024 * 1024; // 2 GB (2,147,483,648 bytes)
+
 const PLAN_CATALOG = {
   tier_50gb: {
     id: 'tier_50gb',
@@ -338,16 +340,17 @@ router.get('/verify/:orderId', auth, async (req, res) => {
       }
 
       // Immediate quota expansion & clear any pending downgrade
+      const isNewSubscription = !user.subscription || user.subscription.planId === 'free' || user.subscription.status === 'expired';
       user.plan = planId;
       user.storageLimit = targetPlan.storageBytes;
       user.subscription = {
         planId,
         billingCycle: cycle,
         status: 'active',
-        startDate: user.subscription?.startDate || new Date(),
+        startDate: isNewSubscription ? new Date() : (user.subscription?.startDate || new Date()),
         expiresAt: newExpiresAt,
         autoRenew: false,
-        peakStorageBytes: Math.max(user.storageUsed || 0, user.subscription?.peakStorageBytes || 0),
+        peakStorageBytes: isNewSubscription ? (user.storageUsed || 0) : Math.max(user.storageUsed || 0, user.subscription?.peakStorageBytes || 0),
         gracePeriodExpiresAt: null,
         dunningStep: 0,
         scheduledDowngrade: { targetPlanId: null, targetBillingCycle: null, scheduledAt: null }
@@ -472,6 +475,14 @@ router.get('/subscription-status', auth, async (req, res) => {
       await user.save();
     }
 
+    const sub = user.subscription;
+    const isAnnual = sub?.billingCycle === 'annual';
+    const isPaid = sub?.planId && sub.planId !== 'free';
+    const startDate = sub?.startDate ? new Date(sub.startDate) : null;
+    const daysSinceStart = startDate ? (Date.now() - startDate.getTime()) / (1000 * 60 * 60 * 24) : Infinity;
+    const peakBytes = sub?.peakStorageBytes !== undefined ? sub.peakStorageBytes : (user.storageUsed || 0);
+    const refundEligible = Boolean(isPaid && isAnnual && daysSinceStart <= 7 && peakBytes <= REFUND_MAX_PEAK_BYTES);
+
     return res.json({
       success: true,
       subscription: user.subscription,
@@ -479,6 +490,9 @@ router.get('/subscription-status', auth, async (req, res) => {
       trialExpiresAt: user.trialExpiresAt,
       storageLimit: user.storageLimit,
       storageUsed: user.storageUsed,
+      peakStorageBytes: peakBytes,
+      refundEligible,
+      refundMaxPeakBytes: REFUND_MAX_PEAK_BYTES,
       userId: user._id
     });
   } catch (err) {

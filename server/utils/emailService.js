@@ -6,6 +6,7 @@ if (!process.env.RESEND_API_KEY) {
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 const FROM_EMAIL = process.env.EMAIL_FROM || 'CloudGuard <noreply@cloudguard.site>';
+const REFUND_MAX_PEAK_BYTES = 2 * 1024 * 1024 * 1024; // 2 GB (2,147,483,648 bytes)
 
 // -------------------------------------------------------------
 // Format & Safety Helpers
@@ -118,7 +119,6 @@ function buildCloudGuardEmail({ title, badge, contentHtml, ctaText, ctaUrl, isUr
         <tr>
           <td style="padding: 24px 32px; background-color: #f8fafc; border-top: 1px solid #f1f5f9; font-size: 12px; color: #64748b; line-height: 1.5;">
             CloudGuard Vault • Zero-Knowledge AI-Protected Cloud Storage<br>
-            House No. 120, Main Market, Shaktifarm, Uttarakhand - 263151, India<br>
             For support or questions, reach us at <a href="mailto:support@cloudguard.site" style="color: #2563eb; text-decoration: none;">support@cloudguard.site</a>.
           </td>
         </tr>
@@ -356,7 +356,7 @@ function generateQuotaGateBlockedEmail({ user, targetPlanName, targetQuotaGB, st
       <p style="margin: 0; font-size: 13px; color: #991b1b;"><strong>7-Day Rescue Cutoff Date:</strong> ${formattedGrace}</p>
     </div>
     <p style="font-size: 13px; line-height: 1.6; color: #334155;">
-      <strong>Upload Write-Lock Active:</strong> New uploads have been temporarily locked. Please download and delete at least <strong>${excessStr} GB</strong> of files, or upgrade your plan before <strong>${formattedGrace}</strong> to prevent automated data purge under our Zero-Parking storage policy.
+      <strong>Upload Write-Lock Active:</strong> New uploads have been temporarily locked. Please download and delete at least <strong>${excessStr} GB</strong> of files, or upgrade your plan before <strong>${formattedGrace}</strong> to prevent automated data deletion under our Zero-Parking storage policy.
     </p>
   `;
 
@@ -506,7 +506,7 @@ function generateGracePeriodStartedEmail({ user, gracePeriodExpiresAt, renewalUr
       <p style="margin: 0; font-size: 13px; color: #991b1b;">All existing files remain safe and downloadable. New file uploads are disabled.</p>
     </div>
     <p style="font-size: 13px; line-height: 1.6; color: #334155;">
-      You have <strong>7 days</strong> (until ${formattedGrace}) to renew or upgrade your plan. Under our Zero-Parking storage policy, uncompensated vaults exceeding the baseline quota are permanently purged after the grace period ends.
+      You have <strong>7 days</strong> (until ${formattedGrace}) to renew or upgrade your plan. Under our Zero-Parking storage policy, uncompensated vaults exceeding the baseline quota are permanently deleted after the grace period ends.
     </p>
   `;
 
@@ -530,12 +530,12 @@ function generate24HourPurgeAlertEmail({ user, excessGB, purgeDate, deleteUrl })
   const formattedCutoff = formatDate(purgeDate);
   const url = deleteUrl || `${process.env.CLIENT_URL || 'https://cloudguard.site'}/pricing`;
 
-  const subject = `FINAL NOTICE: 24 Hours Until Permanent Vault Purge — CloudGuard Vault`;
+  const subject = `Urgent: Your Vault Files Will Be Permanently Deleted in 24 Hours`;
   const contentHtml = `
-    <p style="color: #991b1b; font-weight: 600;">URGENT: This is your final 24-hour warning before permanent file purge.</p>
+    <p style="color: #991b1b; font-weight: 600;">URGENT: This is your final 24-hour warning before permanent file deletion.</p>
     <div style="background: #fef2f2; border: 1px solid #fee2e2; border-radius: 12px; padding: 18px; margin: 20px 0;">
       <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>Excess Uncompensated Storage:</strong> ${excessStr} GB</p>
-      <p style="margin: 0 0 8px 0; font-size: 13px; color: #b91c1c;"><strong>Permanent Purge Cutoff:</strong> ${formattedCutoff}</p>
+      <p style="margin: 0 0 8px 0; font-size: 13px; color: #b91c1c;"><strong>Permanent Deletion Cutoff:</strong> ${formattedCutoff}</p>
       <p style="margin: 0; font-size: 13px; color: #991b1b;">After this cutoff, files exceeding the free quota will be permanently evicted from AWS S3 object storage.</p>
     </div>
     <p style="font-size: 13px; line-height: 1.6; color: #334155;">
@@ -544,8 +544,8 @@ function generate24HourPurgeAlertEmail({ user, excessGB, purgeDate, deleteUrl })
   `;
 
   const html = buildCloudGuardEmail({
-    title: '24 Hours Remaining Before Permanent Purge',
-    badge: 'FINAL PURGE NOTICE',
+    title: '24 Hours Remaining Before Permanent Deletion',
+    badge: 'FINAL DELETION NOTICE',
     contentHtml,
     ctaText: 'Resolve Excess Storage Now',
     ctaUrl: url,
@@ -561,7 +561,7 @@ function generate24HourPurgeAlertEmail({ user, excessGB, purgeDate, deleteUrl })
 function generateHardPurgeCompletedEmail({ user, clientUrl }) {
   const baseUrl = clientUrl || process.env.CLIENT_URL || 'https://cloudguard.site';
 
-  const subject = `Vault Files Purged — CloudGuard Account Notice`;
+  const subject = `Vault Files Deleted — CloudGuard Account Notice`;
   const contentHtml = `
     <p>Your 7-day past-due grace period has ended without subscription renewal or excess file removal.</p>
     <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 18px; margin: 20px 0;">
@@ -570,7 +570,7 @@ function generateHardPurgeCompletedEmail({ user, clientUrl }) {
       <p style="margin: 0; font-size: 13px; color: #64748b;"><strong>Account Tier:</strong> Free Evaluation Tier (5 GB limit)</p>
     </div>
     <p style="font-size: 13px; line-height: 1.6; color: #475569;">
-      Uncompensated stored files have been permanently and irreversibly purged from cloud object storage. Your account credentials remain active, and you are welcome to store new files within the 5 GB free quota or reactivate a premium plan at any time.
+      Uncompensated stored files have been permanently and irreversibly deleted from cloud object storage. Your account credentials remain active, and you are welcome to store new files within the 5 GB free quota or reactivate a premium plan at any time.
     </p>
   `;
 

@@ -283,10 +283,10 @@ export default function PrivacyPolicy() {
                   <strong className="text-neutral-200">Data Access &amp; Export:</strong> You may view, download, and manage your stored files at any time through your dashboard.
                 </li>
                 <li>
-                  <strong className="text-neutral-200">Account Deletion &amp; Data Purge:</strong> When you delete a file or trash folder, it is marked for immediate de-referencing and permanently pruned from storage repositories. If you request account closure, all associated records, metadata, and files are permanently purged within 30 days.
+                  <strong className="text-neutral-200">Account Deletion &amp; Data Deletion:</strong> When you delete a file or trash folder, it is marked for immediate de-referencing and permanently deleted from storage repositories. If you request account closure via Settings, all associated records, metadata, and files are permanently deleted.
                 </li>
                 <li>
-                  <strong className="text-neutral-200">Zero-Parking Retention &amp; DPDP Minimization:</strong> In accordance with statutory data minimization principles under the Digital Personal Data Protection (DPDP) Act, CloudGuard does not retain unmonetized personal storage indefinitely. Vaults that conclude their 14-day evaluation trial without an active subscription upgrade, or cancelled subscriptions that reach the conclusion of their prepaid term, receive a 7-day read-only grace period solely to allow users to export stored assets. Upon expiration of this 7-day grace window, all stored files, encryption keys, and metadata are permanently and irreversibly purged from our object storage repositories to maintain zero unmonetized data liability.
+                  <strong className="text-neutral-200">Zero-Parking Retention &amp; DPDP Minimization:</strong> In accordance with statutory data minimization principles under the Digital Personal Data Protection (DPDP) Act, CloudGuard does not retain unmonetized personal storage indefinitely. Uploaded files and metadata are retained only during an active 14-day evaluation trial or paid subscription; upon expiration and completion of the 7-day read-only grace period, stored files and metadata are permanently deleted from Backblaze B2 and MongoDB, while the base user account record remains intact unless the user explicitly deletes their account in Settings.
                 </li>
               </ul>
             </section>

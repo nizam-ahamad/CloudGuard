@@ -286,7 +286,20 @@ export function UploadProvider({ children }) {
           }));
         } catch (mpErr) {
           if (mpErr.isQuota) {
-            if (mpErr.errorData?.code === 'QUOTA_EXCEEDED') {
+            const errData = mpErr.errorData;
+            const errorCode = errData?.code || errData?.error;
+
+            if (['SUBSCRIPTION_EXPIRED', 'SUBSCRIPTION_PAST_DUE', 'TRIAL_EXPIRED'].includes(errorCode)) {
+              updateItem(id, {
+                status: 'error',
+                error: errData?.error || 'Uploads locked: subscription expired or past due.',
+                progress: 100,
+              });
+              toast.error(errData?.error || 'Your subscription has expired. Select a plan on the Pricing page to resume uploading.', { id: `write-lock-${id}` });
+              return;
+            }
+
+            if (errorCode === 'QUOTA_EXCEEDED') {
               setQueue((prev) =>
                 prev.map((qItem) =>
                   qItem.id === id
@@ -296,7 +309,7 @@ export function UploadProvider({ children }) {
               );
               setQuotaUpgradeState({
                 fileItem: item,
-                quotaInfo: mpErr.errorData,
+                quotaInfo: errData,
               });
               return;
             }
@@ -331,7 +344,19 @@ export function UploadProvider({ children }) {
           s3Key = ticket.s3Key;
         } catch (err) {
           const errorData = err.response?.data;
-          if (err.response?.status === 403 && errorData?.code === 'QUOTA_EXCEEDED') {
+          const errorCode = errorData?.code || errorData?.error;
+
+          if (err.response?.status === 403 && ['SUBSCRIPTION_EXPIRED', 'SUBSCRIPTION_PAST_DUE', 'TRIAL_EXPIRED'].includes(errorCode)) {
+            updateItem(id, {
+              status: 'error',
+              error: errorData?.error || 'Uploads locked: subscription expired or past due.',
+              progress: 100,
+            });
+            toast.error(errorData?.error || 'Your subscription has expired. Select a plan on the Pricing page to resume uploading.', { id: `write-lock-${id}` });
+            return;
+          }
+
+          if (err.response?.status === 403 && errorCode === 'QUOTA_EXCEEDED') {
             // 1. Mark upload state as paused_for_upgrade instead of failed
             setQueue((prev) =>
               prev.map((qItem) =>
@@ -431,12 +456,20 @@ export function UploadProvider({ children }) {
       window.dispatchEvent(new CustomEvent('cloudguard:files-updated', { detail: { folderId } }));
     } catch (err) {
       console.error('[Upload Pipeline Error]:', err);
+      const errorData = err.response?.data;
+      const errorCode = errorData?.code || errorData?.error;
+      const isWriteLock = err.response?.status === 403 && ['SUBSCRIPTION_EXPIRED', 'SUBSCRIPTION_PAST_DUE', 'TRIAL_EXPIRED'].includes(errorCode);
+
       updateItem(id, {
         status: 'error',
         progress: 100,
-        error: err.response?.data?.error || err.message || 'Upload failed',
+        error: isWriteLock ? (errorData?.error || 'Uploads locked: subscription expired or past due.') : (err.response?.data?.error || err.message || 'Upload failed'),
       });
-      toast.error(`Upload failed: "${file.name}"`);
+      if (isWriteLock) {
+        toast.error(errorData?.error || 'Your subscription has expired. Select a plan on the Pricing page to resume uploading.', { id: `write-lock-${id}` });
+      } else {
+        toast.error(`Upload failed: "${file.name}"`);
+      }
     } finally {
       processingIdsRef.current.delete(id);
       setTimeout(() => {
@@ -593,6 +626,27 @@ export const HeaderUploadButton = () => {
       i.status === 'paused_for_upgrade'
   ).length;
 
+  const completedCount = activeQueue.filter(
+    (i) => i.status === 'completed' || i.status === 'clean'
+  ).length;
+
+  const failedCount = activeQueue.filter(
+    (i) => i.status === 'error' || i.status === 'failed' || i.status === 'threat_purged' || i.status === 'malicious'
+  ).length;
+
+  const getHeaderTitle = () => {
+    if (isWorking) {
+      return `Uploading (${activeCount} left)`;
+    }
+    if (failedCount > 0 && completedCount === 0) {
+      return failedCount === 1 ? 'Upload Failed' : `${failedCount} Uploads Failed`;
+    }
+    if (failedCount > 0 && completedCount > 0) {
+      return `${completedCount} Uploaded, ${failedCount} Failed`;
+    }
+    return 'Uploads Complete';
+  };
+
   if (activeQueue.length === 0) return null;
 
   return (
@@ -621,7 +675,7 @@ export const HeaderUploadButton = () => {
           <div className="flex items-center justify-between p-3.5 border-b border-neutral-200 dark:border-neutral-800 bg-neutral-50/50 dark:bg-neutral-800/40">
             <div className="flex items-center gap-2">
               <span className="text-xs font-semibold text-neutral-900 dark:text-white">
-                {isWorking ? `Uploading (${activeCount} left)` : 'Uploads Complete'}
+                {getHeaderTitle()}
               </span>
               {isWorking && globalSpeed && (
                 <span className="text-xs font-mono font-medium text-neutral-500 dark:text-neutral-400 tracking-tight">
@@ -671,7 +725,7 @@ export const HeaderUploadButton = () => {
                       {item.status === 'paused_for_upgrade' && `${formatBytes(item.file?.size || item.size)} • Paused (Upgrade Required)`}
                       {(item.status === 'completed' || item.status === 'clean') && `${formatBytes(item.file?.size || item.size)} • Safe`}
                       {(item.status === 'malicious' || item.status === 'threat_purged') && `${formatBytes(item.file?.size || item.size)} • Deleted`}
-                      {item.status === 'error' && `${formatBytes(item.file?.size || item.size)} • ${item.error || 'Failed'}`}
+                      {(item.status === 'error' || item.status === 'failed') && `${formatBytes(item.file?.size || item.size)} • ${item.error || 'Failed'}`}
                     </span>
                   </div>
 
@@ -683,6 +737,8 @@ export const HeaderUploadButton = () => {
                         ? 'Deleted'
                         : item.status === 'paused_for_upgrade'
                         ? 'Paused'
+                        : item.status === 'error' || item.status === 'failed'
+                        ? <span className="text-red-500 font-medium">Failed</span>
                         : `${item.progress || 0}%`}
                     </span>
                     <button

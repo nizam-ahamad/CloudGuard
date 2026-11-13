@@ -94,7 +94,7 @@ export default function RefundPolicy() {
                 <strong className="text-neutral-200">Auto-Renewal Prevention:</strong> Cancelling stops all future automated renewals (UPI AutoPay, Credit/Debit card recurring charges) with zero cancellation fees.
               </li>
               <li>
-                <strong className="text-neutral-200">7-Day Post-Expiry Grace:</strong> Following the end of the billing term, you receive a 7-day read-only grace period to download all stored assets before automated cryptographic purge.
+                <strong className="text-neutral-200">7-Day Post-Expiry Grace:</strong> Following the end of the billing term, you receive a 7-day read-only grace period to download all stored assets before automated cryptographic deletion.
               </li>
             </ul>
           </div>
@@ -114,8 +114,8 @@ export default function RefundPolicy() {
             </p>
             <div className="space-y-3 text-sm sm:text-base text-neutral-400">
               <div className="p-4 rounded-xl bg-[#0a0a0a] border border-[#262626]">
-                <strong className="text-white block mb-1">Annual Subscriptions (7-Day Review Window):</strong>
-                First-time annual subscription purchases are eligible for a full refund review within seven (7) calendar days of the initial transaction, provided total data ingress has not exceeded 5% of the upgraded tier's quota.
+                <strong className="text-white block mb-1">Annual Subscriptions (7-Day Review Window &amp; Hard 2 GB Peak Storage Cap):</strong>
+                First-time annual subscription purchases are eligible for a full refund review within seven (7) calendar days of initial purchase only if peak storage utilization has never exceeded 2 GB at any point during those 7 days. Exceeding 2 GB permanently disables refund eligibility for that subscription, even if files are subsequently deleted to bring current usage below 2 GB.
               </div>
               <div className="p-4 rounded-xl bg-[#0a0a0a] border border-[#262626]">
                 <strong className="text-white block mb-1">Monthly Billing &amp; Recurring Renewals:</strong>

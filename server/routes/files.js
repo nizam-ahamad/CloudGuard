@@ -517,6 +517,13 @@ router.post('/presigned-url', authMiddleware, async (req, res) => {
       });
     }
 
+    if (user.subscription?.status === 'expired') {
+      return res.status(403).json({
+        error: 'Your subscription has expired. Select a plan on the Pricing page to resume uploading.',
+        code: 'SUBSCRIPTION_EXPIRED'
+      });
+    }
+
     // Storage Quota Enforcement
     const uploadSize = Number(fileSize);
     const storageLimit = user.storageLimit || 5368709120;
@@ -613,6 +620,13 @@ router.post('/multipart/init', authMiddleware, async (req, res) => {
       return res.status(403).json({
         error: 'Your vault is in a read-only grace period. Renew or upgrade your plan to resume uploads.',
         code: 'SUBSCRIPTION_PAST_DUE'
+      });
+    }
+
+    if (user.subscription?.status === 'expired') {
+      return res.status(403).json({
+        error: 'Your subscription has expired. Select a plan on the Pricing page to resume uploading.',
+        code: 'SUBSCRIPTION_EXPIRED'
       });
     }
 
@@ -806,6 +820,16 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
         code: 'SUBSCRIPTION_PAST_DUE'
       });
     }
+    if (user && user.subscription?.status === 'expired') {
+      try {
+        await permanentlyDeleteS3Keys(s3Client, bucket, file.s3Key);
+      } catch (delErr) {}
+      await File.deleteOne({ _id: file._id });
+      return res.status(403).json({
+        error: 'Your subscription has expired. Select a plan on the Pricing page to resume uploading.',
+        code: 'SUBSCRIPTION_EXPIRED'
+      });
+    }
     if (user && user.storageUsed + actualBytes > user.storageLimit) {
       try {
         await permanentlyDeleteS3Keys(s3Client, bucket, file.s3Key);
@@ -865,10 +889,8 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
           { new: true }
         );
         if (u && u.subscription) {
-          if (!u.subscription.peakStorageBytes || u.storageUsed > u.subscription.peakStorageBytes) {
-            u.subscription.peakStorageBytes = u.storageUsed;
-            await u.save();
-          }
+          u.subscription.peakStorageBytes = Math.max(u.subscription?.peakStorageBytes || 0, u.storageUsed);
+          await u.save();
         }
       }
 
@@ -1035,10 +1057,8 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
         { new: true }
       );
       if (u && u.subscription) {
-        if (!u.subscription.peakStorageBytes || u.storageUsed > u.subscription.peakStorageBytes) {
-          u.subscription.peakStorageBytes = u.storageUsed;
-          await u.save();
-        }
+        u.subscription.peakStorageBytes = Math.max(u.subscription?.peakStorageBytes || 0, u.storageUsed);
+        await u.save();
       }
     }
 
@@ -1312,9 +1332,13 @@ const handleBatchRestore = async (req, res) => {
 
     // 3. Increment quota back
     if (restoredBytes > 0) {
-      await User.findByIdAndUpdate(rawUserId, {
+      const u = await User.findByIdAndUpdate(rawUserId, {
         $inc: { storageUsed: Math.abs(restoredBytes) },
-      });
+      }, { new: true });
+      if (u && u.subscription) {
+        u.subscription.peakStorageBytes = Math.max(u.subscription?.peakStorageBytes || 0, u.storageUsed);
+        await u.save();
+      }
     }
 
     return res.status(200).json({
@@ -1374,9 +1398,7 @@ const getStorageStats = async (req, res) => {
     if (userDoc) {
       userDoc.storageUsed = actualStorageUsed;
       if (userDoc.subscription) {
-        if (!userDoc.subscription.peakStorageBytes || userDoc.storageUsed > userDoc.subscription.peakStorageBytes) {
-          userDoc.subscription.peakStorageBytes = userDoc.storageUsed;
-        }
+        userDoc.subscription.peakStorageBytes = Math.max(userDoc.subscription?.peakStorageBytes || 0, userDoc.storageUsed);
       }
       await userDoc.save();
     }
