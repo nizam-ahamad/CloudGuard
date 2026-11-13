@@ -502,18 +502,18 @@ router.post('/presigned-url', authMiddleware, async (req, res) => {
     const user = await User.findById(userId).select('plan trialExpiresAt storageUsed storageLimit subscription').lean();
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    if (user.subscription?.status === 'past_due') {
-      return res.status(403).json({
-        error: 'Uploads locked: Your vault subscription is past due or over quota. Please delete excess files or renew your plan to restore upload privileges.',
-        code: 'SUBSCRIPTION_PAST_DUE'
-      });
-    }
-
     const now = new Date();
     if ((user.plan === 'trial' || user.subscription?.planId === 'trial') && user.trialExpiresAt && new Date(user.trialExpiresAt) <= now) {
       return res.status(403).json({
         error: 'Your 14-day evaluation trial has ended. Select a plan to restore upload privileges.',
         code: 'TRIAL_EXPIRED'
+      });
+    }
+
+    if (user.subscription?.status === 'past_due') {
+      return res.status(403).json({
+        error: 'Your vault is in a read-only grace period. Renew or upgrade your plan to resume uploads.',
+        code: 'SUBSCRIPTION_PAST_DUE'
       });
     }
 
@@ -597,9 +597,24 @@ router.post('/multipart/init', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'Filename and file size are required' });
     }
 
-    // 1. Pre-flight storage quota check (identical to single-PUT)
-    const user = await User.findById(userId).select('storageUsed storageLimit').lean();
+    // 1. Pre-flight storage quota and write-lock checks (identical to single-PUT)
+    const user = await User.findById(userId).select('plan trialExpiresAt storageUsed storageLimit subscription').lean();
     if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const now = new Date();
+    if ((user.plan === 'trial' || user.subscription?.planId === 'trial') && user.trialExpiresAt && new Date(user.trialExpiresAt) <= now) {
+      return res.status(403).json({
+        error: 'Your 14-day evaluation trial has ended. Select a plan to restore upload privileges.',
+        code: 'TRIAL_EXPIRED'
+      });
+    }
+
+    if (user.subscription?.status === 'past_due') {
+      return res.status(403).json({
+        error: 'Your vault is in a read-only grace period. Renew or upgrade your plan to resume uploads.',
+        code: 'SUBSCRIPTION_PAST_DUE'
+      });
+    }
 
     const currentUsed = user.storageUsed || 0;
     const limit = user.storageLimit || 5368709120;

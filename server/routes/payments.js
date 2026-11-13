@@ -80,6 +80,8 @@ function calculateTierTransition(user, targetPlanId, targetBillingCycle) {
   }
 
   const currentPlan = PLAN_CATALOG[currentPlanId];
+  const daysRemaining = Math.max(1, Math.ceil((currentExpiresAt.getTime() - Date.now()) / 86400000));
+  const renewalWindowDays = currentCycle === 'annual' ? 15 : 7;
 
   // Case 2: Same Plan & Same Cycle (Renewal)
   if (currentPlanId === targetPlanId && currentCycle === targetBillingCycle) {
@@ -93,11 +95,8 @@ function calculateTierTransition(user, targetPlanId, targetBillingCycle) {
     };
   }
 
-  // Case 3: Downgrades (Storage Capacity Decreases OR Annual -> Monthly)
-  const isCapacityDowngrade = targetPlan.storageGB < currentPlan.storageGB;
-  const isCycleDowngrade = currentCycle === 'annual' && targetBillingCycle === 'monthly';
-
-  if (isCapacityDowngrade || isCycleDowngrade) {
+  // Rule A — Deferred Downgrades (Capacity Reductions Only)
+  if (targetPlan.storageGB < currentPlan.storageGB) {
     return {
       transitionType: 'SCHEDULED_DOWNGRADE',
       payableAmount: 0, // No payment today; deferred to cycle end
@@ -107,7 +106,30 @@ function calculateTierTransition(user, targetPlanId, targetBillingCycle) {
     };
   }
 
-  // Case 4: Monthly to Monthly Upgrade (Delta Price, Preserves Expiry)
+  // Rule B — Renewal-Window Tier Upgrades (Full new cycle stacked onto remaining days)
+  if (targetPlan.storageGB > currentPlan.storageGB && currentCycle === targetBillingCycle && daysRemaining <= renewalWindowDays) {
+    const amount = targetBillingCycle === 'annual' ? targetPlan.annualPrice : targetPlan.monthlyPrice;
+    const durationDays = targetBillingCycle === 'annual' ? 365 : 30;
+    return {
+      transitionType: 'RENEWAL_UPGRADE',
+      payableAmount: amount,
+      targetExpiresAt: new Date(currentExpiresAt.getTime() + durationDays * 86400000),
+      daysRemaining,
+      isImmediateQuota: true
+    };
+  }
+
+  // Rule C — Annual to Monthly Switch on equal or higher storage (Prepay monthly & stack +30 days)
+  if (currentCycle === 'annual' && targetBillingCycle === 'monthly' && targetPlan.storageGB >= currentPlan.storageGB) {
+    return {
+      transitionType: 'CYCLE_SWITCH_PREPAID',
+      payableAmount: targetPlan.monthlyPrice,
+      targetExpiresAt: new Date(currentExpiresAt.getTime() + 30 * 86400000),
+      isImmediateQuota: true
+    };
+  }
+
+  // Case 4: Monthly to Monthly Mid-Cycle Upgrade (Delta Price, Preserves Expiry)
   if (currentCycle === 'monthly' && targetBillingCycle === 'monthly' && targetPlan.storageGB > currentPlan.storageGB) {
     const deltaAmount = targetPlan.monthlyPrice - currentPlan.monthlyPrice;
     return {
@@ -118,9 +140,8 @@ function calculateTierTransition(user, targetPlanId, targetBillingCycle) {
     };
   }
 
-  // Case 5: Annual to Annual Upgrade (Co-Termed Delta Math)
+  // Case 5: Annual to Annual Mid-Cycle Upgrade (Co-Termed Delta Math)
   if (currentCycle === 'annual' && targetBillingCycle === 'annual' && targetPlan.storageGB > currentPlan.storageGB) {
-    const daysRemaining = Math.max(1, Math.ceil((currentExpiresAt.getTime() - Date.now()) / 86400000));
     const annualPriceDiff = targetPlan.annualPrice - currentPlan.annualPrice;
     const coTermedDelta = Math.round((annualPriceDiff / 365) * daysRemaining);
     const payableAmount = Math.max(50, coTermedDelta); // Gateway floor ₹50
@@ -304,7 +325,13 @@ router.get('/verify/:orderId', auth, async (req, res) => {
         newExpiresAt = currentExpiresAt; // Preserve existing cycle anniversary
       } else if (transitionType === 'CYCLE_UPGRADE' && currentExpiresAt && currentExpiresAt > new Date()) {
         newExpiresAt = new Date(currentExpiresAt.getTime() + 365 * 86400000); // Additive 365 days
-      } else if (transitionType === 'STACKED_RENEWAL' && currentExpiresAt && currentExpiresAt > new Date()) {
+      } else if (
+        (transitionType === 'STACKED_RENEWAL' ||
+          transitionType === 'RENEWAL_UPGRADE' ||
+          transitionType === 'CYCLE_SWITCH_PREPAID') &&
+        currentExpiresAt &&
+        currentExpiresAt > new Date()
+      ) {
         newExpiresAt = new Date(currentExpiresAt.getTime() + (cycle === 'annual' ? 365 : 30) * 86400000);
       } else {
         newExpiresAt = new Date(Date.now() + (cycle === 'annual' ? 365 : 30) * 86400000);
@@ -336,6 +363,8 @@ router.get('/verify/:orderId', auth, async (req, res) => {
         let lineItemTitle = `${targetPlan.name} (${targetPlan.storageGB} GB)`;
         if (transitionType === 'ANNUAL_UPGRADE') lineItemTitle += ' — Mid-Cycle Co-Termed Upgrade';
         else if (transitionType === 'MONTHLY_UPGRADE') lineItemTitle += ' — Mid-Cycle Monthly Upgrade Delta';
+        else if (transitionType === 'RENEWAL_UPGRADE') lineItemTitle += ' — Tier Upgrade + Cycle Renewal';
+        else if (transitionType === 'CYCLE_SWITCH_PREPAID') lineItemTitle += ' — Monthly Cycle Switch (+30 Days)';
 
         paymentRecord = await Payment.create({
           userId: user._id,
@@ -447,8 +476,10 @@ router.get('/subscription-status', auth, async (req, res) => {
       success: true,
       subscription: user.subscription,
       plan: user.plan,
+      trialExpiresAt: user.trialExpiresAt,
       storageLimit: user.storageLimit,
-      storageUsed: user.storageUsed
+      storageUsed: user.storageUsed,
+      userId: user._id
     });
   } catch (err) {
     console.error('[Subscription Status Error]:', err.message);

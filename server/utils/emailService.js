@@ -372,6 +372,56 @@ function generateQuotaGateBlockedEmail({ user, targetPlanName, targetQuotaGB, st
   return { subject, html };
 }
 
+function resolveUserPlanInfo(user) {
+  const planId = user?.subscription?.planId || user?.plan || 'free';
+  const PLAN_MAP = {
+    tier_50gb: { name: 'Essential Vault', storageGB: 50 },
+    tier_100gb: { name: 'Pro Vault', storageGB: 100 },
+    tier_200gb: { name: 'Ultra Vault', storageGB: 200 },
+    trial: { name: '14-Day Evaluation Trial', storageGB: 5 },
+    free: { name: 'Free Evaluation Vault', storageGB: 5 },
+  };
+  const info = PLAN_MAP[planId] || { name: 'CloudGuard Vault', storageGB: 50 };
+  const expiresAt = (planId === 'trial' || user?.plan === 'trial') && user?.trialExpiresAt
+    ? user.trialExpiresAt
+    : (user?.subscription?.expiresAt || user?.trialExpiresAt);
+  return { planName: info.name, storageGB: info.storageGB, expiresAt };
+}
+
+/**
+ * Scenario 11: Annual Plan 7-Day Renewal Reminder
+ */
+function generateAnnual7DayReminderEmail({ user, planName, storageGB, expiresAt, renewalUrl }) {
+  const plan = planName || 'Annual Vault Plan';
+  const quotaGB = storageGB || 50;
+  const formattedExpiry = formatDate(expiresAt);
+  const url = renewalUrl || `${process.env.CLIENT_URL || 'https://cloudguard.site'}/pricing`;
+
+  const subject = `Your Annual CloudGuard Plan Renews in 7 Days`;
+  const contentHtml = `
+    <p>This is a friendly early reminder that your annual subscription for <strong>${plan}</strong> (${quotaGB} GB) is set to renew in <strong>7 days</strong> on <strong>${formattedExpiry}</strong>.</p>
+    <div style="background: #eff6ff; border: 1px solid #dbeafe; border-radius: 12px; padding: 18px; margin: 20px 0;">
+      <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>Plan:</strong> ${plan} (${quotaGB} GB)</p>
+      <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>Renewal Date:</strong> ${formattedExpiry}</p>
+      <p style="margin: 0; font-size: 13px; color: #1e40af;">Renewing early extends your vault by a full 365 days without losing any of your remaining time.</p>
+    </div>
+    <p style="font-size: 13px; color: #475569;">
+      CloudGuard operates on transparent prepaid billing with zero hidden surcharges. Click below to secure your next year with uninterrupted protection.
+    </p>
+  `;
+
+  const html = buildCloudGuardEmail({
+    title: 'Annual Plan Renews in 7 Days',
+    badge: 'ANNUAL RENEWAL',
+    contentHtml,
+    ctaText: 'Renew Early',
+    ctaUrl: url,
+    isUrgent: false
+  });
+
+  return { subject, html };
+}
+
 /**
  * Scenario 7: Prepaid Expiry Warning (T-3 Days)
  */
@@ -381,26 +431,92 @@ function generatePrepaidExpiryWarningEmail({ user, planName, storageGB, expiresA
   const formattedExpiry = formatDate(expiresAt);
   const url = renewalUrl || `${process.env.CLIENT_URL || 'https://cloudguard.site'}/pricing`;
 
-  const subject = `Upcoming Subscription Expiry (3 Days Remaining) — CloudGuard Vault`;
+  const subject = `Action Needed: Your CloudGuard Plan Expires in 3 Days`;
   const contentHtml = `
-    <p>This is a friendly reminder that your prepaid subscription for <strong>${plan}</strong> (${quotaGB} GB) is set to expire in <strong>72 hours</strong> on <strong>${formattedExpiry}</strong>.</p>
+    <p>This is an important reminder that your CloudGuard subscription for <strong>${plan}</strong> (${quotaGB} GB) expires in <strong>3 days</strong> on <strong>${formattedExpiry}</strong>.</p>
     <div style="background: #eff6ff; border: 1px solid #dbeafe; border-radius: 12px; padding: 18px; margin: 20px 0;">
       <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>Plan:</strong> ${plan} (${quotaGB} GB)</p>
       <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>Expiry Date:</strong> ${formattedExpiry}</p>
-      <p style="margin: 0; font-size: 13px; color: #1e40af;">Renew today to prevent upload write-locks and avoid entering past-due grace status.</p>
+      <p style="margin: 0; font-size: 13px; color: #1e40af;">Renew today to prevent an upload write-lock and ensure seamless vault access.</p>
     </div>
     <p style="font-size: 13px; color: #475569;">
-      CloudGuard operates on prepaid billing without silent recurring credit card charges. Click below to stack your renewal seamlessly.
+      CloudGuard operates on prepaid billing without silent recurring charges. Renew now to stack your subscription cleanly and keep full upload privileges.
     </p>
   `;
 
   const html = buildCloudGuardEmail({
-    title: 'Prepaid Cycle Ending Soon',
+    title: 'Subscription Ending in 3 Days',
     badge: 'RENEWAL REMINDER',
     contentHtml,
     ctaText: 'Renew Subscription Now',
     ctaUrl: url,
     isUrgent: false
+  });
+
+  return { subject, html };
+}
+
+/**
+ * Scenario 12: 24-Hour Pre-Expiry Urgent Warning (Yearly, Monthly & Trial)
+ */
+function generate24HourPreExpiryEmail({ user, planName, storageGB, expiresAt, renewalUrl }) {
+  const plan = planName || 'Vault Plan';
+  const quotaGB = storageGB || 50;
+  const formattedExpiry = formatDate(expiresAt);
+  const url = renewalUrl || `${process.env.CLIENT_URL || 'https://cloudguard.site'}/pricing`;
+
+  const subject = `Urgent: Your CloudGuard Plan Expires in 24 Hours`;
+  const contentHtml = `
+    <p style="color: #991b1b; font-weight: 600;">URGENT: Your CloudGuard plan will expire in less than 24 hours on ${formattedExpiry}.</p>
+    <div style="background: #fef2f2; border: 1px solid #fee2e2; border-radius: 12px; padding: 18px; margin: 20px 0;">
+      <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>Plan:</strong> ${plan} (${quotaGB} GB)</p>
+      <p style="margin: 0 0 8px 0; font-size: 13px; color: #b91c1c;"><strong>Expiry Deadline:</strong> ${formattedExpiry}</p>
+      <p style="margin: 0; font-size: 13px; color: #991b1b;">Upon expiry, your vault transitions to read-only status and file uploads are write-locked.</p>
+    </div>
+    <p style="font-size: 13px; line-height: 1.6; color: #334155;">
+      Renew your subscription now to maintain uninterrupted upload access and prevent any storage disruptions.
+    </p>
+  `;
+
+  const html = buildCloudGuardEmail({
+    title: 'Plan Expires in Under 24 Hours',
+    badge: 'ACTION REQUIRED',
+    contentHtml,
+    ctaText: 'Renew Now',
+    ctaUrl: url,
+    isUrgent: true
+  });
+
+  return { subject, html };
+}
+
+/**
+ * Scenario 13: Day 0 Grace Period Started Notice
+ */
+function generateGracePeriodStartedEmail({ user, gracePeriodExpiresAt, renewalUrl }) {
+  const formattedGrace = formatDate(gracePeriodExpiresAt);
+  const url = renewalUrl || `${process.env.CLIENT_URL || 'https://cloudguard.site'}/pricing`;
+
+  const subject = `Vault Write-Locked: 7-Day Grace Period Started — CloudGuard`;
+  const contentHtml = `
+    <p style="color: #991b1b; font-weight: 600;">Your CloudGuard plan has expired and your vault is now write-locked.</p>
+    <div style="background: #fef2f2; border: 1px solid #fee2e2; border-radius: 12px; padding: 18px; margin: 20px 0;">
+      <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>Status:</strong> Read-Only Grace Period (Uploads Locked)</p>
+      <p style="margin: 0 0 8px 0; font-size: 13px; color: #b91c1c;"><strong>Grace Period Cutoff:</strong> ${formattedGrace}</p>
+      <p style="margin: 0; font-size: 13px; color: #991b1b;">All existing files remain safe and downloadable. New file uploads are disabled.</p>
+    </div>
+    <p style="font-size: 13px; line-height: 1.6; color: #334155;">
+      You have <strong>7 days</strong> (until ${formattedGrace}) to renew or upgrade your plan. Under our Zero-Parking storage policy, uncompensated vaults exceeding the baseline quota are permanently purged after the grace period ends.
+    </p>
+  `;
+
+  const html = buildCloudGuardEmail({
+    title: 'Vault Write-Locked (7-Day Grace)',
+    badge: 'VAULT WRITE-LOCKED',
+    contentHtml,
+    ctaText: 'Restore Uploads',
+    ctaUrl: url,
+    isUrgent: true
   });
 
   return { subject, html };
@@ -538,15 +654,55 @@ async function sendDowngradeRevocationEmail(user, activePlanName, expiresAt, cli
   return sendSubscriptionEmail({ to: user.email, subject, html });
 }
 
+async function sendAnnual7DayReminderEmail(user, planName, storageGB, expiresAt, renewalUrl) {
+  if (!user?.email) return { success: false, error: 'User email missing' };
+  const resolved = resolveUserPlanInfo(user);
+  const pName = typeof planName === 'string' ? planName : resolved.planName;
+  const sGB = typeof storageGB === 'number' ? storageGB : resolved.storageGB;
+  const expAt = expiresAt || resolved.expiresAt;
+  const url = typeof renewalUrl === 'string' ? renewalUrl : `${process.env.CLIENT_URL || 'https://cloudguard.site'}/pricing`;
+  const { subject, html } = generateAnnual7DayReminderEmail({ user, planName: pName, storageGB: sGB, expiresAt: expAt, renewalUrl: url });
+  return sendSubscriptionEmail({ to: user.email, subject, html });
+}
+
 async function sendPrepaidExpiryWarningEmail(user, planName, storageGB, expiresAt, renewalUrl) {
   if (!user?.email) return { success: false, error: 'User email missing' };
-  const { subject, html } = generatePrepaidExpiryWarningEmail({ user, planName, storageGB, expiresAt, renewalUrl });
+  const resolved = resolveUserPlanInfo(user);
+  const pName = typeof planName === 'string' ? planName : resolved.planName;
+  const sGB = typeof storageGB === 'number' ? storageGB : resolved.storageGB;
+  const expAt = expiresAt || resolved.expiresAt;
+  const url = typeof renewalUrl === 'string' ? renewalUrl : `${process.env.CLIENT_URL || 'https://cloudguard.site'}/pricing`;
+  const { subject, html } = generatePrepaidExpiryWarningEmail({ user, planName: pName, storageGB: sGB, expiresAt: expAt, renewalUrl: url });
+  return sendSubscriptionEmail({ to: user.email, subject, html });
+}
+
+async function send24HourPreExpiryEmail(user, planName, storageGB, expiresAt, renewalUrl) {
+  if (!user?.email) return { success: false, error: 'User email missing' };
+  const resolved = resolveUserPlanInfo(user);
+  const pName = typeof planName === 'string' ? planName : resolved.planName;
+  const sGB = typeof storageGB === 'number' ? storageGB : resolved.storageGB;
+  const expAt = expiresAt || resolved.expiresAt;
+  const url = typeof renewalUrl === 'string' ? renewalUrl : `${process.env.CLIENT_URL || 'https://cloudguard.site'}/pricing`;
+  const { subject, html } = generate24HourPreExpiryEmail({ user, planName: pName, storageGB: sGB, expiresAt: expAt, renewalUrl: url });
+  return sendSubscriptionEmail({ to: user.email, subject, html });
+}
+
+async function sendGracePeriodStartedEmail(user, gracePeriodExpiresAt, renewalUrl) {
+  if (!user?.email) return { success: false, error: 'User email missing' };
+  const graceEnd = gracePeriodExpiresAt || user.subscription?.gracePeriodExpiresAt || new Date(Date.now() + 7 * 86400000);
+  const url = typeof renewalUrl === 'string' ? renewalUrl : `${process.env.CLIENT_URL || 'https://cloudguard.site'}/pricing`;
+  const { subject, html } = generateGracePeriodStartedEmail({ user, gracePeriodExpiresAt: graceEnd, renewalUrl: url });
   return sendSubscriptionEmail({ to: user.email, subject, html });
 }
 
 async function send24HourPurgeAlertEmail(user, excessGB, purgeDate, deleteUrl) {
   if (!user?.email) return { success: false, error: 'User email missing' };
-  const { subject, html } = generate24HourPurgeAlertEmail({ user, excessGB, purgeDate, deleteUrl });
+  const computedExcess = excessGB !== undefined
+    ? excessGB
+    : Math.max(0, ((user.storageUsed || 0) - (user.storageLimit || 5368709120)) / (1024 ** 3));
+  const pDate = purgeDate || user.subscription?.gracePeriodExpiresAt || new Date(Date.now() + 24 * 3600 * 1000);
+  const dUrl = deleteUrl || `${process.env.CLIENT_URL || 'https://cloudguard.site'}/pricing`;
+  const { subject, html } = generate24HourPurgeAlertEmail({ user, excessGB: computedExcess, purgeDate: pDate, deleteUrl: dUrl });
   return sendSubscriptionEmail({ to: user.email, subject, html });
 }
 
@@ -743,6 +899,7 @@ module.exports = {
   sendNotificationEmail,
   sendSubscriptionEmail,
   buildCloudGuardEmail,
+  resolveUserPlanInfo,
   // Template generators
   generatePurchaseEmail,
   generateUpgradeEmail,
@@ -750,14 +907,20 @@ module.exports = {
   generateDowngradeRevocationEmail,
   generateQuotaGatePassEmail,
   generateQuotaGateBlockedEmail,
+  generateAnnual7DayReminderEmail,
   generatePrepaidExpiryWarningEmail,
+  generate24HourPreExpiryEmail,
+  generateGracePeriodStartedEmail,
   generate24HourPurgeAlertEmail,
   generateHardPurgeCompletedEmail,
   generateRefundAcknowledgmentEmail,
   // Transactional dispatchers
+  sendAnnual7DayReminderEmail,
   sendScheduledDowngradeEmail,
   sendDowngradeRevocationEmail,
   sendPrepaidExpiryWarningEmail,
+  send24HourPreExpiryEmail,
+  sendGracePeriodStartedEmail,
   send24HourPurgeAlertEmail,
   sendHardPurgeCompletedEmail,
   sendRefundAcknowledgmentEmail,

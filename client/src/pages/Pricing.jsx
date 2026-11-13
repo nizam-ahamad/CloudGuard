@@ -359,6 +359,7 @@ export default function Pricing() {
             fontSize: '13px',
           },
         });
+        window.dispatchEvent(new CustomEvent('cloudguard:subscription-updated'));
         // Refresh user profile data in context/state if available
         if (typeof refreshUser === 'function') refreshUser();
         setLoadingPlanId(null);
@@ -391,6 +392,7 @@ export default function Pricing() {
               toast.success('Plan activated successfully!', {
                 style: { background: '#18181b', color: '#fff', border: '1px solid #27272a' },
               });
+              window.dispatchEvent(new CustomEvent('cloudguard:subscription-updated'));
               if (typeof refreshUser === 'function') refreshUser();
               navigate('/dashboard?view=settings');
             }
@@ -539,14 +541,18 @@ export default function Pricing() {
             const daysRemaining = expiresAtDate
               ? Math.ceil((expiresAtDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
               : 0;
-            const isEligibleForRenewal = daysRemaining <= 5 || user?.subscription?.status === 'past_due' || userSubStatus === 'past_due';
+            const renewalWindowDays = billingCycle === 'annual' ? 15 : 7;
+            const isEligibleForRenewal =
+              daysRemaining <= renewalWindowDays ||
+              user?.subscription?.status === 'past_due' ||
+              userSubStatus === 'past_due';
 
             const isCurrentPlanTier =
               (user?.plan === plan.tierId || userPlanId === plan.tierId) &&
               (user?.subscription?.billingCycle === billingCycle || userBillingCycle === billingCycle) &&
               (user?.subscription?.status === 'active' || userSubStatus === 'active');
 
-            // Only lock the button if they still have MORE than 5 days remaining
+            // Only lock the button if they are not eligible for renewal
             const isLockedCurrentPlan = isCurrentPlanTier && !isEligibleForRenewal;
 
             const preview = previews[plan.tierId];
@@ -656,6 +662,10 @@ export default function Pricing() {
                   } else if (preview) {
                     if (preview.transitionType === 'SCHEDULED_DOWNGRADE') {
                       ctaText = `Downgrade (₹0 Today)`;
+                    } else if (preview.transitionType === 'RENEWAL_UPGRADE') {
+                      ctaText = `Upgrade & Extend (₹${preview.payableAmount})`;
+                    } else if (preview.transitionType === 'CYCLE_SWITCH_PREPAID') {
+                      ctaText = `Switch to Monthly (₹${preview.payableAmount})`;
                     } else if (preview.transitionType === 'MONTHLY_UPGRADE') {
                       ctaText = `Upgrade for ₹${preview.payableAmount}`;
                     } else if (preview.transitionType === 'ANNUAL_UPGRADE') {

@@ -5,6 +5,7 @@ import { API_BASE_URL } from '../config';
 import { computeFileSHA256, computeSHA256 } from '../utils/cryptoHelper';
 import { generateMediaThumbnail } from '../utils/thumbnailHelper';
 import { useUpload } from '../context/UploadContext';
+import SubscriptionAlertBanner from '../components/SubscriptionAlertBanner';
 
 export { computeFileSHA256, computeSHA256 };
 
@@ -310,6 +311,7 @@ export const Dashboard = (props) => {
 
   return (
     <div className="space-y-4">
+      <SubscriptionAlertBanner />
       <StorageMeter storageStats={storageStats} fetchStorageStats={props.fetchStorageStats} />
       <FolderNavigationSkeleton />
 
