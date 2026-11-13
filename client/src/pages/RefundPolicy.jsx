@@ -114,8 +114,8 @@ export default function RefundPolicy() {
             </p>
             <div className="space-y-3 text-sm sm:text-base text-neutral-400">
               <div className="p-4 rounded-xl bg-[#0a0a0a] border border-[#262626]">
-                <strong className="text-white block mb-1">Annual Subscriptions (7-Day Review Window &amp; Hard 2 GB Peak Storage Cap):</strong>
-                First-time annual subscription purchases are eligible for a full refund review within seven (7) calendar days of initial purchase only if peak storage utilization has never exceeded 2 GB at any point during those 7 days. Exceeding 2 GB permanently disables refund eligibility for that subscription, even if files are subsequently deleted to bring current usage below 2 GB.
+                <strong className="text-white block mb-1">Annual Subscriptions (7-Day Review Window &amp; Hard 2 GB Peak Storage Cap — One-Time Only):</strong>
+                First-time annual subscription purchases are eligible for a full refund review within seven (7) calendar days of initial purchase only if peak storage utilization has never exceeded 2 GB at any point during those 7 days. This 7-Day / 2 GB Peak Storage Money-Back Guarantee applies strictly once per customer/account on a first-time annual purchase. Exceeding 2 GB permanently disables refund eligibility for that subscription, even if files are subsequently deleted to bring current usage below 2 GB. Any subsequent subscription purchases or renewals after a refund has been claimed are final and non-refundable.
               </div>
               <div className="p-4 rounded-xl bg-[#0a0a0a] border border-[#262626]">
                 <strong className="text-white block mb-1">Monthly Billing &amp; Recurring Renewals:</strong>

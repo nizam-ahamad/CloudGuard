@@ -353,6 +353,7 @@ router.get('/verify/:orderId', auth, async (req, res) => {
         peakStorageBytes: isNewSubscription ? (user.storageUsed || 0) : Math.max(user.storageUsed || 0, user.subscription?.peakStorageBytes || 0),
         gracePeriodExpiresAt: null,
         dunningStep: 0,
+        refundCount: user.subscription?.refundCount || 0,
         scheduledDowngrade: { targetPlanId: null, targetBillingCycle: null, scheduledAt: null }
       };
       await user.save();
@@ -481,7 +482,35 @@ router.get('/subscription-status', auth, async (req, res) => {
     const startDate = sub?.startDate ? new Date(sub.startDate) : null;
     const daysSinceStart = startDate ? (Date.now() - startDate.getTime()) / (1000 * 60 * 60 * 24) : Infinity;
     const peakBytes = sub?.peakStorageBytes !== undefined ? sub.peakStorageBytes : (user.storageUsed || 0);
-    const refundEligible = Boolean(isPaid && isAnnual && daysSinceStart <= 7 && peakBytes <= REFUND_MAX_PEAK_BYTES);
+
+    // Check if user has claimed a prior refund
+    let hasPriorRefund = (sub?.refundCount || 0) >= 1;
+    if (!hasPriorRefund) {
+      const userEmailRegex = user.email ? new RegExp(`^${user.email.trim()}$`, 'i') : null;
+      const priorRefundPayment = await Payment.findOne({
+        status: 'REFUNDED',
+        $or: [
+          { userId: user._id },
+          ...(userEmailRegex ? [{ 'customerDetails.email': userEmailRegex }] : [])
+        ]
+      }).select('_id').lean();
+      if (priorRefundPayment) {
+        hasPriorRefund = true;
+      }
+    }
+
+    let refundEligible = Boolean(isPaid && isAnnual && daysSinceStart <= 7 && peakBytes <= REFUND_MAX_PEAK_BYTES && !hasPriorRefund);
+    let refundIneligibleReason = null;
+    if (hasPriorRefund) {
+      refundEligible = false;
+      refundIneligibleReason = 'Prior Refund Already Claimed';
+    } else if (!refundEligible) {
+      if (!isPaid) refundIneligibleReason = 'Free / Non-paying Plan';
+      else if (!isAnnual) refundIneligibleReason = 'Monthly Plan';
+      else if (peakBytes > REFUND_MAX_PEAK_BYTES) refundIneligibleReason = 'Peak Storage Exceeded 2 GB';
+      else if (daysSinceStart > 7) refundIneligibleReason = '7-Day Window Expired';
+      else refundIneligibleReason = 'Ineligible';
+    }
 
     return res.json({
       success: true,
@@ -492,6 +521,9 @@ router.get('/subscription-status', auth, async (req, res) => {
       storageUsed: user.storageUsed,
       peakStorageBytes: peakBytes,
       refundEligible,
+      refundIneligibleReason,
+      hasPriorRefund,
+      refundCount: sub?.refundCount || 0,
       refundMaxPeakBytes: REFUND_MAX_PEAK_BYTES,
       userId: user._id
     });

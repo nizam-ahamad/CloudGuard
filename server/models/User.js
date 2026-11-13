@@ -100,6 +100,10 @@ const userSchema = new mongoose.Schema(
         type: Number,
         default: 0
       },
+      refundCount: {
+        type: Number,
+        default: 0
+      },
       scheduledDowngrade: {
         targetPlanId: { 
           type: String, 

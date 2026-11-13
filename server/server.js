@@ -671,6 +671,8 @@ app.use('/api/folders', require('./routes/folders'));
 app.use('/api/photos', require('./routes/photos'));
 app.use('/api/payments', require('./routes/payments'));
 app.use('/api', require('./routes/photos'));
+app.use('/api/admin', require('./routes/admin'));
+app.use('/api/admin', (req, res) => res.status(404).json({ error: 'Not found' }));
 
 app.post('/api/auth/register', async (req, res) => {
   try {

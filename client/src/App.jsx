@@ -19,6 +19,7 @@ import TermsOfService from './pages/TermsOfService';
 import Pricing from './pages/Pricing';
 import RefundPolicy from './pages/RefundPolicy';
 import ContactUs from './pages/ContactUs';
+import AdminMonitor from './pages/AdminMonitor';
 import PhotosView, { invalidatePhotosCache } from './pages/PhotosView';
 import SubscriptionAlertBanner from './components/SubscriptionAlertBanner';
 import { computeSHA256 } from './pages/Dashboard';
@@ -135,6 +136,52 @@ function App() {
       window.removeEventListener('storage', syncAuth);
     };
   }, [location.pathname]);
+
+  const [isAdmin, setIsAdmin] = useState(false);
+  const fetchedAdminTokenRef = useRef(null);
+  const adminCheckPromiseRef = useRef(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const activeToken = getActiveToken();
+    if (!activeToken) {
+      fetchedAdminTokenRef.current = null;
+      adminCheckPromiseRef.current = null;
+      setIsAdmin(false);
+      return;
+    }
+
+    if (fetchedAdminTokenRef.current === activeToken) {
+      return;
+    }
+
+    if (!adminCheckPromiseRef.current || adminCheckPromiseRef.current.token !== activeToken) {
+      adminCheckPromiseRef.current = {
+        token: activeToken,
+        promise: axios.get(`${API_BASE_URL}/api/admin/me`, {
+          headers: { Authorization: `Bearer ${activeToken}` }
+        })
+      };
+    }
+
+    adminCheckPromiseRef.current.promise
+      .then((res) => {
+        if (!cancelled) {
+          fetchedAdminTokenRef.current = activeToken;
+          setIsAdmin(Boolean(res.data?.isAdmin));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setIsAdmin(false);
+          adminCheckPromiseRef.current = null;
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
 
   const refreshUser = async () => {
     try {
@@ -2264,6 +2311,26 @@ function App() {
 
         {/* Footer Navigation */}
         <div className="flex flex-col gap-2 mt-auto border-t border-outline-variant pt-4 mx-4">
+          {isAdmin && (
+            <button 
+              type="button"
+              onClick={() => { 
+                setIsSidebarOpen(false); 
+                navigate('/monitor');
+              }}
+              className={`group relative w-full flex items-center h-12 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${location.pathname === '/monitor' ? 'bg-surface-container-low dark:bg-[#282a2c] text-neutral-900 dark:text-white font-semibold' : 'text-neutral-500 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800/60 hover:text-neutral-900 dark:hover:text-white'}`}
+            >
+              <div className="min-w-[3rem] flex justify-center items-center">
+                <span className="material-symbols-outlined shrink-0" data-weight={location.pathname === '/monitor' ? "fill" : ""}>monitoring</span>
+              </div>
+              <span className={`font-semibold font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-32 opacity-100'}`}>Monitor</span>
+              {isCollapsed && (
+                <div className="absolute left-full ml-4 px-3 py-1 bg-[#1e1f20] border border-zinc-800 text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+                  Monitor
+                </div>
+              )}
+            </button>
+          )}
           <button 
             type="button"
             onClick={() => { 
@@ -3502,6 +3569,7 @@ function App() {
         <Route path="/refund-policy" element={<RefundPolicy />} />
         <Route path="/refund" element={<Navigate to="/refund-policy" replace />} />
         <Route path="/contact" element={<ContactUs />} />
+        <Route path="/monitor" element={<AdminMonitor />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
       <CookieConsent />
