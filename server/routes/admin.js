@@ -185,9 +185,9 @@ router.get('/overview', async (req, res) => {
     const totalStorageUsedBytes = users.reduce((sum, u) => sum + (u.storageUsed || 0), 0);
     const totalStorageAllocatedBytes = users.reduce((sum, u) => sum + (u.storageLimit || 0), 0);
 
-    // Backblaze B2 Pricing: $0.006 / GB / month at ~₹87/$
+    // Backblaze B2 Pricing: $0.006 / GB / month × ₹93.49 × 1.0413 landed Indian card rate = ₹0.5841 / GB / month
     const totalStorageUsedGB = totalStorageUsedBytes / (1024 * 1024 * 1024);
-    const estimatedB2MonthlyINR = Number((totalStorageUsedGB * 0.006 * 87).toFixed(2));
+    const estimatedB2MonthlyINR = Number((totalStorageUsedGB * 0.5841).toFixed(2));
 
     const totalRevenueINR = paidPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
     const refundEligibleCount = enrichedUsers.filter((u) => u.refundEligible).length;
