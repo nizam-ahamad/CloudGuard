@@ -32,7 +32,7 @@ import { HeaderDownloadButton, useDownload } from './context/DownloadContext';
 import { HeaderUploadButton, useUpload, UploadProvider } from './context/UploadContext';
 import { getCachedAccessUrl, fetchAccessUrl, prefetchAccessUrl } from './utils/accessUrlCache';
 import { Folder, FolderInput, X, Search, MoreVertical, Pencil, Info, LayoutGrid, List, Check, Trash2, Image, Play, ChevronLeft, ChevronRight, Download, Clock, UploadCloud, FolderPlus, Menu, Sun, Moon, Loader2, FileText, ChevronDown, FileUp, FolderUp } from 'lucide-react';
-import { extractDroppedItems, createFolderHierarchy, pickDirectoryItems } from './utils/folderUpload';
+import { extractDroppedItems, createFolderHierarchy } from './utils/folderUpload';
 
 import { API_BASE_URL } from "./config";
 
@@ -1850,37 +1850,12 @@ function App() {
     e.target.value = null; // Clear input to allow re-uploading same folder
   };
 
-  const handleUploadFolderClick = async (e) => {
+  const handleUploadFolderClick = (e) => {
     if (e) {
       e.stopPropagation();
       e.preventDefault();
     }
     setIsUploadMenuOpen(false);
-
-    if (typeof window !== 'undefined' && typeof window.showDirectoryPicker === 'function') {
-      try {
-        const items = await pickDirectoryItems();
-        if (items && items.length > 0) {
-          const totalBytes = items.reduce((sum, item) => sum + (item.file?.size || 0), 0);
-          const firstDirItem = items.find((item) => (item.relativePath || '').replace(/\\/g, '/').includes('/'));
-          const firstPath = firstDirItem ? firstDirItem.relativePath.replace(/\\/g, '/') : (items[0].relativePath || items[0].file?.name || '');
-          const folderName = firstPath.includes('/') ? firstPath.split('/')[0] : 'Folder';
-          setPendingFolderUpload({
-            folderName,
-            fileCount: items.length,
-            totalBytes,
-            items,
-          });
-          return;
-        }
-        // User cancelled picker or empty folder was selected; return without falling back to input
-        return;
-      } catch (err) {
-        console.warn('Modern directory picker failed, falling back to input:', err);
-      }
-    }
-
-    // Fallback for mobile / Safari / Firefox: triggers native webkitdirectory input directly
     folderInputRef.current?.click();
   };
 
