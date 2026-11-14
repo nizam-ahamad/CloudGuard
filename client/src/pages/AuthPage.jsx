@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { GoogleLogin } from '@react-oauth/google';
 import axios from 'axios';
 import { Eye, EyeOff, ArrowRight, Loader2 } from 'lucide-react';
@@ -8,7 +8,48 @@ import SharkLogo from '../components/SharkLogo';
 import { API_BASE_URL } from '../config';
 
 export default function AuthPage() {
-  const [isSignUp, setIsSignUp] = useState(false);
+  const [searchParams] = useSearchParams();
+  const urlRedirect = searchParams.get('redirect') || '';
+  const urlPlan = searchParams.get('plan') || '';
+  const urlCycle = searchParams.get('cycle') || '';
+  const urlMode = searchParams.get('mode') || '';
+
+  const getPendingCheckout = () => {
+    try {
+      const raw = sessionStorage.getItem('cloudguard_pending_checkout');
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.timestamp && (Date.now() - parsed.timestamp < 15 * 60 * 1000)) {
+        return parsed;
+      }
+    } catch (e) {
+      // ignore
+    }
+    return null;
+  };
+
+  const getPostAuthDestination = useCallback(() => {
+    const pendingCheckout = getPendingCheckout();
+    const effectivePlan = urlPlan || pendingCheckout?.planId || '';
+    const effectiveCycle = urlCycle || pendingCheckout?.billingCycle || 'annual';
+    const effectiveRedirect = urlRedirect || (pendingCheckout ? '/pricing' : '');
+
+    if (effectiveRedirect === '/pricing' && effectivePlan) {
+      return `/pricing?plan=${encodeURIComponent(effectivePlan)}&cycle=${encodeURIComponent(effectiveCycle)}`;
+    }
+    return '/dashboard';
+  }, [urlRedirect, urlPlan, urlCycle]);
+
+  const [isSignUp, setIsSignUp] = useState(() => urlMode === 'signup');
+
+  useEffect(() => {
+    if (urlMode === 'signup') {
+      setIsSignUp(true);
+      setIsForgotPassword(false);
+      setIsOtpMode(false);
+    }
+  }, [urlMode]);
+
   const [isForgotPassword, setIsForgotPassword] = useState(false);
   const [isOtpMode, setIsOtpMode] = useState(false);
   const [isNewPasswordMode, setIsNewPasswordMode] = useState(false);
@@ -65,7 +106,8 @@ export default function AuthPage() {
       window.dispatchEvent(new Event('storage'));
 
       toast.success(`Welcome back, ${res.data.user?.name || 'User'}!`);
-      window.location.href = '/dashboard';
+      const dest = getPostAuthDestination();
+      window.location.href = dest;
     } catch (err) {
       console.error('Google Auth Error:', err);
       const errorMsg = err.response?.data?.error || 'Google authentication failed';
@@ -74,7 +116,7 @@ export default function AuthPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [toast]);
+  }, [toast, getPostAuthDestination]);
 
   const handleGoogleError = useCallback(() => {
     toast.error('Google Sign-In failed');
@@ -179,8 +221,13 @@ export default function AuthPage() {
 
       toast.success(`Welcome to CloudGuard, ${res.data?.user?.name || ''}!`);
 
-      // 2. Direct transition to dashboard (replace history so back button doesn't loop OTP)
-      navigate('/dashboard', { replace: true });
+      // 2. Transition to destination
+      const dest = getPostAuthDestination();
+      if (dest.includes('/pricing')) {
+        window.location.href = dest;
+      } else {
+        navigate(dest, { replace: true });
+      }
     } catch (err) {
       console.error('Activation OTP Error:', err);
       const newAttempts = otpAttempts + 1;
@@ -358,7 +405,8 @@ export default function AuthPage() {
       toast.success(`Welcome back, ${res.data.user?.name || 'User'}!`);
 
       // 3. HARD NAVIGATION: Forces App.jsx to remount and read fresh token from localStorage
-      window.location.href = '/dashboard';
+      const dest = getPostAuthDestination();
+      window.location.href = dest;
     } catch (err) {
       console.error('[Auth] Login error details:', err.response?.data || err.message);
 

@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useRef } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { 
   ArrowLeft, 
   Check, 
@@ -37,8 +37,8 @@ const TIERS_CONFIG = [
     name: '14-Day Trial',
     tagline: 'Evaluation & security testing',
     storage: '5 GB',
-    monthlyPrice: '₹0',
-    annualPrice: '₹0',
+    monthlyPrice: 0,
+    annualPrice: 0,
     savings: null,
     badge: 'Evaluation',
     highlighted: false,
@@ -56,8 +56,8 @@ const TIERS_CONFIG = [
     name: 'Essential Vault',
     tagline: 'For individuals & personal archives',
     storage: '50 GB',
-    monthlyPrice: '₹49',
-    annualPrice: '₹499',
+    monthlyPrice: 49,
+    annualPrice: 499,
     savings: 'Save 15%',
     badge: null,
     highlighted: false,
@@ -75,8 +75,8 @@ const TIERS_CONFIG = [
     name: 'Pro Vault',
     tagline: 'For power users & professionals',
     storage: '100 GB',
-    monthlyPrice: '₹99',
-    annualPrice: '₹999',
+    monthlyPrice: 99,
+    annualPrice: 999,
     savings: 'Save ~17%',
     badge: 'Most Popular',
     highlighted: true,
@@ -94,8 +94,8 @@ const TIERS_CONFIG = [
     name: 'Ultra Vault',
     tagline: 'Maximum headroom for large datasets',
     storage: '200 GB',
-    monthlyPrice: '₹189',
-    annualPrice: '₹1,899',
+    monthlyPrice: 189,
+    annualPrice: 1899,
     savings: 'Save ~16%',
     badge: 'Maximum Headroom',
     highlighted: false,
@@ -139,8 +139,12 @@ const UNIFORM_SECURITY_FEATURES = [
 
 export default function Pricing() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const hasAutoResumedCheckoutRef = useRef(false);
+  const [isPreviewsLoading, setIsPreviewsLoading] = useState(false);
   const [billingCycle, setBillingCycle] = useState('annual'); // 'monthly' | 'annual'
   const [selectedPlan, setSelectedPlan] = useState(null);
+  const [orderSummaryPlan, setOrderSummaryPlan] = useState(null);
   const [checkoutNotice, setCheckoutNotice] = useState(false);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [paymentError, setPaymentError] = useState('');
@@ -201,9 +205,13 @@ export default function Pricing() {
 
   // Fetch preview deltas for all plans when billingCycle or user plan changes
   useEffect(() => {
-    if (!user || user.plan === 'free') return;
+    if (!user || user.plan === 'free') {
+      setIsPreviewsLoading(false);
+      return;
+    }
 
     const fetchPreviews = async () => {
+      setIsPreviewsLoading(true);
       try {
         const planIds = ['tier_50gb', 'tier_100gb', 'tier_200gb'];
         const results = {};
@@ -216,15 +224,18 @@ export default function Pricing() {
               });
               if (res.data.success) {
                 results[pId] = res.data;
+                results[`${pId}_${billingCycle}`] = res.data;
               }
             } catch (e) {
               // Silently ignore if preview fails for a tier
             }
           })
         );
-        setPreviews(results);
+        setPreviews((prev) => ({ ...prev, ...results }));
       } catch (err) {
         console.error('Failed to load transition previews', err);
+      } finally {
+        setIsPreviewsLoading(false);
       }
     };
 
@@ -252,10 +263,18 @@ export default function Pricing() {
     return '₹0';
   };
 
+  const getCleanAmount = (val) => {
+    if (val === null || val === undefined) return 0;
+    if (typeof val === 'number') return val;
+    const num = Number(String(val).replace(/[^0-9.]/g, ''));
+    return isNaN(num) ? 0 : num;
+  };
+
   const handleCloseModal = (e) => {
     if (e && typeof e.stopPropagation === 'function') {
       e.stopPropagation();
     }
+    setOrderSummaryPlan(null);
     setSelectedPlan(null);
     setCheckoutNotice(false);
     setPaymentError('');
@@ -265,77 +284,104 @@ export default function Pricing() {
   // Dismiss modal on Escape key
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (e.key === 'Escape') {
-        handleCloseModal(e);
+      if (e.key === 'Escape' && !isProcessingPayment && !loadingPlanId) {
+        setOrderSummaryPlan(null);
+        setSelectedPlan(null);
       }
     };
-    if (selectedPlan) {
+    if (orderSummaryPlan || selectedPlan) {
       window.addEventListener('keydown', handleKeyDown);
       return () => window.removeEventListener('keydown', handleKeyDown);
     }
-  }, [selectedPlan]);
+  }, [orderSummaryPlan, selectedPlan, isProcessingPayment, loadingPlanId]);
 
   const handleCycleChange = (cycle) => {
     setBillingCycle(cycle);
-    if (selectedPlan) {
-      const matched = TIERS_CONFIG.find((t) => t.id === selectedPlan.id);
+    if (orderSummaryPlan) {
+      const matched = TIERS_CONFIG.find((t) => t.id === orderSummaryPlan.plan.id || t.tierId === orderSummaryPlan.plan.tierId) || orderSummaryPlan.plan;
       if (matched) {
-        setSelectedPlan((prev) => ({
+        const preview = previews[`${matched.tierId}_${cycle}`] || (previews[matched.tierId]?.targetBillingCycle === cycle ? previews[matched.tierId] : null);
+        const baseCyclePrice = cycle === 'annual' ? Number(matched.annualPrice ?? 499) : Number(matched.monthlyPrice ?? 49);
+        const payableAmount = (preview && preview.payableAmount !== undefined) ? getCleanAmount(preview.payableAmount) : baseCyclePrice;
+        const transitionType = preview?.transitionType || 'STANDARD';
+        setOrderSummaryPlan((prev) => ({
           ...prev,
+          plan: matched,
           billingCycle: cycle,
-          price: cycle === 'annual' ? matched.annualPrice : matched.monthlyPrice,
+          payableAmount,
+          transitionType,
         }));
       }
     }
   };
 
-  const handlePlanSelect = (tier) => {
-    if (!tier) return;
+  const handleSelectPlan = (plan) => {
+    if (!plan) return;
 
-    if (tier.id === 'trial') {
+    const isFree = plan.tierId === 'free' || plan.id === 'trial' || plan.price === 0 || plan.price === '₹0';
+    const targetTierId = plan.tierId || (plan.id === 'essential' ? 'tier_50gb' : plan.id === 'pro' ? 'tier_100gb' : plan.id === 'ultra' ? 'tier_200gb' : plan.id);
+
+    if (isFree) {
+      sessionStorage.removeItem('cloudguard_pending_checkout');
       if (token) {
         navigate('/dashboard');
       } else {
-        navigate('/login');
+        navigate('/login?mode=signup');
       }
       return;
     }
 
     // Paid tier for unauthenticated users
-    if (!token) {
-      navigate('/login');
+    if (!user || !token) {
+      sessionStorage.setItem('cloudguard_pending_checkout', JSON.stringify({
+        planId: targetTierId,
+        billingCycle,
+        timestamp: Date.now(),
+      }));
+      navigate(`/login?redirect=/pricing&plan=${encodeURIComponent(targetTierId)}&cycle=${encodeURIComponent(billingCycle)}`);
       return;
     }
 
-    // Paid tier for authenticated users: Open Order Summary Modal
-    try {
-      setCheckoutNotice(false);
-      setPaymentError('');
-      const planPrice = billingCycle === 'annual' ? tier.annualPrice : tier.monthlyPrice;
-      const storageGB = tier.id === 'ultra' ? 200 : (tier.id === 'pro' ? 100 : 50);
-      setSelectedPlan({
-        id: tier.id,
-        tierId: tier.tierId,
-        name: tier.name || 'Selected Plan',
-        quota: tier.storage || tier.quota || 'Storage Quota',
-        price: planPrice,
-        storageGB: storageGB,
-        annualPrice: tier.annualPrice,
-        monthlyPrice: tier.monthlyPrice,
-        billingCycle: billingCycle, // 'monthly' or 'annual'
-      });
-    } catch (err) {
-      console.error('Failed to open order summary modal:', err);
+    // Check if user is strictly on this current plan
+    const isStrictlyCurrentPlan =
+      (user?.plan === targetTierId || userPlanId === targetTierId) &&
+      (user?.subscription?.billingCycle === billingCycle || userBillingCycle === billingCycle) &&
+      (user?.subscription?.status === 'active' || userSubStatus === 'active');
+
+    if (isStrictlyCurrentPlan) return;
+
+    const matchedPlan = TIERS_CONFIG.find((t) => t.tierId === targetTierId || t.id === targetTierId) || plan;
+    const activeCycle = billingCycle;
+    const baseCyclePrice =
+      activeCycle === 'annual'
+        ? Number(matchedPlan.annualPrice ?? 499)
+        : Number(matchedPlan.monthlyPrice ?? 49);
+
+    const preview = previews[`${targetTierId}_${activeCycle}`] || (previews[targetTierId]?.targetBillingCycle === activeCycle ? previews[targetTierId] : null);
+    let payableAmount = baseCyclePrice;
+    let transitionType = 'STANDARD';
+
+    if (preview && preview.payableAmount !== undefined) {
+      payableAmount = getCleanAmount(preview.payableAmount);
+      transitionType = preview.transitionType || 'STANDARD';
     }
+
+    setCheckoutNotice(false);
+    setPaymentError('');
+    setOrderSummaryPlan({
+      plan: matchedPlan,
+      payableAmount,
+      transitionType,
+      billingCycle: activeCycle,
+    });
   };
 
-  const handleSubscribe = async (plan) => {
-    if (!plan) return;
-    if (!user && !token) {
-      navigate('/login');
-      return;
-    }
+  const handlePlanSelect = handleSelectPlan;
 
+  const executeCheckout = async (plan) => {
+    if (!plan) return;
+
+    const targetCycle = orderSummaryPlan?.billingCycle || billingCycle || 'annual';
     const targetTierId = plan.tierId || (plan.id === 'essential' ? 'tier_50gb' : plan.id === 'pro' ? 'tier_100gb' : plan.id === 'ultra' ? 'tier_200gb' : plan.id);
 
     setLoadingPlanId(targetTierId);
@@ -345,7 +391,7 @@ export default function Pricing() {
     try {
       const res = await api.post('/payments/create-order', {
         planId: targetTierId,
-        billingCycle,
+        billingCycle: targetCycle,
       });
 
       // CASE 1: Deferred Downgrade Scheduled (₹0 today)
@@ -360,11 +406,12 @@ export default function Pricing() {
           },
         });
         window.dispatchEvent(new CustomEvent('cloudguard:subscription-updated'));
-        // Refresh user profile data in context/state if available
+        window.dispatchEvent(new Event('cloudguard:storage-updated'));
         if (typeof refreshUser === 'function') refreshUser();
         setLoadingPlanId(null);
         setIsProcessingPayment(false);
-        if (selectedPlan) setSelectedPlan(null);
+        setOrderSummaryPlan(null);
+        setSelectedPlan(null);
         return;
       }
 
@@ -389,12 +436,21 @@ export default function Pricing() {
           try {
             const verifyRes = await api.get(`/payments/verify/${orderId}`);
             if (verifyRes.data.success) {
+              const storageGB = targetTierId === 'tier_200gb' ? 200 : (targetTierId === 'tier_100gb' ? 100 : 50);
+              const planName = plan.name || (targetTierId === 'tier_200gb' ? 'Ultra Vault' : targetTierId === 'tier_100gb' ? 'Pro Vault' : 'Essential Vault');
+              sessionStorage.setItem('cloudguard_upgrade_welcome', JSON.stringify({
+                planName,
+                storageGB,
+                billingCycle: targetCycle,
+                expiresAt: verifyRes.data?.expiresAt || null,
+              }));
               toast.success('Plan activated successfully!', {
                 style: { background: '#18181b', color: '#fff', border: '1px solid #27272a' },
               });
               window.dispatchEvent(new CustomEvent('cloudguard:subscription-updated'));
+              window.dispatchEvent(new Event('cloudguard:storage-updated'));
               if (typeof refreshUser === 'function') refreshUser();
-              navigate('/dashboard?view=settings');
+              navigate('/dashboard?upgraded=true');
             }
           } catch (vErr) {
             toast.error('Payment verification failed. Please contact support.');
@@ -402,7 +458,8 @@ export default function Pricing() {
         }
         setLoadingPlanId(null);
         setIsProcessingPayment(false);
-        if (selectedPlan) setSelectedPlan(null);
+        setOrderSummaryPlan(null);
+        setSelectedPlan(null);
       });
     } catch (err) {
       const errMsg = err.response?.data?.error || err.message || 'Failed to process plan change';
@@ -413,10 +470,90 @@ export default function Pricing() {
     }
   };
 
+  const handleSubscribe = executeCheckout;
+
+  // Auto-Resume Checkout After Login: opens Order Summary modal
+  useEffect(() => {
+    if (!token || !user) return;
+    if (user.plan !== 'free' && isPreviewsLoading) return;
+    if (hasAutoResumedCheckoutRef.current) return;
+
+    const paramPlan = searchParams.get('plan');
+    const paramCycle = searchParams.get('cycle');
+
+    let pendingIntent = null;
+    if (paramPlan) {
+      pendingIntent = { planId: paramPlan, billingCycle: paramCycle || 'annual' };
+    } else {
+      try {
+        const raw = sessionStorage.getItem('cloudguard_pending_checkout');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && parsed.planId && parsed.timestamp && (Date.now() - parsed.timestamp < 15 * 60 * 1000)) {
+            pendingIntent = parsed;
+          }
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    if (!pendingIntent) return;
+
+    hasAutoResumedCheckoutRef.current = true;
+    sessionStorage.removeItem('cloudguard_pending_checkout');
+    navigate('/pricing', { replace: true });
+
+    const effectiveCycle = pendingIntent.billingCycle || 'annual';
+    setBillingCycle(effectiveCycle);
+
+    const matchedPlan = TIERS_CONFIG.find(
+      (p) => p.tierId === pendingIntent.planId || p.id === pendingIntent.planId
+    );
+
+    if (!matchedPlan) return;
+
+    const isStrictlyCurrentPlan =
+      (user?.plan === matchedPlan.tierId || userPlanId === matchedPlan.tierId) &&
+      (user?.subscription?.billingCycle === effectiveCycle || userBillingCycle === effectiveCycle) &&
+      (user?.subscription?.status === 'active' || userSubStatus === 'active');
+
+    const hasScheduledDowngrade = Boolean(
+      user?.subscription?.scheduledDowngrade ||
+      userSubData?.subscription?.scheduledDowngrade
+    );
+
+    if (!isStrictlyCurrentPlan && !hasScheduledDowngrade) {
+      const preview = previews[`${matchedPlan.tierId}_${effectiveCycle}`] || (previews[matchedPlan.tierId]?.targetBillingCycle === effectiveCycle ? previews[matchedPlan.tierId] : null);
+      const baseCyclePrice =
+        effectiveCycle === 'annual'
+          ? Number(matchedPlan.annualPrice ?? 499)
+          : Number(matchedPlan.monthlyPrice ?? 49);
+
+      let payableAmount = baseCyclePrice;
+      let transitionType = 'STANDARD';
+
+      if (preview && preview.payableAmount !== undefined) {
+        payableAmount = getCleanAmount(preview.payableAmount);
+        transitionType = preview.transitionType || 'STANDARD';
+      }
+
+      setCheckoutNotice(false);
+      setPaymentError('');
+      setOrderSummaryPlan({
+        plan: matchedPlan,
+        payableAmount,
+        transitionType,
+        billingCycle: effectiveCycle,
+      });
+    }
+  }, [token, user, isPreviewsLoading, searchParams, userPlanId, userBillingCycle, userSubStatus, userSubData, previews]);
+
   // Generate tier list with dynamic labels
   const tiers = TIERS_CONFIG.map((tier) => {
     const isAnnual = billingCycle === 'annual';
-    const price = isAnnual ? tier.annualPrice : tier.monthlyPrice;
+    const rawPrice = isAnnual ? tier.annualPrice : tier.monthlyPrice;
+    const price = formatPrice(rawPrice);
 
     let periodText = '/month';
     if (tier.id === 'trial') {
@@ -458,7 +595,7 @@ export default function Pricing() {
     ? (billingCycle === 'annual' ? activeTierMatch.annualPrice : activeTierMatch.monthlyPrice)
     : selectedPlan?.price;
   const displayModalPrice = formatPrice(rawModalPrice);
-  const modalBillingBadge = billingCycle === 'annual' ? 'Annual (1-Time UPI)' : 'Monthly AutoPay';
+  const modalBillingBadge = billingCycle === 'annual' ? 'ANNUAL (1-TIME)' : 'MONTHLY (1-TIME)';
   const modalPeriodSuffix = billingCycle === 'annual' ? '/yr' : '/mo';
 
   return (
@@ -619,13 +756,25 @@ export default function Pricing() {
                     >
                       <span>Evaluation Completed</span>
                     </button>
+                  ) : token ? (
+                    <button
+                      disabled={true}
+                      type="button"
+                      onClick={(e) => e.preventDefault()}
+                      className="w-full py-2.5 px-4 rounded-xl text-xs font-semibold text-center transition-all inline-flex items-center justify-center gap-2 bg-neutral-800 text-white border border-neutral-700 cursor-not-allowed opacity-75 select-none pointer-events-none"
+                    >
+                      <span>Active in Vault</span>
+                    </button>
                   ) : (
                     <button
                       type="button"
-                      onClick={() => navigate(token ? '/dashboard' : '/login')}
+                      onClick={() => {
+                        sessionStorage.removeItem('cloudguard_pending_checkout');
+                        navigate('/login?mode=signup');
+                      }}
                       className="w-full py-2.5 px-4 rounded-xl text-xs font-semibold text-center transition-all inline-flex items-center justify-center gap-2 cursor-pointer bg-neutral-800 text-white hover:bg-neutral-700"
                     >
-                      <span>{token ? 'Active in Vault' : 'Start Free Trial'}</span>
+                      <span>Start Free Trial</span>
                       <ArrowRight size={14} />
                     </button>
                   )
@@ -633,9 +782,10 @@ export default function Pricing() {
                   if (isLockedCurrentPlan) {
                     return (
                       <button
-                        disabled
+                        disabled={true}
                         type="button"
-                        className="w-full py-2.5 rounded-xl text-xs font-semibold bg-neutral-800/80 text-emerald-400 border border-emerald-500/30 cursor-default flex items-center justify-center gap-1.5"
+                        onClick={(e) => e.preventDefault()}
+                        className="w-full py-2.5 rounded-xl text-xs font-semibold bg-neutral-800/80 text-emerald-400 border border-emerald-500/30 cursor-not-allowed opacity-75 select-none pointer-events-none flex items-center justify-center gap-1.5"
                       >
                         <span>✓ Current Plan</span>
                       </button>
@@ -682,7 +832,7 @@ export default function Pricing() {
                     <button
                       type="button"
                       disabled={loadingPlanId === plan.tierId}
-                      onClick={() => handleSubscribe(plan)}
+                      onClick={() => handleSelectPlan(plan)}
                       className={`w-full py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
                         plan.popular
                           ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-md'
@@ -749,133 +899,169 @@ export default function Pricing() {
         </section>
 
         {/* Order Summary & Checkout Modal */}
-        {selectedPlan && (
-          <div 
-            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200"
-            onClick={(e) => {
-              if (e.target === e.currentTarget) {
-                handleCloseModal(e);
-              }
-            }}
-          >
+        {orderSummaryPlan && (() => {
+          const activeCycle = orderSummaryPlan.billingCycle || billingCycle;
+          const matchedPlan = TIERS_CONFIG.find(
+            (t) => t.tierId === orderSummaryPlan.plan.tierId || t.id === orderSummaryPlan.plan.id
+          ) || orderSummaryPlan.plan;
+          const baseCyclePrice =
+            activeCycle === 'annual'
+              ? Number(matchedPlan.annualPrice ?? 499)
+              : Number(matchedPlan.monthlyPrice ?? 49);
+
+          const preview = previews[`${matchedPlan.tierId}_${activeCycle}`] || (previews[matchedPlan.tierId]?.targetBillingCycle === activeCycle ? previews[matchedPlan.tierId] : null);
+          const payableAmount = (preview && preview.payableAmount !== undefined)
+            ? getCleanAmount(preview.payableAmount)
+            : (orderSummaryPlan.payableAmount !== undefined && orderSummaryPlan.billingCycle === activeCycle)
+              ? getCleanAmount(orderSummaryPlan.payableAmount)
+              : baseCyclePrice;
+
+          const formattedAmount = payableAmount.toLocaleString('en-IN');
+          const isTransitionUpgrade = orderSummaryPlan.transitionType === 'ANNUAL_UPGRADE' || orderSummaryPlan.transitionType === 'MONTHLY_UPGRADE';
+
+          return (
             <div 
-              className="bg-[#141414] border border-[#262626] rounded-2xl w-full max-w-lg p-6 sm:p-7 shadow-2xl shadow-black/90 text-left relative overflow-hidden space-y-6 animate-in zoom-in-95 duration-200"
-              onClick={(e) => e.stopPropagation()}
+              className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-150"
+              onClick={(e) => {
+                if (e.target === e.currentTarget && !loadingPlanId && !isProcessingPayment) {
+                  setOrderSummaryPlan(null);
+                }
+              }}
             >
-              {/* Modal Top Header */}
-              <div className="flex items-center justify-between gap-4 pb-4 border-b border-[#262626]">
-                <div>
-                  <h2 className="text-xl font-bold text-white tracking-tight">Order Summary</h2>
+              <div 
+                className="w-full max-w-[520px] rounded-2xl bg-white dark:bg-[#141414] border border-neutral-200 dark:border-[#262626] p-5 shadow-2xl space-y-3.5 animate-in zoom-in-95 duration-150 text-left relative overflow-hidden"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {/* Modal Top Header */}
+                <div className="flex items-center justify-between gap-4 pb-0.5 border-b border-neutral-200 dark:border-[#262626]">
+                  <h2 className="text-base sm:text-lg font-bold text-neutral-900 dark:text-white tracking-tight">
+                    Order Summary
+                  </h2>
+                  <button
+                    type="button"
+                    disabled={Boolean(loadingPlanId || isProcessingPayment)}
+                    onClick={() => setOrderSummaryPlan(null)}
+                    className="text-neutral-400 hover:text-neutral-700 dark:hover:text-white p-1 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800/60 transition-colors cursor-pointer disabled:opacity-50"
+                    aria-label="Close modal"
+                  >
+                    <X size={18} />
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={handleCloseModal}
-                  className="text-neutral-400 hover:text-white p-1.5 rounded-lg hover:bg-neutral-800/60 transition-colors cursor-pointer"
-                  aria-label="Close modal"
-                >
-                  <X size={18} />
-                </button>
-              </div>
 
-              {/* Plan Summary Row */}
-              <div className="p-4 rounded-xl bg-[#0a0a0a] border border-[#262626] flex items-center justify-between gap-4">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-base font-bold text-white tracking-tight">{modalPlanName}</h3>
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-mono uppercase tracking-wider font-semibold bg-cyan-400/10 text-cyan-400 border border-cyan-400/30">
-                      {modalBillingBadge}
-                    </span>
+                {/* Plan Summary Row */}
+                <div className="rounded-xl bg-neutral-50 dark:bg-[#1a1a1a] border border-neutral-200 dark:border-[#2a2a2a] p-3.5 space-y-2.5">
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="text-base font-bold text-neutral-900 dark:text-white tracking-tight truncate">
+                          {orderSummaryPlan.plan.name}
+                        </h3>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-mono uppercase tracking-wider font-semibold bg-neutral-200 dark:bg-[#242424] text-neutral-800 dark:text-[#F5F5F4] border border-neutral-300 dark:border-neutral-700 shrink-0">
+                          {orderSummaryPlan.transitionType === 'SCHEDULED_DOWNGRADE' 
+                            ? 'SCHEDULED ON EXPIRY' 
+                            : activeCycle === 'annual' 
+                              ? 'ANNUAL (1-TIME)' 
+                              : 'MONTHLY (1-TIME)'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 truncate">
+                        <span className="text-neutral-800 dark:text-[#F5F5F4] font-medium">
+                          {(orderSummaryPlan.plan.quota || orderSummaryPlan.plan.storage || 'Storage Quota').replace(/ Encrypted Allocation/g, '')}
+                        </span>{' '}
+                        Encrypted Allocation
+                      </p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <span className="text-xl font-bold text-neutral-900 dark:text-[#F5F5F4] font-mono">
+                        ₹{formattedAmount}
+                      </span>
+                      <span className="text-xs text-neutral-500 dark:text-neutral-400 block font-mono">
+                        {orderSummaryPlan.transitionType === 'SCHEDULED_DOWNGRADE' 
+                          ? 'due today' 
+                          : activeCycle === 'annual' 
+                            ? '/yr' 
+                            : '/mo'}
+                      </span>
+                    </div>
                   </div>
-                  <p className="text-xs text-neutral-400 mt-1">
-                    {modalQuota}
-                  </p>
-                </div>
-                <div className="text-right">
-                  <span className="text-xl font-bold text-white font-mono">{displayModalPrice}</span>
-                  <span className="text-xs text-neutral-500 block font-mono">{modalPeriodSuffix}</span>
-                </div>
-              </div>
 
-              {/* Line Items Breakdown */}
-              <div className="space-y-2.5 text-xs">
-                <div className="flex items-center justify-between py-1 text-neutral-300">
-                  <span className="text-neutral-400">Base Storage Subscription</span>
-                  <span className="font-mono text-neutral-200">{displayModalPrice}</span>
-                </div>
-                <div className="flex items-center justify-between py-1 text-neutral-300">
-                  <span className="text-neutral-400">Egress Bandwidth &amp; Threats Engine</span>
-                  <span className="font-mono text-emerald-400">Included (₹0)</span>
-                </div>
-                <div className="flex items-center justify-between py-1 text-neutral-300">
-                  <span className="text-neutral-400">Taxes (GST / Gateway)</span>
-                  <span className="font-mono text-neutral-400">Inclusive</span>
-                </div>
+                  {/* Line Items Breakdown */}
+                  <div className="space-y-1.5 text-xs pt-2 border-t border-neutral-200 dark:border-[#2a2a2a]">
+                    <div className="flex items-center justify-between py-0.5 text-neutral-700 dark:text-neutral-300">
+                      <span className="text-neutral-500 dark:text-neutral-400">
+                        {isTransitionUpgrade 
+                          ? 'Prorated Plan Upgrade' 
+                          : 'Base Storage Subscription'}
+                      </span>
+                      <span className="font-mono text-neutral-900 dark:text-[#F5F5F4] font-medium">
+                        ₹{formattedAmount}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between py-0.5 text-neutral-700 dark:text-neutral-300">
+                      <span className="text-neutral-500 dark:text-neutral-400">Egress Bandwidth &amp; Threats Engine</span>
+                      <span className="font-mono text-neutral-900 dark:text-[#F5F5F4] font-medium">Included (₹0)</span>
+                    </div>
+                    <div className="flex items-center justify-between py-0.5 text-neutral-700 dark:text-neutral-300">
+                      <span className="text-neutral-500 dark:text-neutral-400">Taxes (GST / Gateway)</span>
+                      <span className="font-mono text-neutral-500 dark:text-neutral-400">Inclusive</span>
+                    </div>
 
-                <div className="pt-3 border-t border-[#262626] flex items-baseline justify-between">
-                  <div>
-                    <span className="text-sm font-bold text-white tracking-tight">Total Due Today</span>
-                    <span className="text-[11px] text-neutral-500 block">Currency in INR (₹)</span>
+                    <div className="pt-2.5 border-t border-neutral-200 dark:border-[#2a2a2a] flex items-baseline justify-between">
+                      <div>
+                        <span className="text-sm font-bold text-neutral-900 dark:text-white tracking-tight">Total Due Today</span>
+                        <span className="text-[11px] text-neutral-500 dark:text-neutral-400 block">Currency in INR (₹)</span>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-xl font-extrabold text-neutral-900 dark:text-[#F5F5F4] tracking-tight font-mono">
+                          ₹{formattedAmount}
+                        </span>
+                      </div>
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <span className="text-2xl font-extrabold text-cyan-400 tracking-tight font-mono">{displayModalPrice}</span>
+                </div>
+
+                {/* Policy Disclosures Box */}
+                <ul className="rounded-xl bg-neutral-100/80 dark:bg-[#181818] border border-neutral-200 dark:border-[#262626] p-3 text-[11px] leading-relaxed text-neutral-600 dark:text-neutral-400 space-y-1 list-disc pl-5 marker:text-neutral-400 dark:marker:text-neutral-500">
+                  <li>
+                    <strong className="text-neutral-900 dark:text-[#F5F5F4] font-semibold">Digital Provisioning:</strong> Storage quota is electronically allocated immediately upon payment confirmation.
+                  </li>
+                  <li>
+                    <strong className="text-neutral-900 dark:text-[#F5F5F4] font-semibold">Refund Policy:</strong>{' '}
+                    Annual plans are eligible for a full refund within <strong className="text-neutral-900 dark:text-[#F5F5F4] font-semibold">7 calendar days</strong> of purchase as long as your total storage never crosses <strong className="text-neutral-900 dark:text-[#F5F5F4] font-semibold">2 GB</strong> at any point (exceeding <strong className="text-neutral-900 dark:text-[#F5F5F4] font-semibold">2 GB</strong> permanently disables refund eligibility, even if you delete files later). Monthly plans are non-refundable.
+                  </li>
+                </ul>
+
+                {/* Inline Error Banner */}
+                {paymentError && (
+                  <div className="p-3.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 text-xs leading-relaxed flex items-start gap-2.5 animate-in fade-in duration-200">
+                    <AlertTriangle size={16} className="text-red-500 shrink-0 mt-0.5" />
+                    <span>{paymentError}</span>
                   </div>
+                )}
+
+                {/* Action Buttons */}
+                <div className="flex flex-col-reverse sm:flex-row items-center gap-2.5 pt-0.5">
+                  <button
+                    type="button"
+                    disabled={Boolean(loadingPlanId)}
+                    onClick={() => executeCheckout(orderSummaryPlan.plan)}
+                    className="w-full sm:flex-1 py-2.5 px-4 rounded-xl bg-[#F5F5F4] hover:bg-[#E7E5E4] active:scale-[0.99] text-neutral-950 border border-neutral-300 dark:border-transparent font-semibold text-xs shadow-sm transition-all cursor-pointer disabled:opacity-60 flex items-center justify-center gap-2"
+                  >
+                    {loadingPlanId ? 'Initializing...' : orderSummaryPlan.transitionType === 'SCHEDULED_DOWNGRADE' ? 'Confirm Scheduled Downgrade' : 'Proceed to Secure Checkout'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={Boolean(loadingPlanId)}
+                    onClick={() => setOrderSummaryPlan(null)}
+                    className="w-full sm:w-auto py-2.5 px-5 rounded-xl bg-neutral-200 hover:bg-neutral-300 dark:bg-[#242424] dark:hover:bg-[#2e2e2e] text-neutral-800 dark:text-neutral-200 font-medium text-xs transition-colors cursor-pointer"
+                  >
+                    Cancel
+                  </button>
                 </div>
-              </div>
-
-              {/* Compliance Disclosures */}
-              <div className="p-3.5 rounded-xl bg-[#0a0a0a] border border-[#262626] space-y-1.5 text-[11px] text-neutral-400 leading-relaxed">
-                <p className="flex items-start gap-1.5">
-                  <span className="text-cyan-400 font-semibold">•</span>
-                  <span><strong className="text-neutral-300">Digital Provisioning:</strong> Storage quota is electronically allocated immediately upon payment confirmation.</span>
-                </p>
-                <p className="flex items-start gap-1.5">
-                  <span className="text-cyan-400 font-semibold">•</span>
-                  <span><strong className="text-neutral-300">Refund Policy:</strong> Annual subscriptions are eligible for refund review within 7 calendar days per our terms.</span>
-                </p>
-              </div>
-
-              {/* Inline Notification & Error Banners */}
-              {checkoutNotice && (
-                <div className="p-3.5 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 text-xs leading-relaxed flex items-start gap-2.5 animate-in fade-in duration-200">
-                  <Info size={16} className="text-cyan-400 shrink-0 mt-0.5" />
-                  <span>
-                    <strong>Online Upgrades Activating Shortly:</strong> Production checkout via Cashfree Payments is being finalized. Contact{' '}
-                    <a href="mailto:support@cloudguard.site" className="text-cyan-300 font-semibold underline hover:text-white">
-                      support@cloudguard.site
-                    </a>{' '}
-                    for immediate account activation.
-                  </span>
-                </div>
-              )}
-
-              {paymentError && (
-                <div className="p-3.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-xs leading-relaxed flex items-start gap-2.5 animate-in fade-in duration-200">
-                  <AlertTriangle size={16} className="text-red-400 shrink-0 mt-0.5" />
-                  <span>{paymentError}</span>
-                </div>
-              )}
-
-              {/* Action Buttons */}
-              <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">
-                <button
-                  type="button"
-                  disabled={isProcessingPayment}
-                  onClick={() => handleSubscribe(selectedPlan)}
-                  className="w-full sm:flex-1 py-3 px-4 rounded-xl text-xs font-semibold text-black bg-cyan-400 hover:bg-cyan-300 shadow-lg shadow-cyan-500/20 transition-all cursor-pointer text-center disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {isProcessingPayment ? 'Initializing Checkout...' : 'Proceed to Secure Checkout'}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleCloseModal}
-                  className="w-full sm:w-auto py-3 px-5 rounded-xl text-xs font-medium text-neutral-300 hover:text-white bg-[#1f1f1f] hover:bg-[#2a2a2a] border border-[#2a2a2a] transition-colors cursor-pointer text-center"
-                >
-                  Cancel
-                </button>
               </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
       </main>
 
       {/* Universal Footer */}

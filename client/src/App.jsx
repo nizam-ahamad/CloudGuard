@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Routes, Route, Navigate, useSearchParams, useLocation, useNavigate, NavLink, Link } from 'react-router-dom';
 import axios from 'axios';
 import ResetPassword from './ResetPassword';
@@ -31,7 +31,7 @@ import {
 import { HeaderDownloadButton, useDownload } from './context/DownloadContext';
 import { HeaderUploadButton, useUpload, UploadProvider } from './context/UploadContext';
 import { getCachedAccessUrl, fetchAccessUrl, prefetchAccessUrl } from './utils/accessUrlCache';
-import { Folder, FolderInput, X, Search, MoreVertical, Pencil, Info, LayoutGrid, List, Check, Trash2, Image, Play, ChevronLeft, ChevronRight, Download, Clock, UploadCloud, FolderPlus, Menu, Sun, Moon, Loader2, FileText, ChevronDown, FileUp, FolderUp } from 'lucide-react';
+import { Folder, FolderInput, X, Search, MoreVertical, Pencil, Info, LayoutGrid, List, Check, Trash2, Image, Play, ChevronLeft, ChevronRight, Download, Clock, UploadCloud, FolderPlus, Menu, Sun, Moon, Loader2, FileText, ChevronDown, FileUp, FolderUp, ArrowUp, ArrowDown, ShieldCheck } from 'lucide-react';
 import { extractDroppedItems, createFolderHierarchy } from './utils/folderUpload';
 
 import { API_BASE_URL } from "./config";
@@ -425,7 +425,11 @@ function App() {
   const [hasMoreRecent, setHasMoreRecent] = useState(false);
   const [isLoadingMoreRecent, setIsLoadingMoreRecent] = useState(false);
   const RECENT_PAGE_SIZE = 10;
-  const [sortOrder, setSortOrder] = useState('newest');
+  const [sortBy, setSortBy] = useState('date');
+  const [sortOrder, setSortOrder] = useState('desc');
+  const [isSortMenuOpen, setIsSortMenuOpen] = useState(false);
+  const sortDropdownRef = useRef(null);
+  const [upgradeWelcomeData, setUpgradeWelcomeData] = useState(null);
   const [fileToDelete, setFileToDelete] = useState(null);
   const [itemToDelete, setItemToDelete] = useState(null);
   const [itemsToDelete, setItemsToDelete] = useState([]);
@@ -486,6 +490,32 @@ function App() {
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, [isUploadMenuOpen]);
+
+  useEffect(() => {
+    if (!isSortMenuOpen) return;
+
+    const handleOutsideClick = (e) => {
+      if (sortDropdownRef.current && !sortDropdownRef.current.contains(e.target)) {
+        setIsSortMenuOpen(false);
+      }
+    };
+
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setIsSortMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('touchstart', handleOutsideClick);
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('touchstart', handleOutsideClick);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isSortMenuOpen]);
   const prevUploadRef = useRef({ time: 0, loaded: 0 });
   const abortControllerRef = useRef(null);
   const activeFolderIdRef = useRef(null);
@@ -1377,6 +1407,47 @@ function App() {
     };
   }, [fetchFiles, fetchStorageStats, fetchFolders, currentFolderId]);
 
+  // Upgrade Welcome Modal listener: detects ?upgraded=true or sessionStorage payload
+  useEffect(() => {
+    const isDashboard = location.pathname === '/dashboard' || location.pathname === '/dashboard/';
+    if (!isDashboard) return;
+
+    const isUpgraded = searchParams.get('upgraded') === 'true';
+    let welcomePayload = null;
+    try {
+      const raw = sessionStorage.getItem('cloudguard_upgrade_welcome');
+      if (raw) {
+        welcomePayload = JSON.parse(raw);
+        sessionStorage.removeItem('cloudguard_upgrade_welcome');
+      }
+    } catch (e) {
+      console.error('Failed to parse upgrade welcome payload:', e);
+    }
+
+    if (isUpgraded || welcomePayload) {
+      // 1. Remove ?upgraded=true from address bar
+      if (isUpgraded) {
+        const nextParams = new URLSearchParams(searchParams);
+        nextParams.delete('upgraded');
+        const qs = nextParams.toString();
+        navigate(qs ? `/dashboard?${qs}` : '/dashboard', { replace: true });
+      }
+
+      // 2. Trigger fresh storage and user profile fetch
+      globalStorageStatsCache = null;
+      if (typeof fetchStorageStats === 'function') fetchStorageStats();
+      if (typeof refreshUser === 'function') refreshUser();
+
+      // 3. Open welcome modal
+      setUpgradeWelcomeData({
+        planName: welcomePayload?.planName || 'CloudGuard Vault',
+        storageGB: welcomePayload?.storageGB || (user?.subscription?.planId === 'tier_200gb' ? 200 : user?.subscription?.planId === 'tier_100gb' ? 100 : 50),
+        billingCycle: welcomePayload?.billingCycle || 'annual',
+        expiresAt: welcomePayload?.expiresAt || null,
+      });
+    }
+  }, [location.pathname, searchParams]);
+
   // Separate trigger ONLY for search query or viewMode changes (never on folder navigation)
   useEffect(() => {
     const token = localStorage.getItem('token') || sessionStorage.getItem('token');
@@ -1392,9 +1463,22 @@ function App() {
     fetchFiles(activeFolderId, true);
   }, [viewMode, searchQuery]);
 
-  const toggleSort = () => {
-    const newOrder = sortOrder === 'newest' ? 'oldest' : 'newest';
-    setSortOrder(newOrder);
+  const handleSortByName = () => {
+    if (sortBy === 'name') {
+      setSortOrder(prev => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortBy('name');
+      setSortOrder('asc');
+    }
+  };
+
+  const handleSortByDate = () => {
+    if (sortBy === 'date') {
+      setSortOrder(prev => (prev === 'desc' ? 'asc' : 'desc'));
+    } else {
+      setSortBy('date');
+      setSortOrder('desc');
+    }
   };
 
   // Dynamic delete success message helper
@@ -2099,11 +2183,29 @@ function App() {
     }
   };
 
-  const sortedFiles = [...files].sort((a, b) => {
-    const timeA = a.mtimeMs || new Date(a.createdAt || a.uploadDate || 0).getTime();
-    const timeB = b.mtimeMs || new Date(b.createdAt || b.uploadDate || 0).getTime();
-    return sortOrder === 'newest' ? timeB - timeA : timeA - timeB;
-  });
+  const sortedFolders = useMemo(() => {
+    return [...folders].sort((a, b) => {
+      if (sortBy === 'name') {
+        const cmp = String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base', numeric: true });
+        return sortOrder === 'asc' ? cmp : -cmp;
+      }
+      const timeA = new Date(a.updatedAt || a.uploadedAt || a.createdAt || 0).getTime();
+      const timeB = new Date(b.updatedAt || b.uploadedAt || b.createdAt || 0).getTime();
+      return sortOrder === 'desc' ? timeB - timeA : timeA - timeB;
+    });
+  }, [folders, sortBy, sortOrder]);
+
+  const sortedFiles = useMemo(() => {
+    return [...files].sort((a, b) => {
+      if (sortBy === 'name') {
+        const cmp = String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base', numeric: true });
+        return sortOrder === 'asc' ? cmp : -cmp;
+      }
+      const timeA = a.mtimeMs || new Date(a.updatedAt || a.uploadedAt || a.createdAt || a.uploadDate || 0).getTime();
+      const timeB = b.mtimeMs || new Date(b.updatedAt || b.uploadedAt || b.createdAt || b.uploadDate || 0).getTime();
+      return sortOrder === 'desc' ? timeB - timeA : timeA - timeB;
+    });
+  }, [files, sortBy, sortOrder]);
 
   const searchFiltered = sortedFiles.filter(file => file.name.toLowerCase().includes(searchQuery.toLowerCase()));
   const filteredFiles = searchFiltered;
@@ -2112,7 +2214,7 @@ function App() {
   const isSomeFilesSelected = selectedFileIds.length > 0 && selectedFileIds.length < selectableFiles.length;
 
   // Calculate total counts across folders + files
-  const currentFolders = viewMode === 'recent' ? [] : folders;
+  const currentFolders = viewMode === 'recent' ? [] : sortedFolders;
   const currentFiles = selectableFiles;
   const totalViewItems = (currentFolders?.length || 0) + (currentFiles?.length || 0);
   const totalSelected = (selectedFolders?.length || 0) + (selectedFiles?.length || 0);
@@ -2969,14 +3071,95 @@ function App() {
                       <List className="w-4 h-4" />
                     </button>
                   </div>
-                  <button 
-                    onClick={toggleSort}
-                    className="px-2.5 sm:px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-colors bg-neutral-200 hover:bg-neutral-300 dark:bg-neutral-800 dark:hover:bg-neutral-700 flex items-center gap-1 text-neutral-800 dark:text-neutral-100 whitespace-nowrap"
-                  >
-                    <span className="material-symbols-outlined text-sm">sort</span>
-                    <span>Sort: {sortOrder === 'newest' ? 'Newest' : 'Oldest'}</span>
-                    <span className="hidden sm:inline"> First</span>
-                  </button>
+                  <div className="relative inline-block" ref={sortDropdownRef}>
+                    <button 
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIsSortMenuOpen(prev => !prev);
+                      }}
+                      className="px-2.5 sm:px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-colors bg-neutral-200 hover:bg-neutral-300 dark:bg-neutral-800 dark:hover:bg-neutral-700 flex items-center gap-1 text-neutral-800 dark:text-neutral-100 whitespace-nowrap cursor-pointer"
+                    >
+                      <span className="material-symbols-outlined text-sm">sort</span>
+                      <span className="hidden sm:inline">Sort: </span>
+                      <span>{sortBy === 'name' ? 'Name' : 'Date'}</span>
+                      {sortOrder === 'asc' ? (
+                        <ArrowUp className="w-3.5 h-3.5" />
+                      ) : (
+                        <ArrowDown className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+
+                    {isSortMenuOpen && (
+                      <div className="absolute right-0 top-full mt-2 w-48 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-2xl p-1.5 z-40 text-left select-none">
+                        <div className="px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-neutral-400 dark:text-neutral-500">
+                          Sort by
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (sortBy !== 'name') {
+                              setSortBy('name');
+                              setSortOrder('asc');
+                            }
+                            setIsSortMenuOpen(false);
+                          }}
+                          className="w-full flex items-center justify-between px-2.5 py-1.5 text-xs sm:text-sm rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-700 dark:text-neutral-200 transition-colors cursor-pointer"
+                        >
+                          <span>Name</span>
+                          {sortBy === 'name' && <Check className="w-3.5 h-3.5 text-blue-500" />}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (sortBy !== 'date') {
+                              setSortBy('date');
+                              setSortOrder('desc');
+                            }
+                            setIsSortMenuOpen(false);
+                          }}
+                          className="w-full flex items-center justify-between px-2.5 py-1.5 text-xs sm:text-sm rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-700 dark:text-neutral-200 transition-colors cursor-pointer"
+                        >
+                          <span>Date</span>
+                          {sortBy === 'date' && <Check className="w-3.5 h-3.5 text-blue-500" />}
+                        </button>
+
+                        <div className="my-1 border-t border-neutral-100 dark:border-neutral-800" />
+
+                        <div className="px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-neutral-400 dark:text-neutral-500">
+                          Sort direction
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const target = sortBy === 'name' ? 'asc' : 'desc';
+                            setSortOrder(target);
+                            setIsSortMenuOpen(false);
+                          }}
+                          className="w-full flex items-center justify-between px-2.5 py-1.5 text-xs sm:text-sm rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-700 dark:text-neutral-200 transition-colors cursor-pointer"
+                        >
+                          <span>{sortBy === 'name' ? 'A to Z' : 'New to old'}</span>
+                          {sortOrder === (sortBy === 'name' ? 'asc' : 'desc') && (
+                            <Check className="w-3.5 h-3.5 text-blue-500" />
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const target = sortBy === 'name' ? 'desc' : 'asc';
+                            setSortOrder(target);
+                            setIsSortMenuOpen(false);
+                          }}
+                          className="w-full flex items-center justify-between px-2.5 py-1.5 text-xs sm:text-sm rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-700 dark:text-neutral-200 transition-colors cursor-pointer"
+                        >
+                          <span>{sortBy === 'name' ? 'Z to A' : 'Old to new'}</span>
+                          {sortOrder === (sortBy === 'name' ? 'desc' : 'asc') && (
+                            <Check className="w-3.5 h-3.5 text-blue-500" />
+                          )}
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
@@ -3007,14 +3190,14 @@ function App() {
             </div>
           ) : (
             <>
-          {viewMode !== 'recent' && folders.length > 0 && (
+          {viewMode !== 'recent' && sortedFolders.length > 0 && (
             <div className="mb-6">
               <div className="text-neutral-500 dark:text-neutral-400 text-xs font-semibold uppercase tracking-wider mb-3">
                 Folders
               </div>
               {folderView === 'grid' ? (
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                  {folders.map((folder, index) => {
+                  {sortedFolders.map((folder, index) => {
                     const isSelected = selectedFolderIds.includes(String(folder._id));
                     const isRightColumn = index % 2 === 1;
                     return (
@@ -3134,7 +3317,7 @@ function App() {
                 </div>
               ) : (
                 <div className="flex flex-col">
-                  {folders.map(folder => {
+                  {sortedFolders.map(folder => {
                     const isSelected = selectedFolderIds.includes(String(folder._id));
                     return (
                       <div 
@@ -3252,7 +3435,7 @@ function App() {
             </div>
           )}
 
-          {viewMode !== 'recent' && folders.length > 0 && (
+          {viewMode !== 'recent' && sortedFolders.length > 0 && (
             <div className="text-neutral-500 dark:text-neutral-400 text-xs font-semibold uppercase tracking-wider mb-3">
               Files
             </div>
@@ -3283,8 +3466,38 @@ function App() {
                         </div>
                       </div>
                     </th>
-                    <th className="py-4 px-6 font-medium">File Name</th>
-                    <th className="py-4 px-6 font-medium">Date Modified</th>
+                    <th className="py-4 px-6 font-medium">
+                      <button
+                        type="button"
+                        onClick={handleSortByName}
+                        className="cursor-pointer select-none inline-flex items-center gap-1 hover:text-neutral-900 dark:hover:text-white transition-colors"
+                      >
+                        <span>File Name</span>
+                        {sortBy === 'name' && (
+                          sortOrder === 'asc' ? (
+                            <ArrowUp className="w-3.5 h-3.5 shrink-0" />
+                          ) : (
+                            <ArrowDown className="w-3.5 h-3.5 shrink-0" />
+                          )
+                        )}
+                      </button>
+                    </th>
+                    <th className="py-4 px-6 font-medium">
+                      <button
+                        type="button"
+                        onClick={handleSortByDate}
+                        className="cursor-pointer select-none inline-flex items-center gap-1 hover:text-neutral-900 dark:hover:text-white transition-colors"
+                      >
+                        <span>Date Modified</span>
+                        {sortBy === 'date' && (
+                          sortOrder === 'desc' ? (
+                            <ArrowDown className="w-3.5 h-3.5 shrink-0" />
+                          ) : (
+                            <ArrowUp className="w-3.5 h-3.5 shrink-0" />
+                          )
+                        )}
+                      </button>
+                    </th>
                     <th className="py-4 px-6 font-medium">Size</th>
                     <th className="py-4 px-6 font-medium">Security Status</th>
                     <th className="py-4 px-6 font-medium text-right">Actions</th>
@@ -4025,6 +4238,76 @@ function App() {
         user={user}
         refreshUser={refreshUser}
       />
+
+      {/* Upgrade Welcome Modal */}
+      {upgradeWelcomeData && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-150"
+          onClick={() => setUpgradeWelcomeData(null)}
+        >
+          <div 
+            className="w-full max-w-md rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-5 sm:p-6 shadow-2xl space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header: Emerald Check/Shield Badge + Title + Subtitle */}
+            <div className="flex items-start gap-3.5">
+              <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 flex items-center justify-center shrink-0">
+                <ShieldCheck className="w-5 h-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-lg font-bold text-neutral-900 dark:text-white leading-tight">
+                  Welcome to {upgradeWelcomeData.planName}
+                </h3>
+                <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 leading-normal">
+                  Your encrypted vault capacity has been upgraded and activated.
+                </p>
+              </div>
+            </div>
+
+            {/* Summary Box */}
+            <div className="bg-neutral-100 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-700/60 rounded-xl p-3.5 text-xs space-y-2 text-neutral-700 dark:text-neutral-300">
+              <div className="flex items-center justify-between">
+                <span className="text-neutral-500 dark:text-neutral-400">Storage Quota:</span>
+                <span className="font-semibold text-neutral-900 dark:text-white">{upgradeWelcomeData.storageGB} GB</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-neutral-500 dark:text-neutral-400">Billing Cycle:</span>
+                <span className="font-semibold text-neutral-900 dark:text-white">
+                  {upgradeWelcomeData.billingCycle === 'annual' ? 'Annual' : 'Monthly'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between pt-1 border-t border-neutral-200/60 dark:border-neutral-700/40">
+                <span className="text-neutral-500 dark:text-neutral-400">Security:</span>
+                <span className="font-medium text-emerald-600 dark:text-emerald-400 text-[11px] text-right">
+                  Zero-trust encryption & real-time malware defense active
+                </span>
+              </div>
+            </div>
+
+            {/* Footer Buttons */}
+            <div className="flex flex-col-reverse sm:flex-row items-center justify-end gap-2.5 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setUpgradeWelcomeData(null);
+                  setViewMode('settings');
+                  navigate('/dashboard?view=settings');
+                }}
+                className="w-full sm:w-auto px-4 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-xs sm:text-sm font-medium cursor-pointer transition-colors text-center"
+              >
+                View Invoice & Plan
+              </button>
+              <button
+                type="button"
+                onClick={() => setUpgradeWelcomeData(null)}
+                className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 hover:opacity-90 text-xs sm:text-sm font-semibold shadow-sm cursor-pointer transition-opacity text-center"
+              >
+                Start Using Vault
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
