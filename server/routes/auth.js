@@ -118,6 +118,7 @@ router.post('/google', async (req, res) => {
       };
 
       if (priorDeletedLog) {
+        newGoogleUser.trialAlreadyUsed = true;
         newGoogleUser.plan = 'free';
         newGoogleUser.trialExpiresAt = null;
         newGoogleUser.subscription = {
@@ -128,6 +129,7 @@ router.post('/google', async (req, res) => {
           refundCount: priorDeletedLog.refundCount || 0,
         };
       } else {
+        newGoogleUser.trialAlreadyUsed = false;
         newGoogleUser.plan = 'trial';
         newGoogleUser.trialExpiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
       }
@@ -224,6 +226,7 @@ router.post('/register', authLimiter, async (req, res) => {
     };
 
     if (priorDeletedLog) {
+      newUserPayload.trialAlreadyUsed = true;
       newUserPayload.plan = 'free';
       newUserPayload.trialExpiresAt = null;
       newUserPayload.subscription = {
@@ -234,6 +237,7 @@ router.post('/register', authLimiter, async (req, res) => {
         refundCount: priorDeletedLog.refundCount || 0,
       };
     } else {
+      newUserPayload.trialAlreadyUsed = false;
       newUserPayload.plan = 'trial';
       newUserPayload.trialExpiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
     }
@@ -284,6 +288,7 @@ router.post('/verify-activation-otp', otpLimiter, async (req, res) => {
     }).lean();
 
     if (priorDeletedLog) {
+      user.trialAlreadyUsed = true;
       user.plan = 'free';
       user.trialExpiresAt = null;
       user.storageLimit = 5 * 1024 * 1024 * 1024;
@@ -295,6 +300,7 @@ router.post('/verify-activation-otp', otpLimiter, async (req, res) => {
         refundCount: priorDeletedLog.refundCount || 0,
       };
     } else if (!user.trialExpiresAt && user.plan !== 'free') {
+      user.trialAlreadyUsed = false;
       user.plan = 'trial';
       user.trialExpiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
     }
@@ -355,6 +361,7 @@ router.post('/verify-otp', otpLimiter, async (req, res) => {
     }).lean();
 
     if (priorDeletedLog) {
+      user.trialAlreadyUsed = true;
       user.plan = 'free';
       user.trialExpiresAt = null;
       user.storageLimit = 5 * 1024 * 1024 * 1024;
@@ -366,6 +373,7 @@ router.post('/verify-otp', otpLimiter, async (req, res) => {
         refundCount: priorDeletedLog.refundCount || 0,
       };
     } else if (!user.trialExpiresAt && user.plan !== 'free') {
+      user.trialAlreadyUsed = false;
       user.plan = 'trial';
       user.trialExpiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
     }

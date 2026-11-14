@@ -128,7 +128,14 @@ export default function SubscriptionAlertBanner() {
       targetTimestamp: sub.expiresAt ? new Date(sub.expiresAt).getTime() : 0,
       barClass: 'bg-neutral-900 border border-rose-500/40 text-white shadow-md',
       icon: AlertTriangle,
-      text: 'Subscription Expired: Your previous plan ended and inactive vault files were permanently deleted. Select a plan to unlock uploads.',
+      text: Boolean(subData?.trialAlreadyUsed) ? (
+        <>
+          <strong>Free Trial Already Used:</strong>{' '}
+          This email has already used its 14-day evaluation trial. Select a plan to unlock uploads.
+        </>
+      ) : (
+        'Subscription Expired: Your previous plan ended and inactive vault files were permanently deleted. Select a plan to unlock uploads.'
+      ),
       ctaText: 'View Plans',
       ctaUrl: '/pricing',
       ctaClass: 'bg-rose-600 text-white hover:bg-rose-500 shadow-sm',

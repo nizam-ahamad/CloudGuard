@@ -60,6 +60,10 @@ const userSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    trialAlreadyUsed: {
+      type: Boolean,
+      default: false,
+    },
     subscription: {
       planId: { 
         type: String, 

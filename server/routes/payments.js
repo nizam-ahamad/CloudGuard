@@ -343,6 +343,7 @@ router.get('/verify/:orderId', auth, async (req, res) => {
       const isNewSubscription = !user.subscription || user.subscription.planId === 'free' || user.subscription.status === 'expired';
       user.plan = planId;
       user.storageLimit = targetPlan.storageBytes;
+      user.trialAlreadyUsed = false;
       user.subscription = {
         planId,
         billingCycle: cycle,
@@ -517,6 +518,7 @@ router.get('/subscription-status', auth, async (req, res) => {
       subscription: user.subscription,
       plan: user.plan,
       trialExpiresAt: user.trialExpiresAt,
+      trialAlreadyUsed: Boolean(user.trialAlreadyUsed),
       storageLimit: user.storageLimit,
       storageUsed: user.storageUsed,
       peakStorageBytes: peakBytes,
