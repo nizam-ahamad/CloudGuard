@@ -1,5 +1,8 @@
-import React, { useState, useMemo, useEffect } from 'react';
-import { Folder, FolderOpen, ChevronRight, ArrowLeft, X, FolderInput } from 'lucide-react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { Folder, FolderOpen, ChevronRight, ArrowLeft, X, FolderInput, Plus, Loader2 } from 'lucide-react';
+import axios from 'axios';
+import { API_BASE_URL } from '../config';
+import { useToast } from '../context/ToastContext';
 
 /**
  * Inner Move Dialog Content with Safe State Defaults and Defensive Guards
@@ -12,12 +15,14 @@ function MoveModalContent({
   folders: foldersProp = [],
   onMove,
   onSuccess,
+  onFolderCreated,
   initialFolderId = null,
   currentPath: initialPath,
   initialPath: initialPathAlt,
   isMoving = false
 }) {
   const incomingInitialPath = initialPath || initialPathAlt || null;
+  const toast = useToast();
 
   // 1. Safe State Defaults - Initialize currentPath from props rather than hardcoded Home
   const [folders, setFolders] = useState([]);
@@ -27,6 +32,13 @@ function MoveModalContent({
     }
     return [{ id: null, name: 'Home' }];
   });
+
+  // Inline folder creation state
+  const [isCreatingInline, setIsCreatingInline] = useState(false);
+  const [inlineFolderName, setInlineFolderName] = useState('');
+  const [isSubmittingFolder, setIsSubmittingFolder] = useState(false);
+  const [inlineError, setInlineError] = useState('');
+  const inlineInputRef = useRef(null);
 
   // Synchronize incoming foldersProp safely
   useEffect(() => {
@@ -161,6 +173,70 @@ function MoveModalContent({
     }
   };
 
+  // Inline folder creation handler
+  const handleCreateInlineFolder = async (e) => {
+    if (e) e.preventDefault();
+    const trimmed = inlineFolderName.trim();
+    if (!trimmed) {
+      setInlineError('Folder name is required');
+      return;
+    }
+
+    // Check duplicate locally in current view
+    const isDuplicate = currentSubfolders.some(
+      f => (f.name || '').toLowerCase() === trimmed.toLowerCase()
+    );
+    if (isDuplicate) {
+      setInlineError('A folder with this name already exists here');
+      return;
+    }
+
+    setIsSubmittingFolder(true);
+    setInlineError('');
+
+    try {
+      const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+      const res = await axios.post(
+        `${API_BASE_URL}/api/folders`,
+        { name: trimmed, parentId: activeFolderId || null },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      const createdFolder = res.data;
+      if (createdFolder) {
+        // Update local folder list
+        setFolders(prev => [...prev, createdFolder]);
+
+        // Notify parent if callback provided
+        if (typeof onFolderCreated === 'function') {
+          onFolderCreated(createdFolder);
+        }
+
+        // Auto-navigate into the newly created folder
+        setCurrentPath(prev => [
+          ...(Array.isArray(prev) ? prev : [{ id: null, name: 'Home' }]),
+          { id: createdFolder._id || createdFolder.id, name: createdFolder.name }
+        ]);
+
+        // Reset inline input state
+        setInlineFolderName('');
+        setIsCreatingInline(false);
+
+        if (toast && typeof toast.success === 'function') {
+          toast.success(`Folder "${createdFolder.name}" created`);
+        }
+      }
+    } catch (err) {
+      const msg = err.response?.data?.error || err.response?.data?.message || err.message || 'Failed to create folder';
+      setInlineError(msg);
+      if (toast && typeof toast.error === 'function') {
+        toast.error(msg);
+      }
+    } finally {
+      setIsSubmittingFolder(false);
+    }
+  };
+
   const handleExecuteMove = () => {
     if (isMoveDisabled) return;
     if (onMove) {
@@ -203,49 +279,128 @@ function MoveModalContent({
         </div>
 
         {/* Breadcrumb & Back Header */}
-        <div className="flex items-center gap-2 px-4 py-2.5 bg-neutral-900 border-b border-neutral-800 text-xs text-neutral-400">
+        <div className="flex items-center justify-between gap-2 px-4 py-2.5 bg-neutral-900 border-b border-neutral-800 text-xs text-neutral-400">
+          <div className="flex items-center gap-2 overflow-hidden flex-1 min-w-0">
+            <button
+              type="button"
+              onClick={handleBack}
+              disabled={safePath.length <= 1}
+              className={`p-1 rounded transition-colors shrink-0 ${
+                safePath.length > 1
+                  ? 'hover:bg-neutral-800 hover:text-white text-neutral-300 cursor-pointer'
+                  : 'text-neutral-600 cursor-not-allowed opacity-40'
+              }`}
+              title="Go back"
+              aria-label="Go back one folder"
+            >
+              <ArrowLeft size={16} />
+            </button>
+
+            <div className="h-4 w-[1px] bg-neutral-800 mx-0.5 shrink-0" />
+
+            {/* Clickable Breadcrumb Bar */}
+            <div className="flex items-center gap-1.5 overflow-x-auto py-0.5 scrollbar-none flex-1 min-w-0">
+              {safePath.map((crumb, idx) => {
+                const isLast = idx === safePath.length - 1;
+                return (
+                  <React.Fragment key={crumb.id || `root-${idx}`}>
+                    {idx > 0 && <span className="text-neutral-600 select-none shrink-0">/</span>}
+                    <button
+                      type="button"
+                      onClick={() => handleJumpToPath(idx)}
+                      disabled={isLast}
+                      className={`truncate max-w-[110px] sm:max-w-[140px] transition-colors text-left shrink-0 ${
+                        isLast 
+                          ? 'text-white font-medium cursor-default' 
+                          : 'text-neutral-400 hover:text-white cursor-pointer'
+                      }`}
+                      title={crumb.name || 'Home'}
+                    >
+                      {crumb.name || 'Home'}
+                    </button>
+                  </React.Fragment>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Compact + New Folder Button */}
           <button
             type="button"
-            onClick={handleBack}
-            disabled={safePath.length <= 1}
-            className={`p-1 rounded transition-colors ${
-              safePath.length > 1
-                ? 'hover:bg-neutral-800 hover:text-white text-neutral-300 cursor-pointer'
-                : 'text-neutral-600 cursor-not-allowed opacity-40'
-            }`}
-            title="Go back"
-            aria-label="Go back one folder"
+            onClick={() => {
+              setIsCreatingInline(true);
+              setInlineFolderName('');
+              setInlineError('');
+              setTimeout(() => inlineInputRef.current?.focus(), 50);
+            }}
+            className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-neutral-300 hover:text-white bg-neutral-800 hover:bg-neutral-700/80 rounded-lg transition-colors shrink-0 cursor-pointer border border-neutral-700/50"
+            title="Create new folder here"
           >
-            <ArrowLeft size={16} />
+            <Plus size={14} className="shrink-0" />
+            <span className="whitespace-nowrap">New Folder</span>
           </button>
-
-          <div className="h-4 w-[1px] bg-neutral-800 mx-0.5" />
-
-          {/* Clickable Breadcrumb Bar */}
-          <div className="flex items-center gap-1.5 overflow-x-auto py-0.5 scrollbar-none flex-1">
-            {safePath.map((crumb, idx) => {
-              const isLast = idx === safePath.length - 1;
-              return (
-                <React.Fragment key={crumb.id || `root-${idx}`}>
-                  {idx > 0 && <span className="text-neutral-600 select-none">/</span>}
-                  <button
-                    type="button"
-                    onClick={() => handleJumpToPath(idx)}
-                    disabled={isLast}
-                    className={`truncate max-w-[120px] transition-colors text-left ${
-                      isLast 
-                        ? 'text-white font-medium cursor-default' 
-                        : 'text-neutral-400 hover:text-white cursor-pointer'
-                    }`}
-                    title={crumb.name || 'Home'}
-                  >
-                    {crumb.name || 'Home'}
-                  </button>
-                </React.Fragment>
-              );
-            })}
-          </div>
         </div>
+
+        {/* Inline Folder Creation Bar */}
+        {isCreatingInline && (
+          <div className="px-4 py-2.5 bg-neutral-900/90 border-b border-neutral-800 animate-in fade-in duration-150">
+            <form onSubmit={handleCreateInlineFolder} className="flex flex-col gap-1.5">
+              <div className="flex items-center gap-2">
+                <input
+                  ref={inlineInputRef}
+                  type="text"
+                  autoFocus
+                  disabled={isSubmittingFolder}
+                  value={inlineFolderName}
+                  onChange={(e) => {
+                    setInlineFolderName(e.target.value);
+                    if (inlineError) setInlineError('');
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') {
+                      setIsCreatingInline(false);
+                      setInlineFolderName('');
+                      setInlineError('');
+                    }
+                  }}
+                  placeholder="Folder name..."
+                  className="flex-1 px-3 py-1.5 text-xs bg-neutral-950 text-white placeholder-neutral-500 border border-neutral-700 rounded-lg focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:opacity-50 transition-colors"
+                />
+                <button
+                  type="submit"
+                  disabled={isSubmittingFolder || !inlineFolderName.trim()}
+                  className="px-3 py-1.5 text-xs font-medium bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors flex items-center gap-1 shrink-0 cursor-pointer"
+                >
+                  {isSubmittingFolder ? (
+                    <>
+                      <Loader2 size={12} className="animate-spin" />
+                      <span>Creating...</span>
+                    </>
+                  ) : (
+                    <span>Create</span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  disabled={isSubmittingFolder}
+                  onClick={() => {
+                    setIsCreatingInline(false);
+                    setInlineFolderName('');
+                    setInlineError('');
+                  }}
+                  className="p-1.5 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-lg transition-colors shrink-0 cursor-pointer"
+                  title="Cancel"
+                  aria-label="Cancel folder creation"
+                >
+                  <X size={15} />
+                </button>
+              </div>
+              {inlineError && (
+                <p className="text-[11px] text-red-400 font-medium px-1 leading-tight">{inlineError}</p>
+              )}
+            </form>
+          </div>
+        )}
 
         {/* Folder List Area */}
         <div className="min-h-[220px] max-h-[60vh] overflow-y-auto overscroll-contain divide-y divide-neutral-800/50 bg-[#121212]">

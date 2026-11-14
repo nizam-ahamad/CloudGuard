@@ -182,15 +182,8 @@ export default function AdminMonitor() {
     });
   }, [users, activeFilter, searchQuery]);
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center text-white">
-        <div className="flex flex-col items-center gap-3">
-          <RefreshCw className="w-8 h-8 text-neutral-400 animate-spin" />
-          <p className="text-sm text-neutral-400">Loading Founder Monitor...</p>
-        </div>
-      </div>
-    );
+  if (loading || !data) {
+    return <div className="min-h-screen bg-black" />;
   }
 
   return (

@@ -221,17 +221,29 @@ export default function SubscriptionAlertBanner() {
   return (
     <div
       role="alert"
-      className={`w-full mb-6 rounded-xl px-4 py-3 sm:px-5 sm:py-3.5 flex items-center justify-between gap-3 text-xs sm:text-sm font-medium transition-all ${bannerConfig.barClass}`}
+      className={`w-full mb-6 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3 px-3.5 py-3 sm:px-5 sm:py-2.5 text-xs sm:text-sm font-medium transition-all ${bannerConfig.barClass}`}
     >
-      <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
-        <IconComponent className="w-4 h-4 sm:w-5 sm:h-5 shrink-0" />
-        <span className="truncate sm:whitespace-normal leading-tight">{bannerConfig.text}</span>
+      {/* Top / Left Content Group: Icon + wrapping text + mobile dismiss */}
+      <div className="flex items-start sm:items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
+        <IconComponent className="w-4 h-4 sm:w-5 sm:h-5 shrink-0 mt-0.5 sm:mt-0" />
+        <span className="flex-1 min-w-0 whitespace-normal break-words leading-relaxed sm:leading-tight">
+          {bannerConfig.text}
+        </span>
+        <button
+          type="button"
+          onClick={handleDismiss}
+          aria-label="Dismiss banner"
+          className="sm:hidden self-start shrink-0 p-1 -mr-1 -mt-0.5 rounded-md opacity-80 hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10 transition-colors cursor-pointer"
+        >
+          <X className="w-4 h-4" />
+        </button>
       </div>
 
-      <div className="flex items-center gap-2 shrink-0">
+      {/* Bottom / Right Action Group: Full-width button on mobile, inline on desktop + desktop dismiss */}
+      <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto">
         <Link
           to={bannerConfig.ctaUrl}
-          className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors inline-flex items-center gap-1 cursor-pointer ${bannerConfig.ctaClass}`}
+          className={`w-full sm:w-auto text-center justify-center shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors inline-flex items-center gap-1 cursor-pointer ${bannerConfig.ctaClass}`}
         >
           <span>{bannerConfig.ctaText}</span>
           <ArrowRight className="w-3 h-3" />
@@ -240,7 +252,7 @@ export default function SubscriptionAlertBanner() {
           type="button"
           onClick={handleDismiss}
           aria-label="Dismiss banner"
-          className="p-1 rounded-md opacity-80 hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10 transition-colors cursor-pointer"
+          className="hidden sm:inline-flex shrink-0 p-1 rounded-md opacity-80 hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10 transition-colors cursor-pointer"
         >
           <X className="w-4 h-4" />
         </button>

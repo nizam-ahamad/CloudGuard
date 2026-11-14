@@ -137,7 +137,7 @@ function App() {
     };
   }, [location.pathname]);
 
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(null);
   const fetchedAdminTokenRef = useRef(null);
   const adminCheckPromiseRef = useRef(null);
 
@@ -154,6 +154,9 @@ function App() {
     if (fetchedAdminTokenRef.current === activeToken) {
       return;
     }
+
+    // Reset isAdmin to null whenever token changes before /api/admin/me resolves
+    setIsAdmin(null);
 
     if (!adminCheckPromiseRef.current || adminCheckPromiseRef.current.token !== activeToken) {
       adminCheckPromiseRef.current = {
@@ -225,6 +228,7 @@ function App() {
   const [isUnverified, setIsUnverified] = useState(false);
   const [isAuthLoading, setIsAuthLoading] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [isSignOutModalOpen, setIsSignOutModalOpen] = useState(false);
   const [showForgotModal, setShowForgotModal] = useState(false);
   const [forgotEmail, setForgotEmail] = useState('');
   const [isForgotSuccess, setIsForgotSuccess] = useState(false);
@@ -408,6 +412,9 @@ function App() {
     sessionStorage.removeItem('user');
     setToken(null);
     setUser(null);
+    setIsAdmin(false);
+    fetchedAdminTokenRef.current = null;
+    adminCheckPromiseRef.current = null;
     setShowProfileMenu(false);
     invalidatePhotosCache();
   };
@@ -2473,7 +2480,11 @@ function App() {
                 </button>
                 <div className="w-full h-px bg-outline-variant dark:bg-zinc-800"></div>
                 <button 
-                  onClick={handleLogout}
+                  type="button"
+                  onClick={() => {
+                    setShowProfileMenu(false);
+                    setIsSignOutModalOpen(true);
+                  }}
                   className="w-full text-left px-4 py-3 text-error dark:text-red-400 hover:bg-error/10 dark:hover:bg-red-950/30 text-sm flex items-center gap-2 transition-colors cursor-pointer"
                 >
                   <span className="material-symbols-outlined text-[18px]">logout</span> Sign out
@@ -3313,6 +3324,14 @@ function App() {
         folders={moveFolders}
         currentPath={breadcrumbs}
         onMove={handleMoveConfirm}
+        onFolderCreated={(newFolder) => {
+          if (newFolder) {
+            setMoveFolders(prev => {
+              if (prev.some(f => (f._id || f.id) === (newFolder._id || newFolder.id))) return prev;
+              return [...prev, newFolder];
+            });
+          }
+        }}
         initialFolderId={currentFolderId}
         isMoving={isMoveLoading}
       />
@@ -3552,6 +3571,56 @@ function App() {
           </div>
         </div>
       )}
+      {/* Branded Sign-Out Confirmation Modal */}
+      {isSignOutModalOpen && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm select-none animate-in fade-in"
+          onClick={() => setIsSignOutModalOpen(false)}
+        >
+          <div 
+            className="rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-2xl p-6 max-w-sm w-full"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="signout-modal-title"
+          >
+            <div className="flex items-start gap-3.5 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-red-500/10 dark:bg-red-500/20 text-red-600 dark:text-red-400 flex items-center justify-center shrink-0">
+                <span className="material-symbols-outlined text-[22px]">logout</span>
+              </div>
+              <div className="flex-1 min-w-0 pt-0.5">
+                <h3 id="signout-modal-title" className="text-base font-semibold text-neutral-900 dark:text-white">
+                  Sign out of CloudGuard?
+                </h3>
+                <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 leading-relaxed">
+                  You will need to sign in again to access your vault. Any active uploads or downloads in this tab will be interrupted.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsSignOutModalOpen(false)}
+                className="px-4 py-2 text-xs font-medium rounded-xl text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  handleLogout();
+                  setIsSignOutModalOpen(false);
+                  navigate('/login');
+                }}
+                className="px-4 py-2 text-xs font-semibold rounded-xl bg-red-600 hover:bg-red-500 active:scale-95 text-white transition-all shadow-sm cursor-pointer"
+              >
+                Sign Out
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 
@@ -3569,7 +3638,20 @@ function App() {
         <Route path="/refund-policy" element={<RefundPolicy />} />
         <Route path="/refund" element={<Navigate to="/refund-policy" replace />} />
         <Route path="/contact" element={<ContactUs />} />
-        <Route path="/monitor" element={<AdminMonitor />} />
+        <Route 
+          path="/monitor" 
+          element={
+            !token ? (
+              <Navigate to="/login" replace />
+            ) : isAdmin === null ? (
+              <div className="min-h-screen bg-black" />
+            ) : isAdmin === false ? (
+              <Navigate to="/dashboard" replace />
+            ) : (
+              <AdminMonitor />
+            )
+          } 
+        />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
       <CookieConsent />
