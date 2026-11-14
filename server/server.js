@@ -102,9 +102,23 @@ const UserModel = User;
 // Automatic database recovery and quota reconciliation routine
 async function autoRecoverVaultData() {
   try {
-    console.log('[CloudGuard Recovery] Reconciling tenant storage quotas...');
+    console.log('[CloudGuard Recovery] Cleaning stale unfinalized upload tickets and reconciling tenant storage quotas...');
 
-    // Recalculate true active storage quotas for all users (ignoring trashed & purged files)
+    // Delete any stale unfinalized File documents older than 1 hour so cancelled/abandoned tickets never linger
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    const staleCleanup = await File.deleteMany({
+      securityStatus: 'pending_scan',
+      $or: [
+        { createdAt: { $lte: oneHourAgo } },
+        { uploadedAt: { $lte: oneHourAgo } },
+        { createdAt: { $exists: false }, uploadedAt: { $exists: false } },
+      ],
+    });
+    if (staleCleanup.deletedCount > 0) {
+      console.log(`[CloudGuard Recovery] Cleaned up ${staleCleanup.deletedCount} stale pending_scan files.`);
+    }
+
+    // Recalculate true active storage quotas for all users (strictly verified clean / unverified active files)
     const users = await User.find({}).select('_id email').lean();
     for (const u of users) {
       const stats = await File.aggregate([
@@ -117,7 +131,7 @@ async function autoRecoverVaultData() {
               { user: String(u._id) },
             ],
             isTrash: { $ne: true },
-            securityStatus: { $ne: 'threat_purged' },
+            securityStatus: { $in: ['clean', 'unverified'] },
           },
         },
         {
@@ -179,6 +193,17 @@ mongoose.connect(mongoURI, {
   });
 
 /**
+ * Paid-Subscriber Shield Helper
+ * Returns true if the user has an active paid subscription tier with a valid future expiration date.
+ */
+function isActivePaidSubscriber(user, now = new Date()) {
+  const isPaidTier = typeof user?.plan === 'string' && user.plan.startsWith('tier_');
+  const isStatusActive = user?.subscription?.status === 'active';
+  const expiresAt = user?.subscription?.expiresAt ? new Date(user.subscription.expiresAt) : null;
+  return isPaidTier && isStatusActive && expiresAt instanceof Date && !Number.isNaN(expiresAt.getTime()) && expiresAt > now;
+}
+
+/**
  * Daily Subscription Expiry, Trial Lifecycle & Hard Cloud Purge Reconciliation Runner
  * 1. Transitions expired trials (14-day window reached) to past_due with 7-day grace period.
  * 2. Evaluates expired paid plans, executes scheduled downgrades with Quota Gate,
@@ -201,7 +226,11 @@ async function reconcileExpiredSubscriptions() {
       send24HourPurgeAlertEmail,
       sendHardPurgeCompletedEmail
     } = require('./utils/emailService');
-    const bucketName = process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME || 'cloudguard-vault-storage';
+    const bucketName = process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME || 'cloudguard-vault-b2';
+    const adminEmails = (process.env.ADMIN_EMAILS || '')
+      .split(',')
+      .map((e) => e.trim().toLowerCase())
+      .filter(Boolean);
 
     // -------------------------------------------------------------
     // STEP 1: (T-7 Days — Annual Only)
@@ -220,6 +249,7 @@ async function reconcileExpiredSubscriptions() {
     });
 
     for (const user of t7AnnualUsers) {
+      if (!isActivePaidSubscriber(user, now)) continue;
       await sendAnnual7DayReminderEmail(user);
       user.subscription.dunningStep = 1;
       await user.save();
@@ -258,6 +288,15 @@ async function reconcileExpiredSubscriptions() {
     });
 
     for (const user of t3Users) {
+      if (isActivePaidSubscriber(user, now)) {
+        const subExp = user.subscription?.expiresAt ? new Date(user.subscription.expiresAt) : null;
+        if (subExp && subExp > new Date(now.getTime() + 3 * 86400000)) {
+          user.trialExpiresAt = null;
+          if (user.subscription) user.subscription.gracePeriodExpiresAt = null;
+          await user.save();
+          continue;
+        }
+      }
       await sendPrepaidExpiryWarningEmail(user);
       user.subscription.dunningStep = 2;
       await user.save();
@@ -296,6 +335,15 @@ async function reconcileExpiredSubscriptions() {
     });
 
     for (const user of t24hUsers) {
+      if (isActivePaidSubscriber(user, now)) {
+        const subExp = user.subscription?.expiresAt ? new Date(user.subscription.expiresAt) : null;
+        if (subExp && subExp > new Date(now.getTime() + 24 * 3600 * 1000)) {
+          user.trialExpiresAt = null;
+          if (user.subscription) user.subscription.gracePeriodExpiresAt = null;
+          await user.save();
+          continue;
+        }
+      }
       await send24HourPreExpiryEmail(user);
       user.subscription.dunningStep = 3;
       await user.save();
@@ -313,6 +361,16 @@ async function reconcileExpiredSubscriptions() {
     });
 
     for (const trialUser of expiredTrials) {
+      if (isActivePaidSubscriber(trialUser, now)) {
+        console.log(`[Subscription Manager] SHIELDED active paid subscriber ${trialUser.email} from trial expiry. Auto-healing stale timers.`);
+        trialUser.trialExpiresAt = null;
+        if (trialUser.subscription) {
+          trialUser.subscription.gracePeriodExpiresAt = null;
+          trialUser.subscription.dunningStep = 0;
+        }
+        await trialUser.save();
+        continue;
+      }
       const graceEnd = new Date(now.getTime() + 7 * 86400000);
       if (!trialUser.subscription) trialUser.subscription = {};
       trialUser.subscription.status = 'past_due';
@@ -335,6 +393,17 @@ async function reconcileExpiredSubscriptions() {
       const FREE_QUOTA_BYTES = 5 * 1024 * 1024 * 1024; // 5 GB default
 
       for (const user of expiredUsers) {
+        if (isActivePaidSubscriber(user, now)) {
+          console.log(`[Subscription Manager] SHIELDED active paid subscriber ${user.email} in expired paid users check. Auto-healing stale timers.`);
+          user.trialExpiresAt = null;
+          if (user.subscription) {
+            user.subscription.gracePeriodExpiresAt = null;
+            user.subscription.dunningStep = 0;
+          }
+          await user.save();
+          continue;
+        }
+
         const scheduled = user.subscription?.scheduledDowngrade;
         const targetPlanId = scheduled?.targetPlanId || 'free';
         const targetCatalog = PLAN_CATALOG[targetPlanId];
@@ -398,6 +467,17 @@ async function reconcileExpiredSubscriptions() {
     });
 
     for (const dUser of day6Users) {
+      if (isActivePaidSubscriber(dUser, now)) {
+        console.log(`[Subscription Manager] SHIELDED active paid subscriber ${dUser.email} from Day 6 purge alert. Auto-healing stale timers.`);
+        dUser.trialExpiresAt = null;
+        if (dUser.subscription) {
+          dUser.subscription.status = 'active';
+          dUser.subscription.gracePeriodExpiresAt = null;
+          dUser.subscription.dunningStep = 0;
+        }
+        await dUser.save();
+        continue;
+      }
       const baselineQuota = 5 * 1024 * 1024 * 1024;
       const excessGB = Math.max(0, ((dUser.storageUsed || 0) - baselineQuota) / (1024 ** 3));
       const purgeDate = dUser.subscription?.gracePeriodExpiresAt;
@@ -417,9 +497,38 @@ async function reconcileExpiredSubscriptions() {
     });
 
     if (delinquentUsers.length > 0) {
-      console.warn(`[Subscription Manager] Executing Day 7 Hard Cloud Purge on ${delinquentUsers.length} delinquent account(s)...`);
+      console.warn(`[Subscription Manager] Evaluating Day 7 Hard Cloud Purge on ${delinquentUsers.length} candidate account(s)...`);
 
       for (const delinquentUser of delinquentUsers) {
+        // 1. Paid-Subscriber Shield
+        if (isActivePaidSubscriber(delinquentUser, now)) {
+          console.warn(`[Subscription Manager] CRITICAL SHIELD: Protected active paid subscriber ${delinquentUser.email} from Day 7 purge. Healing timers.`);
+          delinquentUser.trialExpiresAt = null;
+          if (delinquentUser.subscription) {
+            delinquentUser.subscription.status = 'active';
+            delinquentUser.subscription.gracePeriodExpiresAt = null;
+            delinquentUser.subscription.dunningStep = 0;
+          }
+          await delinquentUser.save();
+          continue;
+        }
+
+        const isPastDue = delinquentUser.subscription?.status === 'past_due';
+        const graceExp = delinquentUser.subscription?.gracePeriodExpiresAt ? new Date(delinquentUser.subscription.gracePeriodExpiresAt) : null;
+        const isGraceExpired = graceExp instanceof Date && !Number.isNaN(graceExp.getTime()) && graceExp <= now;
+        const isAdmin = adminEmails.includes(String(delinquentUser.email || '').trim().toLowerCase());
+
+        // REQUIRE ALL 4 CONDITIONS SIMULTANEOUSLY:
+        // 1. !isActivePaidSubscriber(delinquentUser, now)
+        // 2. user.subscription?.status === 'past_due'
+        // 3. user.subscription?.gracePeriodExpiresAt is valid non-null date <= now
+        // 4. User email is NOT in ADMIN_EMAILS
+        if (!isPastDue || !isGraceExpired || isAdmin) {
+          console.warn(`[Subscription Manager] Skipping Day 7 purge for ${delinquentUser.email} (pastDue: ${isPastDue}, graceExpired: ${isGraceExpired}, admin: ${isAdmin})`);
+          continue;
+        }
+
+        console.warn(`[Subscription Manager] Executing Day 7 Hard Cloud Purge on verified delinquent account: ${delinquentUser.email}`);
         const uId = delinquentUser._id;
         const prefixes = [`uploads/${uId}/`, `thumbnails/${uId}/`];
 
@@ -442,7 +551,7 @@ async function reconcileExpiredSubscriptions() {
 
               if (Array.isArray(verRes.Versions)) {
                 for (const v of verRes.Versions) {
-                  if (v.Key) {
+                  if (v.Key && v.Key.startsWith(prefix)) {
                     objectsToDelete.push(v.VersionId ? { Key: v.Key, VersionId: v.VersionId } : { Key: v.Key });
                   }
                 }
@@ -450,19 +559,20 @@ async function reconcileExpiredSubscriptions() {
 
               if (Array.isArray(verRes.DeleteMarkers)) {
                 for (const dm of verRes.DeleteMarkers) {
-                  if (dm.Key) {
+                  if (dm.Key && dm.Key.startsWith(prefix)) {
                     objectsToDelete.push(dm.VersionId ? { Key: dm.Key, VersionId: dm.VersionId } : { Key: dm.Key });
                   }
                 }
               }
 
-              // Batch delete in chunks of 1000
+              // Batch delete in chunks of 1000 with strict prefix verification
               for (let i = 0; i < objectsToDelete.length; i += 1000) {
                 const chunk = objectsToDelete.slice(i, i + 1000);
-                if (chunk.length > 0) {
+                const safeChunk = chunk.filter((c) => c?.Key && c.Key.startsWith(prefix));
+                if (safeChunk.length > 0) {
                   await s3.send(new DeleteObjectsCommand({
                     Bucket: bucketName,
-                    Delete: { Objects: chunk, Quiet: true },
+                    Delete: { Objects: safeChunk, Quiet: true },
                   }));
                 }
               }
@@ -486,6 +596,7 @@ async function reconcileExpiredSubscriptions() {
         delinquentUser.plan = 'free';
         delinquentUser.storageLimit = 5 * 1024 * 1024 * 1024; // 5 GB baseline
         delinquentUser.storageUsed = 0;
+        delinquentUser.trialExpiresAt = null;
         if (!delinquentUser.subscription) delinquentUser.subscription = {};
         delinquentUser.subscription.planId = 'free';
         delinquentUser.subscription.status = 'expired';

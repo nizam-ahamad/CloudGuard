@@ -96,26 +96,55 @@ export async function extractDroppedItems(dataTransferItems) {
 }
 
 /**
- * 2. createFolderHierarchy(itemsWithPaths, baseParentId, token):
- * - Extract all unique parent directory paths from relativePath (ignoring root-level files without /)
- *   and sort them ascending by depth (path.split('/').length).
- * - Walk top-down and call POST /api/folders with { name, parentId }
- *   (starting from baseParentId || null and passing Authorization: Bearer ${token}).
- * - If POST /api/folders returns 409 (folder already exists in that parent),
- *   fetch GET /api/folders?parentId=... and reuse the existing folder's _id.
+ * 2. createFolderHierarchy(itemsWithPaths, baseParentId, tokenOrHeaders, options = {}):
+ * - Extract unique directory paths, sort ascending by depth.
+ * - Process one depth level at a time in parallel chunks of 8 concurrent requests.
+ * - Check signal?.aborted before and during execution; throw AbortError immediately if aborted.
+ * - Handle 409 Conflict by querying parent folder listing and reusing existing folder ID.
+ * - Call onProgress?.({ createdCount, totalFolders, currentFolderName }) after each folder resolves.
  * - Return folderMap (Map<directoryPath, folderId>).
  *
  * @param {Array<{ file: File, relativePath: string }>} itemsWithPaths
  * @param {string|null} baseParentId
- * @param {string|null} token
+ * @param {string|object|null} tokenOrHeaders
+ * @param {object} options { onProgress, signal }
  * @returns {Promise<Map<string, string>>} folderMap
  */
-export async function createFolderHierarchy(itemsWithPaths, baseParentId = null, token = null) {
+export async function createFolderHierarchy(
+  itemsWithPaths,
+  baseParentId = null,
+  tokenOrHeaders = null,
+  options = {}
+) {
   const folderMap = new Map();
   if (!itemsWithPaths || itemsWithPaths.length === 0) return folderMap;
 
-  const activeToken = token || localStorage.getItem('token') || sessionStorage.getItem('token');
-  const headers = activeToken ? { Authorization: `Bearer ${activeToken}` } : {};
+  // Resolve headers and options flexibly
+  let headers = {};
+  let opts = options || {};
+
+  if (tokenOrHeaders && typeof tokenOrHeaders === 'object') {
+    if (tokenOrHeaders.onProgress !== undefined || tokenOrHeaders.signal !== undefined) {
+      opts = tokenOrHeaders;
+    } else if (tokenOrHeaders.headers) {
+      headers = tokenOrHeaders.headers;
+    } else if (tokenOrHeaders.Authorization || tokenOrHeaders.authorization) {
+      headers = tokenOrHeaders;
+    }
+  } else if (typeof tokenOrHeaders === 'string') {
+    headers = { Authorization: `Bearer ${tokenOrHeaders}` };
+  } else {
+    const activeToken = localStorage.getItem('token') || sessionStorage.getItem('token');
+    if (activeToken) headers = { Authorization: `Bearer ${activeToken}` };
+  }
+
+  const { onProgress, signal } = opts;
+
+  if (signal?.aborted) {
+    const abortErr = new Error('Folder preparation was aborted');
+    abortErr.name = 'AbortError';
+    throw abortErr;
+  }
 
   // Extract all unique parent directory paths
   const dirSet = new Set();
@@ -135,64 +164,203 @@ export async function createFolderHierarchy(itemsWithPaths, baseParentId = null,
 
   if (dirSet.size === 0) return folderMap;
 
-  // Sort ascending by depth (path.split('/').length) to ensure parents are created before children
-  const sortedDirs = Array.from(dirSet).sort(
-    (a, b) => a.split('/').length - b.split('/').length
-  );
+  // Sort all unique directory paths ascending by depth (parents first)
+  const sortedPaths = Array.from(dirSet).sort((a, b) => {
+    const depthA = a.split('/').length;
+    const depthB = b.split('/').length;
+    if (depthA !== depthB) return depthA - depthB;
+    return a.localeCompare(b);
+  });
 
-  // Walk top-down
-  for (const dirPath of sortedDirs) {
-    const lastSlashIdx = dirPath.lastIndexOf('/');
-    const dirName = lastSlashIdx === -1 ? dirPath : dirPath.substring(lastSlashIdx + 1);
-    const parentDirPath = lastSlashIdx === -1 ? null : dirPath.substring(0, lastSlashIdx);
+  const totalFolders = sortedPaths.length;
+  const CHUNK_SIZE = 250;
+  let useFallback = false;
+  let bulkSuccess = false;
 
-    // Resolve parentId from folderMap if ancestor exists, otherwise fallback to baseParentId
-    const resolvedParentId = parentDirPath
-      ? (folderMap.get(parentDirPath) || null)
-      : (baseParentId || null);
-
-    try {
-      const res = await axios.post(
-        `${API_BASE_URL}/api/folders`,
-        {
-          name: dirName,
-          parentId: resolvedParentId || null,
-        },
-        { headers }
-      );
-      const createdId = res.data?._id || res.data?.id;
-      if (createdId) {
-        folderMap.set(dirPath, String(createdId));
+  // 1. Try High-Performance Bulk Folder Tree Creation (/api/folders/ensure-tree)
+  try {
+    let resolvedCount = 0;
+    for (let i = 0; i < sortedPaths.length; i += CHUNK_SIZE) {
+      if (signal?.aborted) {
+        const abortErr = new Error('Folder preparation was aborted');
+        abortErr.name = 'AbortError';
+        throw abortErr;
       }
-    } catch (err) {
-      if (err.response?.status === 409) {
-        // Folder already exists in this parent: query GET /api/folders?parentId=... and reuse _id
-        try {
-          const params = resolvedParentId ? { parentId: resolvedParentId } : {};
-          const listRes = await axios.get(`${API_BASE_URL}/api/folders`, {
-            params,
-            headers,
-          });
-          const existingList = Array.isArray(listRes.data) ? listRes.data : [];
-          const existingMatch = existingList.find(
-            (f) => (f.name || '').trim().toLowerCase() === dirName.trim().toLowerCase()
-          );
 
-          if (existingMatch) {
-            folderMap.set(dirPath, String(existingMatch._id || existingMatch.id));
-          } else {
-            console.warn(`[FolderUpload] Conflict 409 reported for "${dirName}", but not found in parent listing.`);
+      const chunk = sortedPaths.slice(i, i + CHUNK_SIZE);
+      const res = await axios.post(
+        `${API_BASE_URL}/api/folders/ensure-tree`,
+        {
+          baseParentId: baseParentId || null,
+          paths: chunk,
+        },
+        { headers, signal }
+      );
+
+      if (res.data?.success && res.data?.folderMap) {
+        for (const [p, id] of Object.entries(res.data.folderMap)) {
+          if (!folderMap.has(p)) {
+            folderMap.set(p, String(id));
+            resolvedCount++;
           }
-        } catch (fetchErr) {
-          console.error(`[FolderUpload] Failed to query existing folder for "${dirName}":`, fetchErr);
-          throw fetchErr;
         }
-      } else {
-        console.error(`[FolderUpload] Failed to create folder "${dirName}":`, err);
-        throw err;
+      }
+
+      const lastDir = chunk[chunk.length - 1];
+      const lastDirName = lastDir.includes('/') ? lastDir.split('/').pop() : lastDir;
+
+      onProgress?.({
+        createdCount: resolvedCount,
+        totalFolders,
+        currentFolderName: lastDirName,
+      });
+    }
+
+    bulkSuccess = true;
+    return folderMap;
+  } catch (err) {
+    if (axios.isCancel(err) || err.name === 'AbortError' || signal?.aborted) {
+      const abortErr = new Error('Folder preparation was aborted');
+      abortErr.name = 'AbortError';
+      throw abortErr;
+    }
+
+    if (err.response?.status === 404) {
+      console.warn('[FolderUpload] /api/folders/ensure-tree returned 404. Falling back to depth-batched loop.');
+      useFallback = true;
+    } else {
+      console.warn('[FolderUpload] Bulk folder creation encountered error, falling back:', err.message);
+      useFallback = true;
+    }
+  }
+
+  // 2. Fallback: Depth-batched POST /api/folders loop
+  if (useFallback && !bulkSuccess) {
+    // Group directory paths by depth (depth 1, depth 2, ...)
+    const depthMap = new Map();
+    for (const dirPath of dirSet) {
+      const depth = dirPath.split('/').length;
+      if (!depthMap.has(depth)) {
+        depthMap.set(depth, []);
+      }
+      depthMap.get(depth).push(dirPath);
+    }
+
+    const sortedDepths = Array.from(depthMap.keys()).sort((a, b) => a - b);
+    let createdCount = folderMap.size;
+
+    // Cache existing parent folder queries to avoid redundant GET /api/folders?parentId=...
+    const parentListingCache = new Map();
+
+    const createOrResolveFolder = async (dirPath) => {
+      if (folderMap.has(dirPath)) return;
+      if (signal?.aborted) {
+        const abortErr = new Error('Folder preparation was aborted');
+        abortErr.name = 'AbortError';
+        throw abortErr;
+      }
+
+      const lastSlashIdx = dirPath.lastIndexOf('/');
+      const dirName = lastSlashIdx === -1 ? dirPath : dirPath.substring(lastSlashIdx + 1);
+      const parentDirPath = lastSlashIdx === -1 ? null : dirPath.substring(0, lastSlashIdx);
+
+      const resolvedParentId = parentDirPath
+        ? (folderMap.get(parentDirPath) || null)
+        : (baseParentId || null);
+
+      try {
+        const res = await axios.post(
+          `${API_BASE_URL}/api/folders`,
+          {
+            name: dirName,
+            parentId: resolvedParentId || null,
+          },
+          { headers, signal }
+        );
+        const createdId = res.data?._id || res.data?.id;
+        if (createdId) {
+          folderMap.set(dirPath, String(createdId));
+        }
+      } catch (err) {
+        if (axios.isCancel(err) || err.name === 'AbortError' || signal?.aborted) {
+          const abortErr = new Error('Folder preparation was aborted');
+          abortErr.name = 'AbortError';
+          throw abortErr;
+        }
+
+        if (err.response?.status === 409) {
+          try {
+            const cacheKey = resolvedParentId || 'root';
+            let existingList = parentListingCache.get(cacheKey);
+
+            if (!existingList) {
+              const params = resolvedParentId ? { parentId: resolvedParentId } : {};
+              const listRes = await axios.get(`${API_BASE_URL}/api/folders`, {
+                params,
+                headers,
+                signal,
+              });
+              existingList = Array.isArray(listRes.data) ? listRes.data : [];
+              parentListingCache.set(cacheKey, existingList);
+            }
+
+            const existingMatch = existingList.find(
+              (f) => (f.name || '').trim().toLowerCase() === dirName.trim().toLowerCase()
+            );
+
+            if (existingMatch) {
+              folderMap.set(dirPath, String(existingMatch._id || existingMatch.id));
+            } else {
+              console.warn(`[FolderUpload] Conflict 409 reported for "${dirName}", but not found in parent listing.`);
+            }
+          } catch (fetchErr) {
+            if (axios.isCancel(fetchErr) || fetchErr.name === 'AbortError' || signal?.aborted) {
+              const abortErr = new Error('Folder preparation was aborted');
+              abortErr.name = 'AbortError';
+              throw abortErr;
+            }
+            console.error(`[FolderUpload] Failed to query existing folder for "${dirName}":`, fetchErr);
+            throw fetchErr;
+          }
+        } else {
+          console.error(`[FolderUpload] Failed to create folder "${dirName}":`, err);
+          throw err;
+        }
+      }
+
+      createdCount++;
+      onProgress?.({
+        createdCount,
+        totalFolders,
+        currentFolderName: dirName,
+      });
+    };
+
+    const CHUNK_CONCURRENCY = 8;
+
+    for (const depth of sortedDepths) {
+      if (signal?.aborted) {
+        const abortErr = new Error('Folder preparation was aborted');
+        abortErr.name = 'AbortError';
+        throw abortErr;
+      }
+
+      const foldersAtDepth = depthMap.get(depth) || [];
+
+      for (let i = 0; i < foldersAtDepth.length; i += CHUNK_CONCURRENCY) {
+        if (signal?.aborted) {
+          const abortErr = new Error('Folder preparation was aborted');
+          abortErr.name = 'AbortError';
+          throw abortErr;
+        }
+
+        const chunk = foldersAtDepth.slice(i, i + CHUNK_CONCURRENCY);
+        await Promise.all(chunk.map((dirPath) => createOrResolveFolder(dirPath)));
       }
     }
   }
+
+  return folderMap;
 
   return folderMap;
 }

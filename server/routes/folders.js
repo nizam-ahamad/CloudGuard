@@ -28,6 +28,30 @@ router.post('/', authMiddleware, async (req, res) => {
       return res.status(401).json({ error: 'Unauthorized: Valid session required' });
     }
 
+    // Write-lock enforcement
+    const user = await User.findById(rawUserId).select('plan trialExpiresAt subscription').lean();
+    if (user) {
+      const now = new Date();
+      if ((user.plan === 'trial' || user.subscription?.planId === 'trial') && user.trialExpiresAt && new Date(user.trialExpiresAt) <= now) {
+        return res.status(403).json({
+          error: 'Your 14-day evaluation trial has ended. Select a plan to restore write privileges.',
+          code: 'TRIAL_EXPIRED',
+        });
+      }
+      if (user.subscription?.status === 'past_due') {
+        return res.status(403).json({
+          error: 'Your vault is in a read-only grace period. Renew or upgrade your plan to resume folder modifications.',
+          code: 'SUBSCRIPTION_PAST_DUE',
+        });
+      }
+      if (user.subscription?.status === 'expired') {
+        return res.status(403).json({
+          error: 'Your subscription has expired. Select a plan on the Pricing page to resume folder modifications.',
+          code: 'SUBSCRIPTION_EXPIRED',
+        });
+      }
+    }
+
     const { name, parentId } = req.body;
     const trimmedName = (name || '').trim();
     if (!trimmedName) return res.status(400).json({ error: 'Folder name is required' });
@@ -691,9 +715,11 @@ router.delete('/:id', authMiddleware, async (req, res) => {
     );
 
     if (freedBytes > 0) {
-      await User.findByIdAndUpdate(rawUserId, {
-        $inc: { storageUsed: -Math.abs(freedBytes) },
-      });
+      const u = await User.findById(rawUserId);
+      if (u) {
+        u.storageUsed = Math.max(0, (u.storageUsed || 0) - Math.abs(freedBytes));
+        await u.save();
+      }
     }
 
     // Schedule S3 purge after 12s
@@ -756,6 +782,196 @@ router.delete('/:id', authMiddleware, async (req, res) => {
 
 router.get('/:id/details', authMiddleware, handleFolderDetails);
 router.get('/:id/stats', authMiddleware, handleFolderDetails);
+
+// -------------------------------------------------------------
+// BULK FOLDER TREE CREATION (POST /ensure-tree)
+// -------------------------------------------------------------
+router.post('/ensure-tree', authMiddleware, async (req, res) => {
+  try {
+    const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
+    if (!rawUserId || !mongoose.Types.ObjectId.isValid(String(rawUserId))) {
+      return res.status(401).json({ error: 'Unauthorized: Valid session required' });
+    }
+
+    // Write-lock enforcement
+    const user = await User.findById(rawUserId).select('plan trialExpiresAt subscription').lean();
+    if (user) {
+      const now = new Date();
+      if ((user.plan === 'trial' || user.subscription?.planId === 'trial') && user.trialExpiresAt && new Date(user.trialExpiresAt) <= now) {
+        return res.status(403).json({
+          error: 'Your 14-day evaluation trial has ended. Select a plan to restore write privileges.',
+          code: 'TRIAL_EXPIRED',
+        });
+      }
+      if (user.subscription?.status === 'past_due') {
+        return res.status(403).json({
+          error: 'Your vault is in a read-only grace period. Renew or upgrade your plan to resume folder modifications.',
+          code: 'SUBSCRIPTION_PAST_DUE',
+        });
+      }
+      if (user.subscription?.status === 'expired') {
+        return res.status(403).json({
+          error: 'Your subscription has expired. Select a plan on the Pricing page to resume folder modifications.',
+          code: 'SUBSCRIPTION_EXPIRED',
+        });
+      }
+    }
+
+    const { baseParentId = null, paths = [] } = req.body;
+    const rawPaths = Array.isArray(paths) ? paths.slice(0, 1000) : [];
+
+    const baseParent =
+      baseParentId &&
+      baseParentId !== 'null' &&
+      baseParentId !== 'undefined' &&
+      baseParentId !== 'root' &&
+      mongoose.Types.ObjectId.isValid(baseParentId)
+        ? new mongoose.Types.ObjectId(baseParentId)
+        : null;
+
+    if (baseParent) {
+      const parentFolder = await Folder.findOne(
+        buildTenantQuery(rawUserId, { _id: baseParent, isTrash: { $ne: true } })
+      );
+      if (!parentFolder) {
+        return res.status(404).json({ success: false, error: 'Target base parent folder not found or unauthorized' });
+      }
+    }
+
+    const folderMap = {};
+    if (rawPaths.length === 0) {
+      return res.status(200).json({ success: true, folderMap });
+    }
+
+    // 1. Deduplicate paths and collect all intermediate ancestor directories
+    const allDirsSet = new Set();
+    for (const p of rawPaths) {
+      const cleanPath = String(p || '')
+        .replace(/\\/g, '/')
+        .replace(/^\/+|\/+$/g, '')
+        .trim();
+      if (!cleanPath) continue;
+
+      const parts = cleanPath.split('/').filter(Boolean);
+      let prefix = '';
+      for (const part of parts) {
+        prefix = prefix ? `${prefix}/${part}` : part;
+        allDirsSet.add(prefix);
+      }
+    }
+
+    if (allDirsSet.size === 0) {
+      return res.status(200).json({ success: true, folderMap });
+    }
+
+    // 2. Group directories by depth ascending
+    const depthMap = new Map();
+    for (const dirPath of allDirsSet) {
+      const depth = dirPath.split('/').length;
+      if (!depthMap.has(depth)) {
+        depthMap.set(depth, []);
+      }
+      depthMap.get(depth).push(dirPath);
+    }
+
+    const sortedDepths = Array.from(depthMap.keys()).sort((a, b) => a - b);
+    const userIdObj = new mongoose.Types.ObjectId(String(rawUserId));
+
+    // 3. Resolve level-by-level
+    for (const depth of sortedDepths) {
+      const dirsAtDepth = depthMap.get(depth);
+      const itemsToResolve = [];
+
+      for (const dirPath of dirsAtDepth) {
+        const parts = dirPath.split('/');
+        const folderName = parts[parts.length - 1];
+        let parentObjectId = baseParent;
+
+        if (depth > 1) {
+          const parentPath = parts.slice(0, -1).join('/');
+          const parentFolderId = folderMap[parentPath];
+          if (parentFolderId && mongoose.Types.ObjectId.isValid(parentFolderId)) {
+            parentObjectId = new mongoose.Types.ObjectId(parentFolderId);
+          }
+        }
+
+        itemsToResolve.push({
+          path: dirPath,
+          name: folderName,
+          parentId: parentObjectId,
+        });
+      }
+
+      // Batch query existing folders at this level
+      const orConditions = itemsToResolve.map((item) => ({
+        name: item.name,
+        parentId: item.parentId || null,
+      }));
+
+      const existingFolders = await Folder.find({
+        $and: [
+          buildTenantQuery(rawUserId, { isTrash: { $ne: true } }),
+          { $or: orConditions },
+        ],
+      }).lean();
+
+      // Index existing by `${parentIdStr || 'root'}:::${name}`
+      const existingLookup = new Map();
+      for (const ef of existingFolders) {
+        const pIdStr = ef.parentId ? String(ef.parentId) : 'root';
+        existingLookup.set(`${pIdStr}:::${ef.name}`, String(ef._id));
+      }
+
+      // Assign existing and create missing
+      for (const item of itemsToResolve) {
+        const lookupKey = `${item.parentId ? String(item.parentId) : 'root'}:::${item.name}`;
+        if (existingLookup.has(lookupKey)) {
+          folderMap[item.path] = existingLookup.get(lookupKey);
+        } else {
+          try {
+            const newFolder = new Folder({
+              name: item.name,
+              userId: userIdObj,
+              user: userIdObj,
+              parentId: item.parentId || null,
+              parentFolder: item.parentId || null,
+              isTrash: false,
+            });
+            await newFolder.save();
+            const newIdStr = String(newFolder._id);
+            folderMap[item.path] = newIdStr;
+            existingLookup.set(lookupKey, newIdStr);
+          } catch (err) {
+            if (err.code === 11000) {
+              const collided = await Folder.findOne(
+                buildTenantQuery(rawUserId, {
+                  name: item.name,
+                  parentId: item.parentId || null,
+                  isTrash: { $ne: true },
+                })
+              ).lean();
+              if (collided) {
+                const colIdStr = String(collided._id);
+                folderMap[item.path] = colIdStr;
+                existingLookup.set(lookupKey, colIdStr);
+              }
+            } else {
+              throw err;
+            }
+          }
+        }
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      folderMap,
+    });
+  } catch (err) {
+    console.error('Error in /api/folders/ensure-tree:', err);
+    return res.status(500).json({ error: err.message || 'Failed to ensure folder tree' });
+  }
+});
 
 module.exports = router;
 module.exports.handleBatchMove = handleBatchMove;

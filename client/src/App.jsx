@@ -8,6 +8,7 @@ import OTPVerification from './OTPVerification';
 import { useToast } from './context/ToastContext';
 import MoveModal from './components/MoveModal';
 import FolderDetailsModal from './components/FolderDetailsModal';
+import FileDetailsModal from './components/FileDetailsModal';
 import DeleteConfirmModal from './components/DeleteConfirmModal';
 import ProfileSettings from './components/ProfileSettings';
 import CookieConsent from './components/CookieConsent';
@@ -449,7 +450,7 @@ function App() {
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
   
-  const { enqueueFiles, quotaUpgradeState, resumePausedUpload, cancelPausedUpload } = useUpload();
+  const { enqueueFiles, quotaUpgradeState, resumePausedUpload, cancelPausedUpload, startFolderPrep, updateFolderPrep, clearFolderPrep } = useUpload();
   const [uploadQueue, setUploadQueue] = useState([]);
   const [isUploadDrawerOpen, setIsUploadDrawerOpen] = useState(true);
   const isQueueProcessing = useRef(false);
@@ -460,6 +461,8 @@ function App() {
   const folderInputRef = useRef(null);
   const [isUploadMenuOpen, setIsUploadMenuOpen] = useState(false);
   const [pendingFolderUpload, setPendingFolderUpload] = useState(null);
+  const [excludeDevFolders, setExcludeDevFolders] = useState(false);
+  const [isReadingFolder, setIsReadingFolder] = useState(false);
   const desktopUploadMenuRef = useRef(null);
   const mobileUploadMenuRef = useRef(null);
 
@@ -524,6 +527,7 @@ function App() {
   const filesInFlightRef = useRef(false);
   const activeFetchingFolderRef = useRef(undefined);
   const isRefreshingRef = useRef(false);
+  const storageStatsDebounceTimerRef = useRef(null);
   const [isFilesLoading, setIsFilesLoading] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -577,6 +581,7 @@ function App() {
   const [newRenameFileName, setNewRenameFileName] = useState('');
   const [showFolderDetailsModal, setShowFolderDetailsModal] = useState(false);
   const [folderToView, setFolderToView] = useState(null);
+  const [fileDetailsTarget, setFileDetailsTarget] = useState(null);
 
   const handleRenameFileSubmit = async (e) => {
     e.preventDefault();
@@ -1387,25 +1392,51 @@ function App() {
 
   // Real-time listener for live upload completion events across the app
   useEffect(() => {
-    const handleRefresh = () => {
-      globalStorageStatsCache = null;
-      lastFetchedFolderIdRef.current = undefined;
-      const params = new URLSearchParams(window.location.search);
-      const activeFolderId = currentFolderId || params.get('folder') || null;
-      if (typeof fetchFiles === 'function') fetchFiles(activeFolderId, true);
-      if (typeof fetchStorageStats === 'function') fetchStorageStats();
-      if (typeof fetchFolders === 'function') fetchFolders(activeFolderId);
+    const handleRefresh = (event) => {
+      // Prevent files & folders refetch from saturating HTTP sockets when user is on Photos tab
+      const isPhotosRoute = (window.location.pathname && window.location.pathname.includes('/photos')) ||
+                            (location?.pathname && location.pathname.includes('/photos'));
+
+      if (!isPhotosRoute) {
+        globalStorageStatsCache = null;
+        lastFetchedFolderIdRef.current = undefined;
+        const params = new URLSearchParams(window.location.search);
+        const activeFolderId = currentFolderId || params.get('folder') || null;
+        if (typeof fetchFiles === 'function') fetchFiles(activeFolderId, true);
+        if (typeof fetchFolders === 'function') fetchFolders(activeFolderId);
+      }
+
+      // Debounce storage stats updates during active uploads to prevent Chrome socket queue starvation
+      if (event?.type === 'cloudguard:all-uploads-completed') {
+        if (storageStatsDebounceTimerRef.current) {
+          clearTimeout(storageStatsDebounceTimerRef.current);
+          storageStatsDebounceTimerRef.current = null;
+        }
+        if (typeof fetchStorageStats === 'function') fetchStorageStats();
+      } else {
+        if (storageStatsDebounceTimerRef.current) {
+          clearTimeout(storageStatsDebounceTimerRef.current);
+        }
+        storageStatsDebounceTimerRef.current = setTimeout(() => {
+          if (typeof fetchStorageStats === 'function') fetchStorageStats();
+          storageStatsDebounceTimerRef.current = null;
+        }, 3000);
+      }
     };
 
     window.addEventListener('cloudguard:files-updated', handleRefresh);
     window.addEventListener('cloudguard:storage-updated', handleRefresh);
     window.addEventListener('cloudguard:all-uploads-completed', handleRefresh);
     return () => {
+      if (storageStatsDebounceTimerRef.current) {
+        clearTimeout(storageStatsDebounceTimerRef.current);
+        storageStatsDebounceTimerRef.current = null;
+      }
       window.removeEventListener('cloudguard:files-updated', handleRefresh);
       window.removeEventListener('cloudguard:storage-updated', handleRefresh);
       window.removeEventListener('cloudguard:all-uploads-completed', handleRefresh);
     };
-  }, [fetchFiles, fetchStorageStats, fetchFolders, currentFolderId]);
+  }, [fetchFiles, fetchStorageStats, fetchFolders, currentFolderId, location?.pathname]);
 
   // Upgrade Welcome Modal listener: detects ?upgraded=true or sessionStorage payload
   useEffect(() => {
@@ -1642,7 +1673,12 @@ function App() {
 
     // CASE A: Single Item Deletion (from three dots menu)
     if (target && !bulkTargets) {
-      const targetId = String(target._id || target.id);
+      const rawTargetId = target._id || target.id;
+      if (!rawTargetId) {
+        console.warn('handleConfirmPermanentDelete: Target missing valid id, aborting');
+        return;
+      }
+      const targetId = String(rawTargetId);
       const isFolder = checkIsFolder(target);
 
       setItemToDelete(null);
@@ -1684,8 +1720,13 @@ function App() {
 
     // CASE B: Bulk Deletion (from Floating Bar)
     if (bulkTargets && bulkTargets.length > 0) {
-      const folderIds = bulkTargets.filter(checkIsFolder).map((i) => i._id || i.id);
-      const fileIds = bulkTargets.filter((i) => !checkIsFolder(i)).map((i) => i._id || i.id);
+      const folderIds = bulkTargets.filter(checkIsFolder).map((i) => i._id || i.id).filter(Boolean);
+      const fileIds = bulkTargets.filter((i) => !checkIsFolder(i)).map((i) => i._id || i.id).filter(Boolean);
+
+      if (folderIds.length === 0 && fileIds.length === 0) {
+        console.warn('handleConfirmPermanentDelete: Bulk targets contain no valid IDs, aborting');
+        return;
+      }
 
       setItemsToDelete([]);
       setSelectedFolderIds([]);
@@ -1952,17 +1993,50 @@ function App() {
     return [];
   };
 
-  const handleFolderSelect = (e) => {
+  const handleFolderSelect = async (e) => {
     const files = Array.from(e.target.files || []);
     e.target.value = '';
     if (!files.length) return;
 
-    const items = files.map((file) => ({
-      file,
-      relativePath: (file.webkitRelativePath || file.name).replace(/\\/g, '/'),
-    }));
+    setIsReadingFolder(true);
+    await new Promise((r) => setTimeout(r, 0));
 
-    processFolderUpload(items);
+    try {
+      const items = files.map((file) => ({
+        file,
+        relativePath: (file.webkitRelativePath || file.name).replace(/\\/g, '/'),
+      }));
+
+      const hasDirectory = items.some((item) => {
+        const rawPath = item.relativePath || item.file?.name || '';
+        return rawPath.replace(/\\/g, '/').includes('/');
+      });
+
+      if (hasDirectory) {
+        const totalBytes = items.reduce((sum, item) => sum + (item.file?.size || 0), 0);
+        const firstDirItem = items.find((item) => (item.relativePath || '').replace(/\\/g, '/').includes('/'));
+        const folderName = firstDirItem
+          ? firstDirItem.relativePath.replace(/\\/g, '/').split('/')[0]
+          : 'Folder';
+
+        setExcludeDevFolders(false);
+        setIsReadingFolder(false);
+        setPendingFolderUpload({
+          folderName,
+          fileCount: items.length,
+          totalBytes,
+          items,
+        });
+        return;
+      }
+
+      setIsReadingFolder(false);
+      await processFolderUpload(items);
+    } catch (err) {
+      console.error('Error selecting folder:', err);
+    } finally {
+      setIsReadingFolder(false);
+    }
   };
 
   const handleUploadFolderClick = (e) => {
@@ -2010,9 +2084,73 @@ function App() {
       return;
     }
 
+    // 0ms Tray Open: resolve initial folder name and trigger tray immediately
+    const firstRel = itemsWithPaths[0]?.relativePath || itemsWithPaths[0]?.file?.name || 'Folder';
+    const initialFolderName = firstRel.replace(/\\/g, '/').split('/')[0] || 'Folder';
+
+    const abortController = new AbortController();
+    if (typeof startFolderPrep === 'function') {
+      startFolderPrep({
+        folderName: initialFolderName,
+        createdCount: 0,
+        totalFolders: 0,
+        totalFiles: itemsWithPaths.length,
+        abortController,
+      });
+    }
+
+    // Yield immediately so React paints and opens the tray at 0ms before heavy path extraction
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Determine folder stats for folder preparation progress
+    const uniqueDirs = new Set();
+    let rootFolderName = initialFolderName;
+    for (const item of itemsWithPaths) {
+      const rawPath = item.relativePath || item.file?.name || '';
+      const cleanPath = rawPath.replace(/\\/g, '/');
+      if (cleanPath.includes('/')) {
+        const parts = cleanPath.split('/');
+        if (!rootFolderName || rootFolderName === 'Folder') {
+          rootFolderName = parts[0];
+        }
+        parts.pop(); // remove file name
+        let accumulated = '';
+        for (const p of parts) {
+          accumulated = accumulated ? `${accumulated}/${p}` : p;
+          uniqueDirs.add(accumulated);
+        }
+      }
+    }
+
+    if (typeof updateFolderPrep === 'function') {
+      updateFolderPrep({
+        folderName: rootFolderName,
+        totalFolders: uniqueDirs.size,
+        totalFiles: itemsWithPaths.length,
+        createdCount: 0,
+      });
+    }
+
     try {
-      // 2. Create directory tree in MongoDB
-      const folderMap = await createFolderHierarchy(itemsWithPaths, activeFolderId, token);
+      // 2. Create directory tree in MongoDB (bulk ensure-tree with depth fallback)
+      const folderMap = await createFolderHierarchy(
+        itemsWithPaths,
+        activeFolderId,
+        token,
+        {
+          onProgress: (progress) => {
+            if (typeof updateFolderPrep === 'function') {
+              updateFolderPrep({
+                ...progress,
+                folderName: rootFolderName,
+                totalFolders: uniqueDirs.size,
+                totalFiles: itemsWithPaths.length,
+              });
+            }
+          },
+          signal: abortController.signal,
+        }
+      );
 
       // 3. Map each file to resolved targetFolderId and pass batch to enqueueFiles(...)
       const filesToEnqueue = itemsWithPaths.map((item) => {
@@ -2040,9 +2178,19 @@ function App() {
         new CustomEvent('cloudguard:files-updated', { detail: { folderId: activeFolderId } })
       );
     } catch (err) {
+      if (err.name === 'AbortError' || abortController.signal.aborted) {
+        if (toast && typeof toast.info === 'function') {
+          toast.info('Folder preparation cancelled');
+        }
+        return;
+      }
       console.error('Folder upload processing error:', err);
       if (toast && typeof toast.error === 'function') {
         toast.error(err.message || 'Failed to process folder upload');
+      }
+    } finally {
+      if (typeof clearFolderPrep === 'function') {
+        clearFolderPrep();
       }
     }
   };
@@ -2051,6 +2199,9 @@ function App() {
     e.preventDefault();
     try {
       const items = e.dataTransfer?.items;
+      setIsReadingFolder(true);
+      await new Promise((r) => setTimeout(r, 0));
+
       const extracted = await extractDroppedItems(items);
       if (extracted && extracted.length > 0) {
         const hasDirectory = extracted.some((item) => {
@@ -2065,6 +2216,8 @@ function App() {
             ? firstDirItem.relativePath.replace(/\\/g, '/').split('/')[0]
             : 'Folder';
 
+          setExcludeDevFolders(false);
+          setIsReadingFolder(false);
           setPendingFolderUpload({
             folderName,
             fileCount: extracted.length,
@@ -2074,16 +2227,20 @@ function App() {
           return;
         }
 
+        setIsReadingFolder(false);
         await processFolderUpload(extracted);
       } else if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
         const flatFiles = Array.from(e.dataTransfer.files).map((file) => ({
           file,
           relativePath: file.name,
         }));
+        setIsReadingFolder(false);
         await processFolderUpload(flatFiles);
       }
     } catch (err) {
       console.error('Drop error:', err);
+    } finally {
+      setIsReadingFolder(false);
     }
   };
 
@@ -3647,6 +3804,17 @@ function App() {
                             }} className="w-full text-left px-4 py-2.5 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-neutral-700 transition-colors flex items-center gap-3">
                               <Pencil size={18} strokeWidth={1.5} /> Rename
                             </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setActiveMenuId(null);
+                                setFileDetailsTarget(file);
+                              }}
+                              className="w-full text-left px-4 py-2.5 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-neutral-700 transition-colors flex items-center gap-3 cursor-pointer"
+                            >
+                              <Info size={18} strokeWidth={1.5} /> Details
+                            </button>
                             <div className="border-t border-neutral-200 dark:border-neutral-700 my-1"></div>
                             <button onClick={(e) => { e.stopPropagation(); setFileToDelete(file); setActiveMenuId(null); }} className="w-full text-left px-4 py-2.5 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors flex items-center gap-3">
                               <span className="material-symbols-outlined text-[18px]">delete</span> Delete
@@ -3712,6 +3880,15 @@ function App() {
         files={files}
         token={token}
       />
+
+      {/* File Details Modal */}
+      {fileDetailsTarget && (
+        <FileDetailsModal
+          file={fileDetailsTarget}
+          locationPath={viewMode === 'recent' ? 'Recent' : (breadcrumbs?.map(b => b.name).join(' > ') || 'My Files')}
+          onClose={() => setFileDetailsTarget(null)}
+        />
+      )}
 
       {/* Rename Folder Modal */}
       {showRenameFolderModal && (
@@ -4114,87 +4291,132 @@ function App() {
       )}
 
       {/* Branded Folder Upload Confirmation Modal */}
-      {pendingFolderUpload && (
-        <div 
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-150 select-none"
-          onClick={() => setPendingFolderUpload(null)}
-        >
+      {pendingFolderUpload && (() => {
+        const items = pendingFolderUpload.items || [];
+        const isDevIgnoredPath = (relPath) => /(^|\/)(node_modules|\.git)(\/|$)/i.test(relPath || '');
+
+        let devCount = 0;
+        let devBytes = 0;
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
+          const relPath = (item.relativePath || item.file?.name || '').replace(/\\/g, '/');
+          if (isDevIgnoredPath(relPath)) {
+            devCount++;
+            devBytes += (item.file?.size || 0);
+          }
+        }
+
+        const activeItems = excludeDevFolders
+          ? items.filter((i) => !isDevIgnoredPath((i.relativePath || i.file?.name || '').replace(/\\/g, '/')))
+          : items;
+
+        const effectiveCount = activeItems.length;
+        const effectiveBytes = activeItems.reduce((sum, i) => sum + (i.file?.size || 0), 0);
+
+        return (
           <div 
-            className="w-full max-w-md rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-5 sm:p-6 shadow-2xl space-y-4"
-            onClick={(e) => e.stopPropagation()}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="folder-upload-modal-title"
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-150 select-none"
+            onClick={() => setPendingFolderUpload(null)}
           >
-            {/* Header */}
-            <div className="flex items-start justify-between gap-3 sm:gap-4">
-              <div className="flex items-start gap-3 sm:gap-4 min-w-0">
-                <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-500 flex items-center justify-center shrink-0">
-                  <FolderUp className="w-5 h-5 sm:w-6 sm:h-6" />
+            <div 
+              className="w-full max-w-md rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-5 sm:p-6 shadow-2xl space-y-4"
+              onClick={(e) => e.stopPropagation()}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="folder-upload-modal-title"
+            >
+              {/* Header */}
+              <div className="flex items-start justify-between gap-3 sm:gap-4">
+                <div className="flex items-start gap-3 sm:gap-4 min-w-0">
+                  <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-500 flex items-center justify-center shrink-0">
+                    <FolderUp className="w-5 h-5 sm:w-6 sm:h-6" />
+                  </div>
+                  <div className="flex-1 min-w-0 pt-0.5">
+                    <h3 id="folder-upload-modal-title" className="text-base sm:text-lg font-bold text-neutral-900 dark:text-white leading-tight">
+                      Upload Folder to Vault?
+                    </h3>
+                    <p className="text-xs sm:text-sm text-neutral-500 dark:text-neutral-400 truncate mt-0.5">
+                      {pendingFolderUpload.folderName}
+                    </p>
+                  </div>
                 </div>
-                <div className="flex-1 min-w-0 pt-0.5">
-                  <h3 id="folder-upload-modal-title" className="text-base sm:text-lg font-bold text-neutral-900 dark:text-white leading-tight">
-                    Upload Folder to Vault?
-                  </h3>
-                  <p className="text-xs sm:text-sm text-neutral-500 dark:text-neutral-400 truncate mt-0.5">
+                <button
+                  type="button"
+                  onClick={() => setPendingFolderUpload(null)}
+                  className="p-1 rounded-md text-neutral-400 hover:text-neutral-700 dark:hover:text-white transition-colors cursor-pointer shrink-0"
+                  title="Close"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Summary Box */}
+              <div className="bg-neutral-100 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-700/60 rounded-xl p-3.5 text-xs space-y-1.5 text-neutral-700 dark:text-neutral-300">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-neutral-500 dark:text-neutral-400">Folder</span>
+                  <span className="font-semibold text-neutral-900 dark:text-white truncate max-w-[220px]">
                     {pendingFolderUpload.folderName}
-                  </p>
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-neutral-500 dark:text-neutral-400">Contents</span>
+                  <span className="font-semibold text-neutral-900 dark:text-white">
+                    {effectiveCount.toLocaleString()} {effectiveCount === 1 ? 'file' : 'files'}{' '}
+                    <span className="font-normal text-neutral-500 dark:text-neutral-400">
+                      ({formatBytes(effectiveBytes)})
+                    </span>
+                  </span>
+                </div>
+                <div className="pt-2 border-t border-neutral-200/80 dark:border-neutral-700/60 text-[11px] text-neutral-500 dark:text-neutral-400">
+                  Security: All files will be encrypted and scanned for threats before storage.
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => setPendingFolderUpload(null)}
-                className="p-1 rounded-md text-neutral-400 hover:text-neutral-700 dark:hover:text-white transition-colors cursor-pointer shrink-0"
-                title="Close"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
 
-            {/* Summary Box */}
-            <div className="bg-neutral-100 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-700/60 rounded-xl p-3.5 text-xs space-y-1.5 text-neutral-700 dark:text-neutral-300">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-neutral-500 dark:text-neutral-400">Folder</span>
-                <span className="font-semibold text-neutral-900 dark:text-white truncate max-w-[220px]">
-                  {pendingFolderUpload.folderName}
-                </span>
-              </div>
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-neutral-500 dark:text-neutral-400">Contents</span>
-                <span className="font-semibold text-neutral-900 dark:text-white">
-                  {pendingFolderUpload.fileCount} {pendingFolderUpload.fileCount === 1 ? 'file' : 'files'}{' '}
-                  <span className="font-normal text-neutral-500 dark:text-neutral-400">
-                    ({formatBytes(pendingFolderUpload.totalBytes)})
+              {/* Dev Folders Exclude Checkbox */}
+              {devCount > 0 && (
+                <label className="flex items-center gap-2.5 p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-neutral-800 dark:text-neutral-200 text-xs cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={excludeDevFolders}
+                    onChange={(e) => setExcludeDevFolders(e.target.checked)}
+                    className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-neutral-300 dark:border-neutral-700 cursor-pointer"
+                  />
+                  <span className="font-medium">
+                    Exclude <span className="font-mono text-[11px]">node_modules</span> & <span className="font-mono text-[11px]">.git</span> ({devCount.toLocaleString()} {devCount === 1 ? 'file' : 'files'}, {formatBytes(devBytes)})
                   </span>
-                </span>
-              </div>
-              <div className="pt-2 border-t border-neutral-200/80 dark:border-neutral-700/60 text-[11px] text-neutral-500 dark:text-neutral-400">
-                Security: All files will be encrypted and scanned for threats before storage.
-              </div>
-            </div>
+                </label>
+              )}
 
-            {/* Footer Buttons */}
-            <div className="flex flex-col-reverse sm:flex-row items-center justify-end gap-2.5 pt-1">
-              <button
-                type="button"
-                onClick={() => setPendingFolderUpload(null)}
-                className="w-full sm:w-auto px-4 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-xs sm:text-sm font-medium cursor-pointer transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  const itemsToUpload = pendingFolderUpload.items;
-                  setPendingFolderUpload(null);
-                  processFolderUpload(itemsToUpload);
-                }}
-                className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 hover:opacity-90 text-xs sm:text-sm font-semibold shadow-sm cursor-pointer transition-opacity"
-              >
-                Start Upload
-              </button>
+              {/* Footer Buttons */}
+              <div className="flex flex-col-reverse sm:flex-row items-center justify-end gap-2.5 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setPendingFolderUpload(null)}
+                  className="w-full sm:w-auto px-4 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-xs sm:text-sm font-medium cursor-pointer transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPendingFolderUpload(null);
+                    processFolderUpload(activeItems);
+                  }}
+                  className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 hover:opacity-90 text-xs sm:text-sm font-semibold shadow-sm cursor-pointer transition-opacity"
+                >
+                  Start Upload
+                </button>
+              </div>
             </div>
           </div>
+        );
+      })()}
+
+      {/* 0ms Instant Visual Feedback Pill While Reading Folder Contents */}
+      {isReadingFolder && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2.5 px-4 py-2.5 rounded-full bg-white/95 dark:bg-neutral-900/95 text-neutral-800 dark:text-neutral-100 border border-neutral-200 dark:border-neutral-800 shadow-2xl backdrop-blur-md max-w-[92vw] text-xs sm:text-sm font-medium pointer-events-none select-none">
+          <Loader2 className="w-4 h-4 text-blue-500 animate-spin shrink-0"/>
+          <span className="truncate">Reading folder contents...</span>
         </div>
       )}
     </div>

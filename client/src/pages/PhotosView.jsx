@@ -194,9 +194,11 @@ export default function PhotosView({ token: propToken }) {
 
   const isMountedRef = useRef(false);
 
-  const fetchMedia = useCallback(async () => {
+  const fetchMedia = useCallback(async (forceReload = false) => {
     try {
-      setLoading(true);
+      if (!globalPhotosCache || forceReload) {
+        setLoading(true);
+      }
       const token = localStorage.getItem('token');
       const res = await axios.get('/api/photos', {
         headers: { Authorization: `Bearer ${token}` },
@@ -216,6 +218,17 @@ export default function PhotosView({ token: propToken }) {
   // Execute fetch ONLY once on initial mount
   useEffect(() => {
     fetchMedia();
+  }, [fetchMedia]);
+
+  // Real-time listener: refresh photos seamlessly if an upload finishes while on Photos tab
+  useEffect(() => {
+    const handlePhotosUpdate = () => {
+      fetchMedia(false);
+    };
+    window.addEventListener('cloudguard:files-updated', handlePhotosUpdate);
+    return () => {
+      window.removeEventListener('cloudguard:files-updated', handlePhotosUpdate);
+    };
   }, [fetchMedia]);
 
   const handleViewModeChange = (mode) => {

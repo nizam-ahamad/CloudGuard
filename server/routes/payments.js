@@ -273,6 +273,32 @@ router.post('/create-order', auth, async (req, res) => {
       }
     });
 
+    // Pre-create pending payment record so it is tracked immediately
+    try {
+      const totalPaymentsCount = await Payment.countDocuments();
+      const invoiceNumber = `CG-INV-${new Date().getFullYear()}-${String(totalPaymentsCount + 1).padStart(4, '0')}`;
+      await Payment.create({
+        userId: user._id,
+        invoiceNumber,
+        orderId: response.data.order_id,
+        planId,
+        planName: `${PLAN_CATALOG[planId]?.name || planId} (${storageGB} GB)`,
+        storageGB,
+        billingCycle: targetCycle,
+        amount: Number(transition.payableAmount),
+        currency: 'INR',
+        status: 'PENDING',
+        customerDetails: {
+          name: user.name || 'CloudGuard User',
+          email: user.email
+        },
+        periodStart: new Date(),
+        periodEnd: transition.targetExpiresAt || new Date(Date.now() + (targetCycle === 'annual' ? 365 : 30) * 86400000)
+      });
+    } catch (saveErr) {
+      console.warn('[Create Order Payment Record Warning]:', saveErr.message);
+    }
+
     return res.json({
       success: true,
       orderId: response.data.order_id,
@@ -289,12 +315,13 @@ router.post('/create-order', auth, async (req, res) => {
 });
 
 /**
- * GET /api/payments/verify/:orderId
+ * Idempotent order fulfillment helper
+ * Guarantees that even with concurrent verify and webhook calls,
+ * subscription is extended exactly once using atomic Payment status transition.
  */
-router.get('/verify/:orderId', auth, async (req, res) => {
-  try {
-    const { orderId } = req.params;
-
+async function fulfillCashfreeOrder(orderId, orderDetails = null, clientOrigin = '') {
+  let order = orderDetails;
+  if (!order || !order.order_status || !order.order_note) {
     const response = await axios.get(`${CASHFREE_BASE_URL}/orders/${orderId}`, {
       headers: {
         'x-client-id': process.env.CASHFREE_APP_ID,
@@ -302,144 +329,245 @@ router.get('/verify/:orderId', auth, async (req, res) => {
         'x-api-version': '2023-08-01'
       }
     });
+    order = response.data;
+  }
 
-    const order = response.data;
-    if (order.order_status === 'PAID') {
-      const parts = (order.order_note || '').split('|');
-      let planId = parts[1] || 'tier_50gb';
-      if (planId === 'essential') planId = 'tier_50gb';
-      if (planId === 'pro') planId = 'tier_100gb';
-      if (planId === 'ultra') planId = 'tier_200gb';
+  if (order.order_status !== 'PAID') {
+    return { success: false, status: order.order_status };
+  }
 
-      const cycle = parts[2] || (Number(order.order_amount) > 300 ? 'annual' : 'monthly');
-      const transitionType = parts[4] || 'STANDARD';
+  const parts = (order.order_note || '').split('|');
+  let planId = parts[1] || 'tier_50gb';
+  if (planId === 'essential') planId = 'tier_50gb';
+  if (planId === 'pro') planId = 'tier_100gb';
+  if (planId === 'ultra') planId = 'tier_200gb';
 
-      const userId = req.user?.id || req.user?._id;
-      const user = await User.findById(userId);
-      if (!user) return res.status(404).json({ error: 'User not found' });
+  const cycle = parts[2] || (Number(order.order_amount) > 300 ? 'annual' : 'monthly');
+  const transitionType = parts[4] || 'STANDARD';
+  const targetPlan = PLAN_CATALOG[planId] || PLAN_CATALOG.tier_50gb;
 
-      const targetPlan = PLAN_CATALOG[planId] || PLAN_CATALOG.tier_50gb;
-      const currentExpiresAt = user.subscription?.expiresAt ? new Date(user.subscription.expiresAt) : null;
-      let newExpiresAt = new Date();
+  // 1. Check if already claimed and paid
+  let paymentRecord = await Payment.findOne({ orderId });
+  if (paymentRecord && paymentRecord.status === 'PAID') {
+    const user = await User.findById(paymentRecord.userId);
+    return {
+      success: true,
+      status: 'PAID',
+      storageLimit: user?.storageLimit,
+      subscription: user?.subscription,
+      invoiceNumber: paymentRecord.invoiceNumber,
+      alreadyFulfilled: true
+    };
+  }
 
-      // Apply target expiration based on verified transition type
-      if ((transitionType === 'MONTHLY_UPGRADE' || transitionType === 'ANNUAL_UPGRADE') && currentExpiresAt && currentExpiresAt > new Date()) {
-        newExpiresAt = currentExpiresAt; // Preserve existing cycle anniversary
-      } else if (transitionType === 'CYCLE_UPGRADE' && currentExpiresAt && currentExpiresAt > new Date()) {
-        newExpiresAt = new Date(currentExpiresAt.getTime() + 365 * 86400000); // Additive 365 days
-      } else if (
-        (transitionType === 'STACKED_RENEWAL' ||
-          transitionType === 'RENEWAL_UPGRADE' ||
-          transitionType === 'CYCLE_SWITCH_PREPAID') &&
-        currentExpiresAt &&
-        currentExpiresAt > new Date()
-      ) {
-        newExpiresAt = new Date(currentExpiresAt.getTime() + (cycle === 'annual' ? 365 : 30) * 86400000);
-      } else {
-        newExpiresAt = new Date(Date.now() + (cycle === 'annual' ? 365 : 30) * 86400000);
-      }
+  // 2. Ensure Payment record exists before attempting atomic claim
+  let userId = order.customer_details?.customer_id;
+  if (!userId && paymentRecord) userId = paymentRecord.userId;
 
-      // Immediate quota expansion & clear any pending downgrade
-      const isNewSubscription = !user.subscription || user.subscription.planId === 'free' || user.subscription.status === 'expired';
-      user.plan = planId;
-      user.storageLimit = targetPlan.storageBytes;
-      user.trialAlreadyUsed = false;
-      user.subscription = {
+  let lineItemTitle = `${targetPlan.name} (${targetPlan.storageGB} GB)`;
+  if (transitionType === 'ANNUAL_UPGRADE') lineItemTitle += ' — Mid-Cycle Co-Termed Upgrade';
+  else if (transitionType === 'MONTHLY_UPGRADE') lineItemTitle += ' — Mid-Cycle Monthly Upgrade Delta';
+  else if (transitionType === 'RENEWAL_UPGRADE') lineItemTitle += ' — Tier Upgrade + Cycle Renewal';
+  else if (transitionType === 'CYCLE_SWITCH_PREPAID') lineItemTitle += ' — Monthly Cycle Switch (+30 Days)';
+
+  if (!paymentRecord) {
+    try {
+      const totalPaymentsCount = await Payment.countDocuments();
+      const invoiceNumber = `CG-INV-${new Date().getFullYear()}-${String(totalPaymentsCount + 1).padStart(4, '0')}`;
+      paymentRecord = await Payment.create({
+        userId,
+        invoiceNumber,
+        orderId,
+        paymentId: order.cf_order_id ? String(order.cf_order_id) : orderId,
         planId,
+        planName: lineItemTitle,
+        storageGB: targetPlan.storageGB,
         billingCycle: cycle,
-        status: 'active',
-        startDate: isNewSubscription ? new Date() : (user.subscription?.startDate || new Date()),
-        expiresAt: newExpiresAt,
-        autoRenew: false,
-        peakStorageBytes: isNewSubscription ? (user.storageUsed || 0) : Math.max(user.storageUsed || 0, user.subscription?.peakStorageBytes || 0),
-        gracePeriodExpiresAt: null,
-        dunningStep: 0,
-        refundCount: user.subscription?.refundCount || 0,
-        scheduledDowngrade: { targetPlanId: null, targetBillingCycle: null, scheduledAt: null }
-      };
-      await user.save();
-
-      // Generate Invoice Record
-      let paymentRecord = await Payment.findOne({ orderId });
-      if (!paymentRecord) {
-        const totalPaymentsCount = await Payment.countDocuments();
-        const invoiceNumber = `CG-INV-${new Date().getFullYear()}-${String(totalPaymentsCount + 1).padStart(4, '0')}`;
-        
-        let lineItemTitle = `${targetPlan.name} (${targetPlan.storageGB} GB)`;
-        if (transitionType === 'ANNUAL_UPGRADE') lineItemTitle += ' — Mid-Cycle Co-Termed Upgrade';
-        else if (transitionType === 'MONTHLY_UPGRADE') lineItemTitle += ' — Mid-Cycle Monthly Upgrade Delta';
-        else if (transitionType === 'RENEWAL_UPGRADE') lineItemTitle += ' — Tier Upgrade + Cycle Renewal';
-        else if (transitionType === 'CYCLE_SWITCH_PREPAID') lineItemTitle += ' — Monthly Cycle Switch (+30 Days)';
-
-        paymentRecord = await Payment.create({
-          userId: user._id,
-          invoiceNumber,
-          orderId,
-          paymentId: order.cf_order_id ? String(order.cf_order_id) : orderId,
-          planId,
-          planName: lineItemTitle,
-          storageGB: targetPlan.storageGB,
-          billingCycle: cycle,
-          amount: Number(order.order_amount),
-          currency: 'INR',
-          status: 'PAID',
-          customerDetails: {
-            name: user.name || 'CloudGuard Subscriber',
-            email: user.email
-          },
-          periodStart: new Date(),
-          periodEnd: newExpiresAt
-        });
-
-        // 3. Dispatch Transactional Confirmation Email with Direct Invoice Link
-        const origin = req.headers.origin || `${req.protocol}://${req.get('host')}`;
-        const baseUrl = process.env.CLIENT_URL || origin;
-        const invoiceUrl = `${baseUrl}/api/payments/invoice/${orderId}`;
-
-        if (transitionType === 'ANNUAL_UPGRADE' || transitionType === 'MONTHLY_UPGRADE') {
-          // Scenario 2: Mid-Cycle Upgrade (Delta / Co-Termed)
-          const { subject, html } = generateUpgradeEmail({
-            user,
-            targetPlan,
-            cycle,
-            deltaAmount: Number(order.order_amount),
-            invoiceNumber,
-            expiresAt: newExpiresAt,
-            invoiceUrl
-          });
-          sendSubscriptionEmail({ to: user.email, subject, html }).catch(err => {
-            console.error('[Upgrade Email Error]:', err.message);
-          });
-        } else {
-          // Scenario 1: New Purchase / Activation / Stacked Renewal
-          const { subject, html } = generatePurchaseEmail({
-            user,
-            targetPlan,
-            cycle,
-            orderAmount: Number(order.order_amount),
-            invoiceNumber,
-            expiresAt: newExpiresAt,
-            invoiceUrl
-          });
-          sendSubscriptionEmail({ to: user.email, subject, html }).catch(err => {
-            console.error('[Purchase Email Error]:', err.message);
-          });
-        }
-      }
-
-      return res.json({
-        success: true,
-        status: 'PAID',
-        storageLimit: user.storageLimit,
-        subscription: user.subscription,
-        invoiceNumber: paymentRecord.invoiceNumber
+        amount: Number(order.order_amount),
+        currency: 'INR',
+        status: 'PENDING',
+        customerDetails: {
+          name: order.customer_details?.customer_name || 'CloudGuard Subscriber',
+          email: order.customer_details?.customer_email
+        },
+        periodStart: new Date(),
+        periodEnd: new Date(Date.now() + (cycle === 'annual' ? 365 : 30) * 86400000)
       });
+    } catch (dupErr) {
+      if (dupErr.code === 11000) {
+        paymentRecord = await Payment.findOne({ orderId });
+      } else {
+        throw dupErr;
+      }
     }
+  }
 
-    return res.json({ success: false, status: order.order_status });
+  // 3. Atomically claim the payment. Only the FIRST caller matching status !== 'PAID' wins!
+  const claimedPayment = await Payment.findOneAndUpdate(
+    { orderId, status: { $ne: 'PAID' } },
+    {
+      $set: {
+        status: 'PAID',
+        paymentId: order.cf_order_id ? String(order.cf_order_id) : orderId,
+        planName: lineItemTitle,
+        paidAt: new Date()
+      }
+    },
+    { new: true }
+  );
+
+  if (!claimedPayment) {
+    // Another concurrent call already claimed & fulfilled this order
+    const existingPayment = await Payment.findOne({ orderId });
+    const user = await User.findById(existingPayment?.userId || userId);
+    return {
+      success: true,
+      status: 'PAID',
+      storageLimit: user?.storageLimit,
+      subscription: user?.subscription,
+      invoiceNumber: existingPayment?.invoiceNumber,
+      alreadyFulfilled: true
+    };
+  }
+
+  // 4. Fulfillment execution (runs strictly ONCE per orderId)
+  const user = await User.findById(claimedPayment.userId || userId);
+  if (!user) {
+    throw new Error('User not found for payment fulfillment');
+  }
+
+  const currentExpiresAt = user.subscription?.expiresAt ? new Date(user.subscription.expiresAt) : null;
+  let newExpiresAt = new Date();
+
+  // Apply target expiration based on verified transition type
+  if ((transitionType === 'MONTHLY_UPGRADE' || transitionType === 'ANNUAL_UPGRADE') && currentExpiresAt && currentExpiresAt > new Date()) {
+    newExpiresAt = currentExpiresAt; // Preserve existing cycle anniversary
+  } else if (transitionType === 'CYCLE_UPGRADE' && currentExpiresAt && currentExpiresAt > new Date()) {
+    newExpiresAt = new Date(currentExpiresAt.getTime() + 365 * 86400000); // Additive 365 days
+  } else if (
+    (transitionType === 'STACKED_RENEWAL' ||
+      transitionType === 'RENEWAL_UPGRADE' ||
+      transitionType === 'CYCLE_SWITCH_PREPAID') &&
+    currentExpiresAt &&
+    currentExpiresAt > new Date()
+  ) {
+    newExpiresAt = new Date(currentExpiresAt.getTime() + (cycle === 'annual' ? 365 : 30) * 86400000);
+  } else {
+    newExpiresAt = new Date(Date.now() + (cycle === 'annual' ? 365 : 30) * 86400000);
+  }
+
+  // Update periodEnd on claimedPayment
+  claimedPayment.periodEnd = newExpiresAt;
+  await claimedPayment.save();
+
+  // Immediate quota expansion & clear any pending downgrade
+  const isNewSubscription = !user.subscription || user.subscription.planId === 'free' || user.subscription.status === 'expired';
+  user.plan = planId;
+  user.storageLimit = targetPlan.storageBytes;
+  user.trialAlreadyUsed = false;
+  user.trialExpiresAt = null; // Clear stale evaluation trial timer on plan purchase
+  user.subscription = {
+    planId,
+    billingCycle: cycle,
+    status: 'active',
+    startDate: isNewSubscription ? new Date() : (user.subscription?.startDate || new Date()),
+    expiresAt: newExpiresAt,
+    autoRenew: false,
+    peakStorageBytes: isNewSubscription ? (user.storageUsed || 0) : Math.max(user.storageUsed || 0, user.subscription?.peakStorageBytes || 0),
+    gracePeriodExpiresAt: null, // Clear stale grace period timer
+    dunningStep: 0, // Reset dunning cycle to 0
+    refundCount: user.subscription?.refundCount || 0,
+    scheduledDowngrade: { targetPlanId: null, targetBillingCycle: null, scheduledAt: null }
+  };
+  await user.save();
+
+  // Dispatch Transactional Confirmation Email
+  const baseUrl = process.env.CLIENT_URL || clientOrigin || 'http://localhost:5173';
+  const invoiceUrl = `${baseUrl}/api/payments/invoice/${orderId}`;
+
+  if (transitionType === 'ANNUAL_UPGRADE' || transitionType === 'MONTHLY_UPGRADE') {
+    const { subject, html } = generateUpgradeEmail({
+      user,
+      targetPlan,
+      cycle,
+      deltaAmount: Number(order.order_amount),
+      invoiceNumber: claimedPayment.invoiceNumber,
+      expiresAt: newExpiresAt,
+      invoiceUrl
+    });
+    sendSubscriptionEmail({ to: user.email, subject, html }).catch(err => {
+      console.error('[Upgrade Email Error]:', err.message);
+    });
+  } else {
+    const { subject, html } = generatePurchaseEmail({
+      user,
+      targetPlan,
+      cycle,
+      orderAmount: Number(order.order_amount),
+      invoiceNumber: claimedPayment.invoiceNumber,
+      expiresAt: newExpiresAt,
+      invoiceUrl
+    });
+    sendSubscriptionEmail({ to: user.email, subject, html }).catch(err => {
+      console.error('[Purchase Email Error]:', err.message);
+    });
+  }
+
+  return {
+    success: true,
+    status: 'PAID',
+    storageLimit: user.storageLimit,
+    subscription: user.subscription,
+    invoiceNumber: claimedPayment.invoiceNumber,
+    alreadyFulfilled: false
+  };
+}
+
+/**
+ * GET /api/payments/verify/:orderId
+ */
+router.get('/verify/:orderId', auth, async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const clientOrigin = req.headers.origin || `${req.protocol}://${req.get('host')}`;
+    const result = await fulfillCashfreeOrder(orderId, null, clientOrigin);
+    if (!result.success) {
+      return res.json({ success: false, status: result.status });
+    }
+    return res.json({
+      success: true,
+      status: 'PAID',
+      storageLimit: result.storageLimit,
+      subscription: result.subscription,
+      invoiceNumber: result.invoiceNumber
+    });
   } catch (err) {
     console.error('[Cashfree Verify Error]:', err.response?.data || err.message);
     return res.status(500).json({ error: 'Failed to verify payment' });
+  }
+});
+
+/**
+ * POST /api/payments/webhook
+ * Idempotent Cashfree PG webhook handler
+ */
+router.post('/webhook', async (req, res) => {
+  try {
+    const payload = req.body || {};
+    const orderData = payload.data?.order || payload.order || payload;
+    const orderId = orderData?.order_id || payload.order_id || payload.data?.order_id;
+
+    if (!orderId) {
+      return res.status(400).json({ error: 'Missing order_id in webhook payload' });
+    }
+
+    const clientOrigin = req.headers.origin || `${req.protocol}://${req.get('host')}`;
+    const result = await fulfillCashfreeOrder(orderId, orderData.order_status === 'PAID' ? orderData : null, clientOrigin);
+
+    return res.json({ received: true, status: result.status || 'PAID' });
+  } catch (err) {
+    console.error('[Cashfree Webhook Error]:', err.message);
+    return res.status(500).json({ error: 'Webhook processing error' });
   }
 });
 
@@ -463,6 +591,7 @@ router.get('/subscription-status', auth, async (req, res) => {
       else if (currentLimitGB >= 100) mappedPlan = 'tier_100gb';
 
       user.plan = mappedPlan;
+      user.trialExpiresAt = null;
       user.subscription = {
         planId: mappedPlan,
         billingCycle: user.subscription?.billingCycle && user.subscription.billingCycle !== 'none' 
@@ -471,7 +600,9 @@ router.get('/subscription-status', auth, async (req, res) => {
         status: 'active',
         startDate: user.subscription?.startDate || new Date(),
         expiresAt: user.subscription?.expiresAt || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-        autoRenew: false
+        autoRenew: false,
+        gracePeriodExpiresAt: null,
+        dunningStep: 0,
       };
 
       await user.save();
@@ -607,6 +738,9 @@ router.post('/reactivate-subscription', auth, async (req, res) => {
     }
 
     user.subscription.status = 'active';
+    user.subscription.gracePeriodExpiresAt = null;
+    user.subscription.dunningStep = 0;
+    user.trialExpiresAt = null;
     await user.save();
 
     const renewalDateStr = new Date(user.subscription.expiresAt).toLocaleDateString('en-IN', {
@@ -855,6 +989,7 @@ router.calculateTierTransition = calculateTierTransition;
 router.PLAN_CATALOG = PLAN_CATALOG;
 router.sendSubscriptionEmail = sendSubscriptionEmail;
 router.buildCloudGuardEmail = buildCloudGuardEmail;
+router.fulfillCashfreeOrder = fulfillCashfreeOrder;
 
 module.exports = router;
 module.exports.router = router;
@@ -862,3 +997,4 @@ module.exports.PLAN_CATALOG = PLAN_CATALOG;
 module.exports.calculateTierTransition = calculateTierTransition;
 module.exports.sendSubscriptionEmail = sendSubscriptionEmail;
 module.exports.buildCloudGuardEmail = buildCloudGuardEmail;
+module.exports.fulfillCashfreeOrder = fulfillCashfreeOrder;
