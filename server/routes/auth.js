@@ -9,10 +9,15 @@ const { OAuth2Client } = require('google-auth-library');
 const User = require('../models/User');
 const File = require('../models/File');
 const Folder = require('../models/Folder');
+const Payment = require('../models/Payment');
+const DeletedAccountLog = require('../models/DeletedAccountLog');
 const authMiddleware = require('../middleware/auth');
 const { sendActivationOtp, sendResetOtp, sendWelcomeEmail, sendNotificationEmail } = require('../utils/emailService');
 const { authLimiter, otpLimiter } = require('../middleware/rateLimiter');
 const { permanentlyDeleteS3Keys } = require('../utils/s3Delete');
+
+const hashNormalizedEmail = (email) =>
+  crypto.createHash('sha256').update(String(email || '').toLowerCase().trim()).digest('hex');
 
 const s3Client = new S3Client({
   region: process.env.AWS_REGION || 'eu-central-003',
@@ -96,7 +101,11 @@ router.post('/google', async (req, res) => {
       }
       if (modified) await user.save();
     } else {
-      user = await User.create({
+      const priorDeletedLog = await DeletedAccountLog.findOne({
+        emailHash: hashNormalizedEmail(normalizedEmail),
+      }).lean();
+
+      const newGoogleUser = {
         name: name || normalizedEmail.split('@')[0],
         email: normalizedEmail,
         googleId,
@@ -105,8 +114,25 @@ router.post('/google', async (req, res) => {
         isVerified: true,
         password: null,
         storageUsed: 0,
-        storageLimit: 5368709120,
-      });
+        storageLimit: 5 * 1024 * 1024 * 1024,
+      };
+
+      if (priorDeletedLog) {
+        newGoogleUser.plan = 'free';
+        newGoogleUser.trialExpiresAt = null;
+        newGoogleUser.subscription = {
+          planId: 'free',
+          billingCycle: 'none',
+          status: 'expired',
+          expiresAt: null,
+          refundCount: priorDeletedLog.refundCount || 0,
+        };
+      } else {
+        newGoogleUser.plan = 'trial';
+        newGoogleUser.trialExpiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+      }
+
+      user = await User.create(newGoogleUser);
 
       // Send wholesome welcome email for brand new Google signups
       sendWelcomeEmail(user.email, user.name);
@@ -177,7 +203,11 @@ router.post('/register', authLimiter, async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, salt);
     const otp = generateOtp();
 
-    const newUser = await User.create({
+    const priorDeletedLog = await DeletedAccountLog.findOne({
+      emailHash: hashNormalizedEmail(normalizedEmail),
+    }).lean();
+
+    const newUserPayload = {
       name: name.trim(),
       email: normalizedEmail,
       password: hashedPassword,
@@ -186,12 +216,29 @@ router.post('/register', authLimiter, async (req, res) => {
       otp,
       otpExpires: new Date(Date.now() + 10 * 60 * 1000),
       storageUsed: 0,
-      storageLimit: 5368709120,
+      storageLimit: 5 * 1024 * 1024 * 1024,
       consentGiven: true,
       isAdultConfirmed: true,
       consentTimestamp: new Date(),
       consentVersion: '1.0',
-    });
+    };
+
+    if (priorDeletedLog) {
+      newUserPayload.plan = 'free';
+      newUserPayload.trialExpiresAt = null;
+      newUserPayload.subscription = {
+        planId: 'free',
+        billingCycle: 'none',
+        status: 'expired',
+        expiresAt: null,
+        refundCount: priorDeletedLog.refundCount || 0,
+      };
+    } else {
+      newUserPayload.plan = 'trial';
+      newUserPayload.trialExpiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+    }
+
+    const newUser = await User.create(newUserPayload);
 
     // Send Activation OTP email
     sendActivationOtp(newUser.email, otp, newUser.name);
@@ -231,6 +278,27 @@ router.post('/verify-activation-otp', otpLimiter, async (req, res) => {
     user.isVerified = true;
     user.otp = null;
     user.otpExpires = null;
+
+    const priorDeletedLog = await DeletedAccountLog.findOne({
+      emailHash: hashNormalizedEmail(normalizedEmail),
+    }).lean();
+
+    if (priorDeletedLog) {
+      user.plan = 'free';
+      user.trialExpiresAt = null;
+      user.storageLimit = 5 * 1024 * 1024 * 1024;
+      user.subscription = {
+        planId: 'free',
+        billingCycle: 'none',
+        status: 'expired',
+        expiresAt: null,
+        refundCount: priorDeletedLog.refundCount || 0,
+      };
+    } else if (!user.trialExpiresAt && user.plan !== 'free') {
+      user.plan = 'trial';
+      user.trialExpiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+    }
+
     await user.save();
 
     // Send Wholesome Welcome Email upon successful activation
@@ -281,6 +349,27 @@ router.post('/verify-otp', otpLimiter, async (req, res) => {
     user.isVerified = true;
     user.otp = null;
     user.otpExpires = null;
+
+    const priorDeletedLog = await DeletedAccountLog.findOne({
+      emailHash: hashNormalizedEmail(normalizedEmail),
+    }).lean();
+
+    if (priorDeletedLog) {
+      user.plan = 'free';
+      user.trialExpiresAt = null;
+      user.storageLimit = 5 * 1024 * 1024 * 1024;
+      user.subscription = {
+        planId: 'free',
+        billingCycle: 'none',
+        status: 'expired',
+        expiresAt: null,
+        refundCount: priorDeletedLog.refundCount || 0,
+      };
+    } else if (!user.trialExpiresAt && user.plan !== 'free') {
+      user.plan = 'trial';
+      user.trialExpiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+    }
+
     await user.save();
 
     sendWelcomeEmail(user.email, user.name);
@@ -657,6 +746,29 @@ router.delete('/account', authMiddleware, async (req, res) => {
     // Purge database records
     await File.deleteMany(userMatch);
     await Folder.deleteMany(userMatch);
+
+    const emailHash = hashNormalizedEmail(user.email);
+    const refundedPaymentsCount = await Payment.countDocuments({
+      $or: [
+        { userId: user._id },
+        { userEmail: user.email.toLowerCase().trim() },
+        { 'customerDetails.email': user.email.toLowerCase().trim() },
+      ],
+      status: 'REFUNDED',
+    });
+    const priorRefundCount = Math.max(user.subscription?.refundCount || 0, refundedPaymentsCount);
+
+    await DeletedAccountLog.findOneAndUpdate(
+      { emailHash },
+      {
+        $set: { hadTrial: true, deletedAt: new Date() },
+        $max: {
+          refundCount: priorRefundCount,
+        },
+      },
+      { upsert: true, new: true }
+    );
+
     await User.findByIdAndDelete(rawUserId);
 
     return res.status(200).json({

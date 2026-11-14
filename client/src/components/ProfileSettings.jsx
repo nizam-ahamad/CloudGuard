@@ -104,6 +104,18 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
   const [subData, setSubData] = useState(null);
   const [billingHistory, setBillingHistory] = useState([]);
 
+  const activePaidPlanId = subData?.subscription?.planId || subData?.plan;
+  const isPaidActiveSub =
+    subData?.subscription?.status === 'active' &&
+    ['tier_50gb', 'tier_100gb', 'tier_200gb'].includes(activePaidPlanId);
+  const formattedPaidExpiry = subData?.subscription?.expiresAt
+    ? new Date(subData.subscription.expiresAt).toLocaleDateString('en-IN', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+      })
+    : null;
+
   useEffect(() => {
     api.get('/payments/subscription-status')
       .then((res) => {
@@ -778,6 +790,20 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
           Permanently erases your account, files, thumbnails, and cloud vault data from Backblaze B2 object storage and MongoDB. This action cannot be undone.
         </p>
 
+        {isPaidActiveSub && (
+          <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3.5 text-xs text-amber-800 dark:text-amber-200 leading-relaxed">
+            <span className="font-semibold">Active Paid Subscription Warning:</span> You currently have an active{' '}
+            <span className="font-semibold">
+              {activePaidPlanId === 'tier_200gb'
+                ? 'Ultra Vault (200 GB)'
+                : activePaidPlanId === 'tier_100gb'
+                  ? 'Pro Vault (100 GB)'
+                  : 'Essential Vault (50 GB)'}
+            </span>{' '}
+            plan{formattedPaidExpiry ? ` valid until ${formattedPaidExpiry}` : ''}. Permanently deleting your account will immediately forfeit your remaining prepaid subscription period without an automatic refund.
+          </div>
+        )}
+
         <div className="mt-5 space-y-4 max-w-lg">
           {/* Password Field: Required for password accounts; protected against browser autofill */}
           {!isOAuthUser && (
@@ -883,6 +909,20 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
                 <p>• All uploaded vault files stored in Backblaze B2</p>
                 <p>• All generated preview thumbnails & folders</p>
               </div>
+
+              {isPaidActiveSub && (
+                <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200 leading-relaxed">
+                  <span className="font-semibold">Active Paid Subscription Warning:</span> You currently have an active{' '}
+                  <span className="font-semibold">
+                    {activePaidPlanId === 'tier_200gb'
+                      ? 'Ultra Vault (200 GB)'
+                      : activePaidPlanId === 'tier_100gb'
+                        ? 'Pro Vault (100 GB)'
+                        : 'Essential Vault (50 GB)'}
+                  </span>{' '}
+                  plan{formattedPaidExpiry ? ` valid until ${formattedPaidExpiry}` : ''}. Permanently deleting your account will immediately forfeit your remaining prepaid subscription period without an automatic refund.
+                </div>
+              )}
               <p className="text-red-500 font-medium text-xs pt-1">
                 This action CANNOT be undone.
               </p>
