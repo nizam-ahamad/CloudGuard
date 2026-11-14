@@ -1848,25 +1848,7 @@ function App() {
       relativePath: (file.webkitRelativePath || file.name).replace(/\\/g, '/'),
     }));
 
-    if (items.some((item) => (item.relativePath || '').includes('/'))) {
-      const folderName = items.find((i) => (i.relativePath || '').includes('/'))?.relativePath.split('/')[0] || 'Selected Folder';
-      const totalBytes = items.reduce((acc, item) => acc + (item.file?.size || 0), 0);
-      setPendingFolderUpload({
-        folderName,
-        fileCount: items.length,
-        totalBytes,
-        items,
-      });
-      return;
-    }
-
-    // Fallback for flat files without directory prefix
-    const activeFolderId = currentFolderId || new URLSearchParams(window.location.search).get('folder') || null;
-    if (typeof enqueueFiles === 'function') {
-      enqueueFiles(files, activeFolderId);
-    } else if (typeof handleFileUpload === 'function') {
-      handleFileUpload(files);
-    }
+    processFolderUpload(items);
   };
 
   const handleUploadFolderClick = (e) => {

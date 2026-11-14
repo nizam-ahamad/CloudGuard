@@ -33,6 +33,7 @@ export function UploadProvider({ children }) {
   const dropdownRef = useRef(null);
 
   const processingIdsRef = useRef(new Set());
+  const abortControllersRef = useRef(new Map());
   const toastCtx = useToast();
 
   const toast = {
@@ -144,8 +145,23 @@ export function UploadProvider({ children }) {
     );
   };
 
-  const uploadLargeFileMultipart = async ({ id, file, folderId, headers, updateItem }) => {
+  const uploadLargeFileMultipart = async ({ id, file, folderId, headers, updateItem, signal }) => {
     // 1. Acquire multipart session + 512px thumbnail in parallel
+    let isAborted = false;
+    const abortController = new AbortController();
+
+    if (signal) {
+      if (signal.aborted) {
+        isAborted = true;
+        abortController.abort();
+      } else {
+        signal.addEventListener('abort', () => {
+          isAborted = true;
+          abortController.abort();
+        }, { once: true });
+      }
+    }
+
     let initRes, thumbnail;
     try {
       [initRes, thumbnail] = await Promise.all([
@@ -157,11 +173,20 @@ export function UploadProvider({ children }) {
             mimeType: file.type || 'application/octet-stream',
             folderId: folderId || null,
           },
-          { headers }
+          { headers, signal: abortController.signal }
         ),
         generateMediaThumbnail(file),
       ]);
     } catch (initErr) {
+      if (
+        axios.isCancel(initErr) ||
+        initErr?.name === 'CanceledError' ||
+        initErr?.name === 'AbortError' ||
+        initErr?.code === 'ERR_CANCELED' ||
+        abortController.signal.aborted
+      ) {
+        throw initErr;
+      }
       if (initErr.response?.status === 403) {
         const quotaError = new Error('Storage quota exceeded');
         quotaError.isQuota = true;
@@ -177,8 +202,6 @@ export function UploadProvider({ children }) {
     const partProgressMap = new Array(partUrls.length).fill(0);
     const completedParts = new Array(partUrls.length);
     let nextPartIdx = 0;
-    let isAborted = false;
-    const abortController = new AbortController();
 
     const syncAggregateProgress = () => {
       if (isAborted) return;
@@ -226,7 +249,9 @@ export function UploadProvider({ children }) {
           completedParts[index] = { PartNumber: partMeta.partNumber, ETag: eTag };
           return;
         } catch (err) {
-          if (isAborted) throw err;
+          if (isAborted || axios.isCancel(err) || err?.name === 'CanceledError' || err?.name === 'AbortError' || err?.code === 'ERR_CANCELED') {
+            throw err;
+          }
           attempt += 1;
           if (attempt >= MAX_PART_RETRIES) throw err;
           // Exponential backoff capped at 15s (1s, 2s, 4s, 8s, 15s)
@@ -257,7 +282,7 @@ export function UploadProvider({ children }) {
       await axios.post(
         `${API_BASE_URL || ''}/api/files/multipart/complete`,
         { fileId, s3Key, uploadId, parts: completedParts },
-        { headers }
+        { headers, signal: abortController.signal }
       );
 
       return { fileId, s3Key, sha256, thumbnail };
@@ -277,6 +302,9 @@ export function UploadProvider({ children }) {
     const { id, file, folderId } = item;
     processingIdsRef.current.add(id);
 
+    const controller = new AbortController();
+    abortControllersRef.current.set(id, controller);
+
     const token = localStorage.getItem('token');
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
@@ -291,8 +319,18 @@ export function UploadProvider({ children }) {
             folderId,
             headers,
             updateItem,
+            signal: controller.signal,
           }));
         } catch (mpErr) {
+          if (
+            axios.isCancel(mpErr) ||
+            mpErr?.name === 'CanceledError' ||
+            mpErr?.name === 'AbortError' ||
+            mpErr?.code === 'ERR_CANCELED' ||
+            controller.signal.aborted
+          ) {
+            return;
+          }
           if (mpErr.isQuota) {
             const errData = mpErr.errorData;
             const errorCode = errData?.code || errData?.error;
@@ -342,7 +380,7 @@ export function UploadProvider({ children }) {
                 mimeType: file.type || 'application/octet-stream',
                 folderId: folderId || null,
               },
-              { headers }
+              { headers, signal: controller.signal }
             ),
             generateMediaThumbnail(file),
           ]);
@@ -351,6 +389,15 @@ export function UploadProvider({ children }) {
           fileId = ticket.fileId;
           s3Key = ticket.s3Key;
         } catch (err) {
+          if (
+            axios.isCancel(err) ||
+            err?.name === 'CanceledError' ||
+            err?.name === 'AbortError' ||
+            err?.code === 'ERR_CANCELED' ||
+            controller.signal.aborted
+          ) {
+            return;
+          }
           const errorData = err.response?.data;
           const errorCode = errorData?.code || errorData?.error;
 
@@ -399,6 +446,7 @@ export function UploadProvider({ children }) {
         const [computedHash] = await Promise.all([
           computeFileSHA256(file),
           s3Axios.put(ticket.presignedUrl, file, {
+            signal: controller.signal,
             headers: { 'Content-Type': file.type || 'application/octet-stream' },
             transformRequest: [(data, reqHeaders) => {
               if (reqHeaders) {
@@ -435,7 +483,7 @@ export function UploadProvider({ children }) {
           sha256,
           thumbnail, // Attach generated 15KB thumbnail
         },
-        { headers }
+        { headers, signal: controller.signal }
       );
 
       const finalFile = finalizeRes.data?.file;
@@ -463,6 +511,16 @@ export function UploadProvider({ children }) {
       window.dispatchEvent(new CustomEvent('cloudguard:storage-updated'));
       window.dispatchEvent(new CustomEvent('cloudguard:files-updated', { detail: { folderId } }));
     } catch (err) {
+      if (
+        axios.isCancel(err) ||
+        err?.name === 'CanceledError' ||
+        err?.name === 'AbortError' ||
+        err?.code === 'ERR_CANCELED' ||
+        controller.signal.aborted
+      ) {
+        return;
+      }
+
       console.error('[Upload Pipeline Error]:', err);
       const errorData = err.response?.data;
       const errorCode = errorData?.code || errorData?.error;
@@ -479,6 +537,7 @@ export function UploadProvider({ children }) {
         toast.error(`Upload failed: "${file.name}"`);
       }
     } finally {
+      abortControllersRef.current.delete(id);
       processingIdsRef.current.delete(id);
       setTimeout(() => {
         const remaining = (queueRef.current || []).filter((i) =>
@@ -510,8 +569,45 @@ export function UploadProvider({ children }) {
   };
 
   const removeQueueItem = (id) => {
+    const controller = abortControllersRef.current.get(id);
+    if (controller) {
+      try {
+        controller.abort();
+      } catch (e) {
+        // ignore
+      }
+      abortControllersRef.current.delete(id);
+    }
     setQueue((prev) => prev.filter((item) => item.id !== id));
   };
+
+  const cancelAllUploads = useCallback(() => {
+    // 1. Abort every controller in abortControllersRef.current and clear the map
+    abortControllersRef.current.forEach((controller) => {
+      try {
+        controller.abort();
+      } catch (e) {
+        // ignore
+      }
+    });
+    abortControllersRef.current.clear();
+
+    // 2. Remove all items with status 'queued', 'pending', 'hashing', 'uploading', or 'finalizing'
+    setQueue((prev) =>
+      prev.filter(
+        (item) => !['queued', 'pending', 'hashing', 'uploading', 'finalizing'].includes(item.status)
+      )
+    );
+
+    // 3. Show a single toast: toast('All pending uploads cancelled')
+    if (typeof toastCtx === 'function') {
+      toastCtx('All pending uploads cancelled');
+    } else if (toastCtx?.info) {
+      toastCtx.info('All pending uploads cancelled');
+    } else if (toastCtx?.success) {
+      toastCtx.success('All pending uploads cancelled');
+    }
+  }, [toastCtx]);
 
   const clearFinished = () => {
     setQueue((prev) =>
@@ -535,6 +631,7 @@ export function UploadProvider({ children }) {
         toggleOpen,
         enqueueFiles,
         removeQueueItem,
+        cancelAllUploads,
         clearFinished,
         dropdownRef,
         quotaUpgradeState,
@@ -560,6 +657,7 @@ export const useUpload = () => {
       toggleOpen: () => {},
       enqueueFiles: () => {},
       removeQueueItem: () => {},
+      cancelAllUploads: () => {},
       clearFinished: () => {},
       dropdownRef: { current: null },
       quotaUpgradeState: null,
@@ -573,11 +671,14 @@ export const useUpload = () => {
  * Top Header Upload Button with Status Badge and Dropdown Tray
  */
 export const HeaderUploadButton = () => {
-  const { uploadQueue, queue, isUploading, clearCompleted, clearFinished, globalSpeed, removeQueueItem } = useUpload();
+  const { uploadQueue, queue, isUploading, clearCompleted, clearFinished, globalSpeed, removeQueueItem, cancelAllUploads } = useUpload();
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef(null);
 
   const activeQueue = uploadQueue || queue || [];
+  const activeItems = activeQueue.filter((i) =>
+    ['uploading', 'hashing', 'finalizing'].includes(i.status)
+  );
   const isWorking = activeQueue.some((i) =>
     ['uploading', 'hashing', 'finalizing', 'queued'].includes(i.status)
   );
@@ -680,23 +781,31 @@ export const HeaderUploadButton = () => {
           className="fixed left-3 right-3 top-16 sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2.5 sm:w-96 max-h-[75vh] flex flex-col rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-2xl z-50 select-none overflow-hidden"
         >
           {/* Header */}
-          <div className="flex items-center justify-between p-3.5 border-b border-neutral-200 dark:border-neutral-800 bg-neutral-50/50 dark:bg-neutral-800/40">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold text-neutral-900 dark:text-white">
-                {getHeaderTitle()}
+          <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-neutral-100 dark:border-neutral-800 bg-neutral-50/50 dark:bg-neutral-800/40">
+            <div className="min-w-0 truncate">
+              <span className="font-semibold text-sm">
+                {isWorking ? `Uploading (${activeCount} left)` : 'Uploads Complete'}
               </span>
-              {isWorking && globalSpeed && (
-                <span className="text-xs font-mono font-medium text-neutral-500 dark:text-neutral-400 tracking-tight">
-                  • {globalSpeed}
+              {isWorking && (activeItems[0]?.speed || globalSpeed) && (
+                <span className="ml-2 text-neutral-500 dark:text-neutral-400">
+                  {activeItems[0]?.speed || globalSpeed}
                 </span>
               )}
             </div>
-            <div className="flex items-center gap-1">
-              {!isWorking && (
+            <div className="flex items-center gap-2 shrink-0">
+              {isWorking ? (
                 <button
                   type="button"
-                  onClick={clearCompleted}
-                  className="text-[11px] text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white px-2 py-0.5 rounded hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
+                  onClick={cancelAllUploads}
+                  className="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-red-600 dark:text-red-400 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 transition-colors cursor-pointer"
+                >
+                  Cancel all
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={clearFinished}
+                  className="text-[11px] font-medium text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300 transition-colors cursor-pointer"
                 >
                   Clear all
                 </button>
@@ -704,9 +813,10 @@ export const HeaderUploadButton = () => {
               <button
                 type="button"
                 onClick={() => setIsOpen(false)}
-                className="p-1 text-neutral-400 hover:text-neutral-700 dark:hover:text-white rounded hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
+                title="Close"
+                className="p-1 rounded-md text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 transition-colors cursor-pointer"
               >
-                <X className="w-4 h-4"/>
+                <X className="w-3.5 h-3.5"/>
               </button>
             </div>
           </div>
