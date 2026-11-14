@@ -1839,15 +1839,34 @@ function App() {
   };
 
   const handleFolderSelect = (e) => {
-    const files = e.target.files;
-    if (files && files.length > 0) {
-      const itemsWithPaths = Array.from(files).map((file) => ({
-        file,
-        relativePath: (file.webkitRelativePath || file.name).replace(/\\/g, '/'),
-      }));
-      processFolderUpload(itemsWithPaths);
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    if (!files.length) return;
+
+    const items = files.map((file) => ({
+      file,
+      relativePath: (file.webkitRelativePath || file.name).replace(/\\/g, '/'),
+    }));
+
+    if (items.some((item) => (item.relativePath || '').includes('/'))) {
+      const folderName = items.find((i) => (i.relativePath || '').includes('/'))?.relativePath.split('/')[0] || 'Selected Folder';
+      const totalBytes = items.reduce((acc, item) => acc + (item.file?.size || 0), 0);
+      setPendingFolderUpload({
+        folderName,
+        fileCount: items.length,
+        totalBytes,
+        items,
+      });
+      return;
     }
-    e.target.value = null; // Clear input to allow re-uploading same folder
+
+    // Fallback for flat files without directory prefix
+    const activeFolderId = currentFolderId || new URLSearchParams(window.location.search).get('folder') || null;
+    if (typeof enqueueFiles === 'function') {
+      enqueueFiles(files, activeFolderId);
+    } else if (typeof handleFileUpload === 'function') {
+      handleFileUpload(files);
+    }
   };
 
   const handleUploadFolderClick = (e) => {
