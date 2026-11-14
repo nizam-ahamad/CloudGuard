@@ -93,20 +93,28 @@ export function UploadProvider({ children }) {
     });
   };
 
-  const enqueueFiles = useCallback((files, targetFolderId = null) => {
+  const enqueueFiles = useCallback((files, defaultFolderId = null) => {
     if (!files || files.length === 0) return;
 
-    const newItems = Array.from(files).map((file) => ({
-      id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      file,
-      name: file.name,
-      size: file.size,
-      folderId: targetFolderId,
-      status: 'queued', // queued | hashing | uploading | finalizing | clean | threat_purged | error
-      progress: 0,
-      error: null,
-      uploadedBytes: 0,
-    }));
+    const newItems = Array.from(files).map((item) => {
+      // Support raw File objects as well as { file, targetFolderId } or { file, folderId } wrappers
+      const actualFile = item?.file ? item.file : item;
+      const resolvedFolderId = item?.targetFolderId !== undefined
+        ? item.targetFolderId
+        : (item?.folderId !== undefined ? item.folderId : (defaultFolderId || null));
+
+      return {
+        id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        file: actualFile,
+        name: actualFile?.name || 'file',
+        size: actualFile?.size || 0,
+        folderId: resolvedFolderId,
+        status: 'queued', // queued | hashing | uploading | finalizing | clean | threat_purged | error
+        progress: 0,
+        error: null,
+        uploadedBytes: 0,
+      };
+    });
 
     setQueue((prev) => [...prev, ...newItems]);
     setIsOpen(true);
