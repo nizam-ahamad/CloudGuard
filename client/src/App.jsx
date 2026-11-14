@@ -885,6 +885,36 @@ function App() {
       navigate('/dashboard/photos');
     }
   };
+
+  const handleNavigateHomeRoot = (e) => {
+    if (e) {
+      if (typeof e.preventDefault === 'function') e.preventDefault();
+      if (typeof e.stopPropagation === 'function') e.stopPropagation();
+    }
+
+    setIsSidebarOpen(false);
+    setCurrentDirectory('');
+    setViewMode('all');
+
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    if (typeof clearSelection === 'function') {
+      clearSelection();
+    }
+
+    setCurrentFolderId(null);
+    setBreadcrumbs([{ id: null, name: 'Home' }]);
+
+    const newParams = new URLSearchParams(searchParams);
+    newParams.delete('view');
+    newParams.delete('tab');
+    newParams.delete('folder');
+    setSearchParams(newParams);
+
+    navigate('/dashboard');
+  };
   const handlePasswordUpdate = async (e) => {
     e.preventDefault();
     const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/;
@@ -2395,7 +2425,18 @@ function App() {
       )}
       {/* SideNavBar */}
       <nav className={`bg-slate-50 dark:bg-[#1e1f20] h-screen ${isCollapsed ? 'w-20' : 'w-64'} fixed left-0 top-0 border-r border-slate-200 dark:border-zinc-800 flex flex-col py-stack-lg z-50 transform transition-all duration-300 ease-in-out overflow-x-hidden md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-        <div className="h-16 mb-6 flex items-center gap-2 px-4">
+        <div 
+          onClick={handleNavigateHomeRoot}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              handleNavigateHomeRoot(e);
+            }
+          }}
+          role="button"
+          tabIndex={0}
+          className="h-16 mb-6 flex items-center gap-2 px-4 cursor-pointer select-none"
+        >
           <div className="min-w-[3rem] flex justify-center items-center">
             <CloudGuardLogo className="h-13 w-auto flex-shrink-0" />
           </div>
@@ -2528,7 +2569,18 @@ function App() {
               <Menu className="w-5 h-5"/>
             </button>
 
-            <div className="flex items-center gap-2 sm:gap-2.5 cursor-pointer select-none shrink-0 md:hidden">
+            <div 
+              onClick={handleNavigateHomeRoot}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  handleNavigateHomeRoot(e);
+                }
+              }}
+              role="button"
+              tabIndex={0}
+              className="flex items-center gap-2 sm:gap-2.5 cursor-pointer select-none shrink-0 md:hidden"
+            >
               <CloudGuardLogo className="w-12 h-12 sm:w-12 sm:h-12 shrink-0 transition-transform active:scale-95"/>
               <span className="text-lg sm:text-xl font-bold tracking-tight text-neutral-900 dark:text-white">
                 CloudGuard
