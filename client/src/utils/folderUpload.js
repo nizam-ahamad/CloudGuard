@@ -196,3 +196,62 @@ export async function createFolderHierarchy(itemsWithPaths, baseParentId = null,
 
   return folderMap;
 }
+
+/**
+ * Recursively walks a FileSystemDirectoryHandle and collects all files with relative paths.
+ *
+ * @param {FileSystemDirectoryHandle} dirHandle
+ * @param {string} currentPath
+ * @returns {Promise<Array<{ file: File, relativePath: string }>>}
+ */
+async function walkDirectoryHandle(dirHandle, currentPath) {
+  const results = [];
+  try {
+    for await (const entry of dirHandle.values()) {
+      if (entry.kind === 'file') {
+        const file = await entry.getFile();
+        results.push({
+          file,
+          relativePath: `${currentPath}/${file.name}`.replace(/\\/g, '/'),
+        });
+      } else if (entry.kind === 'directory') {
+        const childResults = await walkDirectoryHandle(entry, `${currentPath}/${entry.name}`);
+        results.push(...childResults);
+      }
+    }
+  } catch (err) {
+    console.warn(`[FolderUpload] Error reading directory handle ${currentPath}:`, err);
+  }
+  return results;
+}
+
+/**
+ * 3. pickDirectoryItems():
+ * Modern directory picker using File System Access API (window.showDirectoryPicker).
+ * Returns array of { file, relativePath } where relativePath starts with root folder name,
+ * or null if unsupported or cancelled by user.
+ *
+ * @returns {Promise<Array<{ file: File, relativePath: string }> | null>}
+ */
+export async function pickDirectoryItems() {
+  if (typeof window === 'undefined' || typeof window.showDirectoryPicker !== 'function') {
+    return null;
+  }
+
+  try {
+    const rootHandle = await window.showDirectoryPicker({ mode: 'read' });
+    if (!rootHandle) return null;
+    const rootName = rootHandle.name || 'folder';
+    const items = await walkDirectoryHandle(rootHandle, rootName);
+    return items;
+  } catch (err) {
+    if (err && err.name === 'AbortError') {
+      return null;
+    }
+    console.warn('[FolderUpload] showDirectoryPicker error:', err);
+    return null;
+  }
+}
+
+export const pickDirectoryWithModernAPI = pickDirectoryItems;
+

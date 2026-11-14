@@ -32,7 +32,7 @@ import { HeaderDownloadButton, useDownload } from './context/DownloadContext';
 import { HeaderUploadButton, useUpload, UploadProvider } from './context/UploadContext';
 import { getCachedAccessUrl, fetchAccessUrl, prefetchAccessUrl } from './utils/accessUrlCache';
 import { Folder, FolderInput, X, Search, MoreVertical, Pencil, Info, LayoutGrid, List, Check, Trash2, Image, Play, ChevronLeft, ChevronRight, Download, Clock, UploadCloud, FolderPlus, Menu, Sun, Moon, Loader2, FileText, ChevronDown, FileUp, FolderUp } from 'lucide-react';
-import { extractDroppedItems, createFolderHierarchy } from './utils/folderUpload';
+import { extractDroppedItems, createFolderHierarchy, pickDirectoryItems } from './utils/folderUpload';
 
 import { API_BASE_URL } from "./config";
 
@@ -455,6 +455,7 @@ function App() {
   const fileInputRef = useRef(null);
   const folderInputRef = useRef(null);
   const [isUploadMenuOpen, setIsUploadMenuOpen] = useState(false);
+  const [pendingFolderUpload, setPendingFolderUpload] = useState(null);
   const desktopUploadMenuRef = useRef(null);
   const mobileUploadMenuRef = useRef(null);
 
@@ -1849,6 +1850,40 @@ function App() {
     e.target.value = null; // Clear input to allow re-uploading same folder
   };
 
+  const handleUploadFolderClick = async (e) => {
+    if (e) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+    setIsUploadMenuOpen(false);
+
+    if (typeof window !== 'undefined' && typeof window.showDirectoryPicker === 'function') {
+      try {
+        const items = await pickDirectoryItems();
+        if (items && items.length > 0) {
+          const totalBytes = items.reduce((sum, item) => sum + (item.file?.size || 0), 0);
+          const firstDirItem = items.find((item) => (item.relativePath || '').replace(/\\/g, '/').includes('/'));
+          const firstPath = firstDirItem ? firstDirItem.relativePath.replace(/\\/g, '/') : (items[0].relativePath || items[0].file?.name || '');
+          const folderName = firstPath.includes('/') ? firstPath.split('/')[0] : 'Folder';
+          setPendingFolderUpload({
+            folderName,
+            fileCount: items.length,
+            totalBytes,
+            items,
+          });
+          return;
+        }
+        // User cancelled picker or empty folder was selected; return without falling back to input
+        return;
+      } catch (err) {
+        console.warn('Modern directory picker failed, falling back to input:', err);
+      }
+    }
+
+    // Fallback for mobile / Safari / Firefox: triggers native webkitdirectory input directly
+    folderInputRef.current?.click();
+  };
+
   const processFolderUpload = async (itemsWithPaths) => {
     if (!itemsWithPaths || itemsWithPaths.length === 0) return;
     const token = localStorage.getItem('token') || sessionStorage.getItem('token');
@@ -1928,6 +1963,27 @@ function App() {
       const items = e.dataTransfer?.items;
       const extracted = await extractDroppedItems(items);
       if (extracted && extracted.length > 0) {
+        const hasDirectory = extracted.some((item) => {
+          const rawPath = item.relativePath || item.file?.name || '';
+          return rawPath.replace(/\\/g, '/').includes('/');
+        });
+
+        if (hasDirectory) {
+          const totalBytes = extracted.reduce((sum, item) => sum + (item.file?.size || 0), 0);
+          const firstDirItem = extracted.find((item) => (item.relativePath || '').replace(/\\/g, '/').includes('/'));
+          const folderName = firstDirItem
+            ? firstDirItem.relativePath.replace(/\\/g, '/').split('/')[0]
+            : 'Folder';
+
+          setPendingFolderUpload({
+            folderName,
+            fileCount: extracted.length,
+            totalBytes,
+            items: extracted,
+          });
+          return;
+        }
+
         await processFolderUpload(extracted);
       } else if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
         const flatFiles = Array.from(e.dataTransfer.files).map((file) => ({
@@ -2752,11 +2808,7 @@ function App() {
                       </button>
                       <button
                         type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setIsUploadMenuOpen(false);
-                          folderInputRef.current?.click();
-                        }}
+                        onClick={handleUploadFolderClick}
                         className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-xs font-medium text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer"
                       >
                         <FolderUp className="w-4 h-4 text-neutral-500 dark:text-neutral-400" />
@@ -2811,11 +2863,7 @@ function App() {
                     </button>
                     <button
                       type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setIsUploadMenuOpen(false);
-                        folderInputRef.current?.click();
-                      }}
+                      onClick={handleUploadFolderClick}
                       className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-xs font-medium text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer"
                     >
                       <FolderUp className="w-4 h-4 text-neutral-500 dark:text-neutral-400" />
@@ -3818,6 +3866,91 @@ function App() {
                 className="px-4 py-2 text-xs font-semibold rounded-xl bg-red-600 hover:bg-red-500 active:scale-95 text-white transition-all shadow-sm cursor-pointer"
               >
                 Sign Out
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Branded Folder Upload Confirmation Modal */}
+      {pendingFolderUpload && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-150 select-none"
+          onClick={() => setPendingFolderUpload(null)}
+        >
+          <div 
+            className="w-full max-w-md rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-5 sm:p-6 shadow-2xl space-y-4"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="folder-upload-modal-title"
+          >
+            {/* Header */}
+            <div className="flex items-start justify-between gap-3 sm:gap-4">
+              <div className="flex items-start gap-3 sm:gap-4 min-w-0">
+                <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-500 flex items-center justify-center shrink-0">
+                  <FolderUp className="w-5 h-5 sm:w-6 sm:h-6" />
+                </div>
+                <div className="flex-1 min-w-0 pt-0.5">
+                  <h3 id="folder-upload-modal-title" className="text-base sm:text-lg font-bold text-neutral-900 dark:text-white leading-tight">
+                    Upload Folder to Vault?
+                  </h3>
+                  <p className="text-xs sm:text-sm text-neutral-500 dark:text-neutral-400 truncate mt-0.5">
+                    {pendingFolderUpload.folderName}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPendingFolderUpload(null)}
+                className="p-1 rounded-md text-neutral-400 hover:text-neutral-700 dark:hover:text-white transition-colors cursor-pointer shrink-0"
+                title="Close"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Summary Box */}
+            <div className="bg-neutral-100 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-700/60 rounded-xl p-3.5 text-xs space-y-1.5 text-neutral-700 dark:text-neutral-300">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-neutral-500 dark:text-neutral-400">Folder</span>
+                <span className="font-semibold text-neutral-900 dark:text-white truncate max-w-[220px]">
+                  {pendingFolderUpload.folderName}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-neutral-500 dark:text-neutral-400">Contents</span>
+                <span className="font-semibold text-neutral-900 dark:text-white">
+                  {pendingFolderUpload.fileCount} {pendingFolderUpload.fileCount === 1 ? 'file' : 'files'}{' '}
+                  <span className="font-normal text-neutral-500 dark:text-neutral-400">
+                    ({formatBytes(pendingFolderUpload.totalBytes)})
+                  </span>
+                </span>
+              </div>
+              <div className="pt-2 border-t border-neutral-200/80 dark:border-neutral-700/60 text-[11px] text-neutral-500 dark:text-neutral-400">
+                Security: All files will be encrypted and scanned for threats before storage.
+              </div>
+            </div>
+
+            {/* Footer Buttons */}
+            <div className="flex flex-col-reverse sm:flex-row items-center justify-end gap-2.5 pt-1">
+              <button
+                type="button"
+                onClick={() => setPendingFolderUpload(null)}
+                className="w-full sm:w-auto px-4 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-xs sm:text-sm font-medium cursor-pointer transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const itemsToUpload = pendingFolderUpload.items;
+                  setPendingFolderUpload(null);
+                  processFolderUpload(itemsToUpload);
+                }}
+                className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 hover:opacity-90 text-xs sm:text-sm font-semibold shadow-sm cursor-pointer transition-opacity"
+              >
+                Start Upload
               </button>
             </div>
           </div>
