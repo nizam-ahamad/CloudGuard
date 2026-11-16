@@ -160,23 +160,37 @@ export function UploadProvider({ children }) {
   };
 
   const dispatchThrottledUpdates = useCallback((folderId, immediate = false) => {
-    const now = Date.now();
-    if (immediate || now - lastEventDispatchRef.current >= 1500) {
+    if (immediate) {
       if (eventDebounceTimerRef.current) {
         clearTimeout(eventDebounceTimerRef.current);
         eventDebounceTimerRef.current = null;
       }
-      lastEventDispatchRef.current = now;
+      lastEventDispatchRef.current = Date.now();
       window.dispatchEvent(new CustomEvent('cloudguard:storage-updated'));
       window.dispatchEvent(new CustomEvent('cloudguard:files-updated', { detail: { folderId } }));
-    } else if (!eventDebounceTimerRef.current) {
-      eventDebounceTimerRef.current = setTimeout(() => {
-        eventDebounceTimerRef.current = null;
-        lastEventDispatchRef.current = Date.now();
-        window.dispatchEvent(new CustomEvent('cloudguard:storage-updated'));
-        window.dispatchEvent(new CustomEvent('cloudguard:files-updated', { detail: { folderId } }));
-      }, 1500);
+      return;
     }
+
+    // Trailing debounce (2000ms): reset timer on each completed file while others are uploading/scanning
+    if (eventDebounceTimerRef.current) {
+      clearTimeout(eventDebounceTimerRef.current);
+    }
+    eventDebounceTimerRef.current = setTimeout(() => {
+      eventDebounceTimerRef.current = null;
+      lastEventDispatchRef.current = Date.now();
+      window.dispatchEvent(new CustomEvent('cloudguard:storage-updated'));
+      window.dispatchEvent(new CustomEvent('cloudguard:files-updated', { detail: { folderId } }));
+    }, 2000);
+  }, []);
+
+  // Cleanup trailing debounce timer on unmount
+  useEffect(() => {
+    return () => {
+      if (eventDebounceTimerRef.current) {
+        clearTimeout(eventDebounceTimerRef.current);
+        eventDebounceTimerRef.current = null;
+      }
+    };
   }, []);
 
   const startFolderPrep = useCallback(({ folderName, createdCount = 0, totalFolders = 0, totalFiles = 0, abortController = null }) => {
@@ -992,6 +1006,10 @@ export function UploadProvider({ children }) {
     currentBatchFailedRef.current = 0;
     emaBytesPerSecRef.current = 0;
     lastProgressSampleRef.current = { time: Date.now(), bytes: 0 };
+    if (eventDebounceTimerRef.current) {
+      clearTimeout(eventDebounceTimerRef.current);
+      eventDebounceTimerRef.current = null;
+    }
 
     // 1. Clear queue synchronously BEFORE aborting active controllers so queued items never start
     setQueue([]);
