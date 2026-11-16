@@ -701,8 +701,8 @@ export default function BinView({ onStorageUpdate, searchQuery = '' }) {
             <div className="p-3.5 rounded-xl bg-neutral-100 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-700/60 text-xs text-neutral-700 dark:text-neutral-300 space-y-1.5">
               <p>
                 {modal.type === 'empty'
-                  ? `All ${data.totalCount} items in Bin will be permanently purged from CloudGuard and Backblaze B2.`
-                  : 'Selected items will be permanently erased from CloudGuard and Backblaze B2.'}
+                  ? `All ${data.totalCount} items in Bin will be permanently purged from CloudGuard and encrypted cloud storage.`
+                  : 'Selected items will be permanently erased from CloudGuard and encrypted cloud storage.'}
               </p>
               <div className="flex items-center justify-between pt-1 border-t border-neutral-200/60 dark:border-neutral-700/60 font-medium">
                 <span className="text-neutral-500 dark:text-neutral-400">Storage to be freed:</span>

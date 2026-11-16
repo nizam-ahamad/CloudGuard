@@ -310,7 +310,7 @@ export const Dashboard = (props) => {
     }
 
     try {
-      // 2. Call createFolderHierarchy(...) to create the directory tree in MongoDB
+      // 2. Call createFolderHierarchy(...) to create the directory tree in database
       const folderMap = await createFolderHierarchy(itemsWithPaths, currentFolderId, token);
 
       // 3. Map every file to its resolved targetFolderId and pass batch to enqueueFiles(...)

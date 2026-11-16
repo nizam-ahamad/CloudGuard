@@ -50,18 +50,18 @@ function PWAInstallCard() {
   };
 
   return (
-    <div className="p-4 sm:p-5 rounded-2xl border transition-colors bg-neutral-900/60 dark:bg-neutral-900/60 border-neutral-800/80 dark:border-neutral-800/80 mt-4">
+    <div className="p-4 sm:p-5 rounded-2xl border transition-colors bg-white dark:bg-[#141414] border border-neutral-200 dark:border-[#262626] mt-4">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         {/* Left: Icon & Text Cluster */}
         <div className="flex items-start gap-3.5">
-          <div className="w-10 h-10 rounded-xl bg-blue-500/10 text-blue-500 dark:text-blue-400 flex items-center justify-center shrink-0 mt-0.5 sm:mt-0 border border-blue-500/20">
+          <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0 mt-0.5 sm:mt-0 border border-blue-100 dark:border-blue-500/20">
             <Smartphone className="w-5 h-5 stroke-[2]"/>
           </div>
           <div className="min-w-0 flex-1">
-            <h4 className="text-sm font-semibold text-neutral-100 dark:text-white tracking-tight">
+            <h4 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 tracking-tight">
               Install CloudGuard App
             </h4>
-            <p className="text-xs text-neutral-400 dark:text-neutral-400 mt-1 leading-relaxed">
+            <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 leading-relaxed">
               Add CloudGuard to your home screen or desktop for 1-tap full-screen access.
             </p>
           </div>
@@ -89,20 +89,20 @@ function PWAInstallCard() {
 
       {/* iOS Safari Instructions Helper */}
       {showIOSGuide && (
-        <div className="mt-3.5 pt-3 border-t border-neutral-800 text-xs text-neutral-300 flex items-start gap-2 animate-in fade-in">
-          <span className="text-blue-400 font-bold shrink-0">iOS:</span>
+        <div className="mt-3.5 p-3 rounded-xl bg-neutral-50 dark:bg-[#1a1a1a] border border-neutral-200 dark:border-[#262626] text-xs text-neutral-600 dark:text-neutral-400 flex items-start gap-2 animate-in fade-in">
+          <span className="text-blue-600 dark:text-blue-400 font-bold shrink-0">iOS:</span>
           <span>
-            Tap the <span className="font-semibold underline text-white">Share</span> button in Safari, then scroll down and tap <span className="font-semibold underline text-white">"Add to Home Screen"</span>.
+            Tap the <span className="font-semibold underline text-neutral-900 dark:text-neutral-200">Share</span> button in Safari, then scroll down and tap <span className="font-semibold underline text-neutral-900 dark:text-neutral-200">"Add to Home Screen"</span>.
           </span>
         </div>
       )}
 
       {/* Desktop / Browser Instructions Helper */}
       {showDesktopGuide && (
-        <div className="mt-3.5 pt-3 border-t border-neutral-800 text-xs text-neutral-300 flex items-start gap-2 animate-in fade-in">
-          <span className="text-blue-400 font-bold shrink-0">Browser:</span>
+        <div className="mt-3.5 p-3 rounded-xl bg-neutral-50 dark:bg-[#1a1a1a] border border-neutral-200 dark:border-[#262626] text-xs text-neutral-600 dark:text-neutral-400 flex items-start gap-2 animate-in fade-in">
+          <span className="text-blue-600 dark:text-blue-400 font-bold shrink-0">Browser:</span>
           <span>
-            Click the <span className="font-semibold underline text-white">Install App</span> icon (<span className="text-white font-mono">⊕</span> or computer icon) in your browser's address bar, or open your browser menu and choose <span className="font-semibold underline text-white">"Install CloudGuard"</span>.
+            Click the <span className="font-semibold underline text-neutral-900 dark:text-neutral-200">Install App</span> icon (<span className="text-neutral-900 dark:text-neutral-200 font-mono">⊕</span> or computer icon) in your browser's address bar, or open your browser menu and choose <span className="font-semibold text-neutral-900 dark:text-neutral-200">"Install CloudGuard"</span>.
           </span>
         </div>
       )}
@@ -820,7 +820,7 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
         </div>
 
         <p className="text-xs sm:text-sm text-neutral-600 dark:text-zinc-300 leading-relaxed mt-4">
-          Permanently erases your account, files, thumbnails, and cloud vault data from Backblaze B2 object storage and MongoDB. This action cannot be undone.
+          Permanently erases your account, files, thumbnails, and all encrypted cloud vault data. This action cannot be undone.
         </p>
 
         {isPaidActiveSub && (
@@ -939,7 +939,7 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
               <div className="p-3 rounded-xl bg-neutral-100 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-700/60 text-neutral-700 dark:text-neutral-300 text-xs space-y-1">
                 <p className="font-semibold text-neutral-900 dark:text-neutral-200 mb-1">This will permanently erase:</p>
                 <p>• Your profile, credentials, and settings</p>
-                <p>• All uploaded vault files stored in Backblaze B2</p>
+                <p>• All uploaded vault files and encrypted cloud storage</p>
                 <p>• All generated preview thumbnails & folders</p>
               </div>
 

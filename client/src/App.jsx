@@ -2186,7 +2186,7 @@ function App() {
     }
 
     try {
-      // 2. Create directory tree in MongoDB (bulk ensure-tree with depth fallback)
+      // 2. Create directory tree in database (bulk ensure-tree with depth fallback)
       const folderMap = await createFolderHierarchy(
         itemsWithPaths,
         activeFolderId,
