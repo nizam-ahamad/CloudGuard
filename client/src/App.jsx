@@ -24,6 +24,7 @@ import ContactUs from './pages/ContactUs';
 import AdminMonitor from './pages/AdminMonitor';
 import PhotosView, { invalidatePhotosCache } from './pages/PhotosView';
 import SubscriptionAlertBanner from './components/SubscriptionAlertBanner';
+import StorageQuotaBanner from './components/StorageQuotaBanner';
 import { computeSHA256 } from './pages/Dashboard';
 import { generateMediaThumbnail } from './utils/thumbnailHelper';
 import { 
@@ -3065,6 +3066,10 @@ function App() {
         className={`pt-24 pb-28 px-margin-mobile md:px-margin-desktop max-w-container-max mx-auto w-full min-h-screen bg-white dark:bg-[#131314] transition-all duration-300 ease-in-out ${isCollapsed ? 'md:ml-20' : 'md:ml-64'}`}
       >
         <SubscriptionAlertBanner />
+        <StorageQuotaBanner
+          storageUsed={storageStats?.storageUsed || storageStats?.usedBytes || storageStats?.used || 0}
+          storageLimit={storageStats?.storageLimit || storageStats?.totalLimitBytes || storageStats?.limit || defaultStorageLimit || 5368709120}
+        />
         {isSettingsOpen ? (
           <div className="max-w-3xl mx-auto space-y-6">
             <h2 className="font-headline-md text-headline-md font-bold text-on-surface dark:text-[#e3e3e3] mb-8">Profile Settings</h2>
