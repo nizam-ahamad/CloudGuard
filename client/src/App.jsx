@@ -3001,17 +3001,10 @@ function App() {
               >
                 {user?.name ? user.name.charAt(0).toUpperCase() : 'S'}
               </div>
-<<<<<<< HEAD
-              <div className={`absolute right-0 mt-2 w-48 bg-surface-container-lowest dark:bg-[#1e1f20] border border-outline-variant dark:border-zinc-800 shadow-lg rounded-xl overflow-hidden z-50 transition-all duration-200 ease-out origin-top-right ${showProfileMenu ? 'opacity-100 scale-100 visible translate-y-0' : 'opacity-0 scale-95 invisible -translate-y-2 pointer-events-none'}`}>
-                <div className="px-4 py-3 border-b border-outline-variant dark:border-zinc-800 bg-surface-container-low dark:bg-[#131314] cursor-default">
-                  <p className="text-sm font-bold text-on-surface dark:text-[#e3e3e3] truncate">{user?.name || 'User'}</p>
-                  <p className="text-xs text-on-surface-variant dark:text-[#c4c7c5] truncate">{user?.email || ''}</p>
-=======
               <div className={`absolute right-0 mt-2 w-48 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 shadow-xl rounded-xl overflow-hidden z-50 transition-all duration-200 ease-out origin-top-right ${showProfileMenu ? 'opacity-100 scale-100 visible translate-y-0' : 'opacity-0 scale-95 invisible -translate-y-2 pointer-events-none'}`}>
                 <div className="px-4 py-3 border-b border-neutral-200 dark:border-zinc-800 bg-neutral-50 dark:bg-[#131314] cursor-default">
                   <p className="text-sm font-bold text-neutral-900 dark:text-[#e3e3e3] truncate">{user?.name || 'User'}</p>
                   <p className="text-xs text-neutral-500 dark:text-[#c4c7c5] truncate">{user?.email || ''}</p>
->>>>>>> feature/cashfree-payments
                 </div>
                 <button 
                   type="button"
@@ -3795,11 +3788,8 @@ function App() {
                     <ErrorBoundary key={file?._id || file?.id || Math.random()}>
                     <tr 
                       onClick={() => file.isFolder ? setCurrentDirectory(file.diskName || file.name) : handlePreview(file)}
-<<<<<<< HEAD
-=======
                       onMouseEnter={() => !file.isFolder && prefetchAccessUrl(file._id, token)}
                       onTouchStart={() => !file.isFolder && prefetchAccessUrl(file._id, token)}
->>>>>>> feature/cashfree-payments
                       className={`flex flex-wrap md:table-row items-center py-3 px-4 md:p-0 hover:bg-surface-bright dark:hover:bg-zinc-800/70 dark:text-zinc-300 transition-colors group md:h-14 ${
                         selectedFileIds.includes(String(file._id)) ? 'bg-neutral-100 dark:bg-zinc-800/60' : ''
                       } ${file.isFolder || (!file.isMalicious && file.status !== 'Malicious' && file.status !== 'malware' && file.securityStatus !== 'threat_purged') ? 'cursor-pointer' : ''}`}
@@ -3888,11 +3878,7 @@ function App() {
                               </button>
                             )}
                             {!file.isFolder && !file.isMalicious && file.status !== 'Malicious' && file.status !== 'malware' && file.securityStatus !== 'threat_purged' && (
-<<<<<<< HEAD
-                              <button onClick={(e) => { e.stopPropagation(); setActiveMenuId(null); handleDownload(file); }} className="w-full text-left px-4 py-2.5 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-neutral-700 transition-colors flex items-center gap-3">
-=======
                               <button onClick={(e) => { e.stopPropagation(); setActiveMenuId(null); handleDownload(file); }} className="w-full text-left px-4 py-2.5 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:text-gray-900 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-neutral-700/80 transition-colors flex items-center gap-3 cursor-pointer">
->>>>>>> feature/cashfree-payments
                                 <span className="material-symbols-outlined text-[18px]">download</span> Download
                               </button>
                             )}

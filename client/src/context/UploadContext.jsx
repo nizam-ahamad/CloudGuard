@@ -8,16 +8,10 @@ import { API_BASE_URL } from '../config';
 
 const UploadContext = createContext(null);
 const MAX_CONCURRENT_UPLOADS = 2;
-<<<<<<< HEAD
-const MULTIPART_THRESHOLD = 100 * 1024 * 1024; // 100 MB
-const MULTIPART_PART_CONCURRENCY = 3;
-const MAX_PART_RETRIES = 5; // ~30s total resilience window (1s, 2s, 4s, 8s, 15s backoff)
-=======
 const MULTIPART_THRESHOLD = 25 * 1024 * 1024; // 25 MB
 const MULTIPART_PART_CONCURRENCY = 3;
 const MAX_PART_RETRIES = 6;
 const TERMINAL_STATUSES = new Set(['clean', 'threat_purged', 'error']);
->>>>>>> feature/cashfree-payments
 
 // Dedicated Axios instance without default Authorization header for direct S3 PUTs
 const s3Axios = axios.create();
@@ -630,135 +624,6 @@ export function UploadProvider({ children }) {
     }
   };
 
-  const uploadLargeFileMultipart = async ({ id, file, folderId, headers, updateItem }) => {
-    // 1. Acquire multipart session + 512px thumbnail in parallel
-    let initRes, thumbnail;
-    try {
-      [initRes, thumbnail] = await Promise.all([
-        axios.post(
-          `${API_BASE_URL || ''}/api/files/multipart/init`,
-          {
-            fileName: file.name,
-            fileSize: file.size,
-            mimeType: file.type || 'application/octet-stream',
-            folderId: folderId || null,
-          },
-          { headers }
-        ),
-        generateMediaThumbnail(file),
-      ]);
-    } catch (initErr) {
-      if (initErr.response?.status === 403) {
-        const quotaError = new Error('Storage quota exceeded');
-        quotaError.isQuota = true;
-        quotaError.errorData = initErr.response?.data;
-        throw quotaError;
-      }
-      throw new Error(initErr.response?.data?.error || 'Failed to initialize multipart upload');
-    }
-
-    const { fileId, s3Key, uploadId, partSize, partUrls } = initRes.data;
-    updateItem(id, { status: 'uploading', progress: 10 });
-
-    const partProgressMap = new Array(partUrls.length).fill(0);
-    const completedParts = new Array(partUrls.length);
-    let nextPartIdx = 0;
-    let isAborted = false;
-    const abortController = new AbortController();
-
-    const syncAggregateProgress = () => {
-      if (isAborted) return;
-      const totalLoaded = partProgressMap.reduce((sum, b) => sum + b, 0);
-      const percent = Math.min(95, Math.max(10, Math.round((totalLoaded * 100) / file.size)));
-      updateItem(id, { progress: percent, uploadedBytes: totalLoaded });
-    };
-
-    const uploadSinglePartWithRetry = async (partMeta, index) => {
-      const start = index * partSize;
-      const end = Math.min(start + partSize, file.size);
-      const chunkBlob = file.slice(start, end); // Zero-copy disk slice
-
-      let attempt = 0;
-      while (attempt < MAX_PART_RETRIES) {
-        if (isAborted) throw new Error('Multipart upload aborted');
-        try {
-          partProgressMap[index] = 0;
-          const putRes = await s3Axios.put(partMeta.signedUrl, chunkBlob, {
-            signal: abortController.signal,
-            headers: { 'Content-Type': 'application/octet-stream' },
-            transformRequest: [
-              (data, reqHeaders) => {
-                if (reqHeaders) {
-                  delete reqHeaders.Authorization;
-                  delete reqHeaders.authorization;
-                }
-                return data;
-              },
-            ],
-            onUploadProgress: (progressEvent) => {
-              if (isAborted) return;
-              partProgressMap[index] = progressEvent.loaded || 0;
-              syncAggregateProgress();
-            },
-          });
-
-          const eTag = putRes.headers?.etag || putRes.headers?.ETag;
-          if (!eTag) {
-            throw new Error('Bucket CORS missing ExposeHeaders: ["ETag"]');
-          }
-
-          partProgressMap[index] = chunkBlob.size;
-          syncAggregateProgress();
-          completedParts[index] = { PartNumber: partMeta.partNumber, ETag: eTag };
-          return;
-        } catch (err) {
-          if (isAborted) throw err;
-          attempt += 1;
-          if (attempt >= MAX_PART_RETRIES) throw err;
-          // Exponential backoff capped at 15s (1s, 2s, 4s, 8s, 15s)
-          const backoffMs = Math.min(15000, 1000 * Math.pow(2, attempt - 1));
-          await new Promise((r) => setTimeout(r, backoffMs));
-        }
-      }
-    };
-
-    try {
-      // 2. Stream chunks with 3 parallel workers + compute header SHA-256 concurrently
-      const runWorkers = async () => {
-        const workers = Array.from(
-          { length: Math.min(MULTIPART_PART_CONCURRENCY, partUrls.length) },
-          async () => {
-            while (!isAborted && nextPartIdx < partUrls.length) {
-              const currentIdx = nextPartIdx++;
-              await uploadSinglePartWithRetry(partUrls[currentIdx], currentIdx);
-            }
-          }
-        );
-        await Promise.all(workers);
-      };
-
-      const [sha256] = await Promise.all([computeFileSHA256(file), runWorkers()]);
-
-      // 3. Complete multipart assembly on S3 / Backblaze B2
-      await axios.post(
-        `${API_BASE_URL || ''}/api/files/multipart/complete`,
-        { fileId, s3Key, uploadId, parts: completedParts },
-        { headers }
-      );
-
-      return { fileId, s3Key, sha256, thumbnail };
-    } catch (err) {
-      isAborted = true;
-      abortController.abort();
-
-      // Abort orphaned chunks on storage bucket & clean up pending DB record
-      await axios
-        .post(`${API_BASE_URL || ''}/api/files/multipart/abort`, { fileId, s3Key, uploadId }, { headers })
-        .catch(() => {});
-      throw err;
-    }
-  };
-
   const processQueueItem = async (item) => {
     const { id, file, folderId } = item;
     if (batchCancelledRef.current) return;
@@ -781,17 +646,6 @@ export function UploadProvider({ children }) {
             folderId,
             headers,
             updateItem,
-<<<<<<< HEAD
-          }));
-        } catch (mpErr) {
-          if (mpErr.isQuota) {
-            updateItem(id, {
-              status: 'error',
-              error: 'Storage quota exceeded',
-              progress: 100,
-            });
-            toast.error(`Not enough vault storage for "${file.name}".`, { id: `quota-${id}` });
-=======
             signal: controller.signal,
           }));
         } catch (mpErr) {
@@ -839,7 +693,6 @@ export function UploadProvider({ children }) {
             if (!batchCancelledRef.current && !controller.signal.aborted) {
               toast.error(`Not enough storage in vault for "${file.name}".`, { id: `quota-${id}` });
             }
->>>>>>> feature/cashfree-payments
             return;
           }
           throw mpErr;
@@ -859,11 +712,7 @@ export function UploadProvider({ children }) {
                 mimeType: file.type || 'application/octet-stream',
                 folderId: folderId || null,
               },
-<<<<<<< HEAD
-              { headers }
-=======
               { headers, signal: controller.signal }
->>>>>>> feature/cashfree-payments
             ),
             generateMediaThumbnail(file),
           ]);
@@ -871,16 +720,6 @@ export function UploadProvider({ children }) {
           thumbnail = thumb;
           fileId = ticket.fileId;
           s3Key = ticket.s3Key;
-<<<<<<< HEAD
-        } catch (err) {
-          if (err.response?.status === 403) {
-            updateItem(id, {
-              status: 'error',
-              error: 'Storage quota exceeded',
-              progress: 100,
-            });
-            toast.error(`Not enough vault storage for "${file.name}".`, { id: `quota-${id}` });
-=======
           activeTicketsRef.current.set(id, { fileId, s3Key, uploadId: null });
 
           if (batchCancelledRef.current || controller.signal.aborted) {
@@ -940,19 +779,11 @@ export function UploadProvider({ children }) {
             if (!batchCancelledRef.current && !controller.signal.aborted) {
               toast.error(`Not enough vault storage for "${file.name}".`, { id: `quota-${id}` });
             }
->>>>>>> feature/cashfree-payments
             return;
           }
           throw new Error(err.response?.data?.error || 'Failed to acquire upload ticket');
         }
 
-<<<<<<< HEAD
-        updateItem(id, { status: 'uploading', progress: 10 });
-
-        const [computedHash] = await Promise.all([
-          computeFileSHA256(file),
-          s3Axios.put(ticket.presignedUrl, file, {
-=======
         if (batchCancelledRef.current || controller.signal.aborted) return;
         updateItem(id, { status: 'uploading', progress: 10 });
 
@@ -961,7 +792,6 @@ export function UploadProvider({ children }) {
           computeFileSHA256(file),
           s3Axios.put(ticket.presignedUrl, file, {
             signal: controller.signal,
->>>>>>> feature/cashfree-payments
             headers: { 'Content-Type': file.type || 'application/octet-stream' },
             transformRequest: [(data, reqHeaders) => {
               if (reqHeaders) {
@@ -971,21 +801,12 @@ export function UploadProvider({ children }) {
               return data;
             }],
             onUploadProgress: (progressEvent) => {
-<<<<<<< HEAD
-=======
               if (controller.signal.aborted || batchCancelledRef.current) return;
->>>>>>> feature/cashfree-payments
               if (progressEvent.total) {
                 const percent = Math.min(
                   95,
                   Math.round((progressEvent.loaded * 100) / progressEvent.total)
                 );
-<<<<<<< HEAD
-                updateItem(id, {
-                  progress: percent,
-                  uploadedBytes: progressEvent.loaded,
-                });
-=======
                 const now = Date.now();
                 if (now - lastSingleProgressTime >= 150 || percent >= 95) {
                   lastSingleProgressTime = now;
@@ -995,7 +816,6 @@ export function UploadProvider({ children }) {
                   });
                   trackByteSpeedTick();
                 }
->>>>>>> feature/cashfree-payments
               }
             },
           }),
@@ -1003,11 +823,8 @@ export function UploadProvider({ children }) {
         sha256 = computedHash;
       }
 
-<<<<<<< HEAD
-=======
       if (batchCancelledRef.current || controller.signal.aborted) return;
 
->>>>>>> feature/cashfree-payments
       // Step 3: Finalize upload with backend, attaching thumbnail
       updateItem(id, { status: 'finalizing', progress: 96, uploadedBytes: file.size });
 
@@ -1550,19 +1367,6 @@ export const HeaderUploadButton = () => {
                     </p>
                   </div>
                 </div>
-<<<<<<< HEAD
-
-                {['uploading', 'hashing', 'finalizing'].includes(item.status) && (
-                  <div className="w-full bg-neutral-200 dark:bg-neutral-800 h-1 rounded-full overflow-hidden mt-1">
-                    <div
-                      className={`h-full transition-all duration-150 ${
-                        item.status === 'finalizing' ? 'bg-amber-500' : 'bg-blue-600'
-                      }`}
-                      style={{ width: `${item.progress}%` }}
-                    />
-                  </div>
-                )}
-=======
                 <button
                   type="button"
                   onClick={cancelFolderPrep}
@@ -1570,7 +1374,6 @@ export const HeaderUploadButton = () => {
                 >
                   Cancel
                 </button>
->>>>>>> feature/cashfree-payments
               </div>
               <div className="w-full bg-blue-200 dark:bg-blue-900/60 h-1.5 rounded-full overflow-hidden">
                 <div
