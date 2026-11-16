@@ -529,7 +529,12 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
                   Current Tier: <strong className="text-neutral-800 dark:text-neutral-200 capitalize">
                     {subData?.subscription?.planId ? subData.subscription.planId.replace('_', ' ') : 'Free Trial (5 GB)'}
                   </strong>
-                  {subData?.subscription?.expiresAt && subData.subscription.planId !== 'free' ? (
+                  {subData?.subscription?.expiresAt && subData.subscription.planId === 'trial' ? (
+                        <>
+                          {" "}• 14-Day Free Trial<br />
+                          {`Trial ends: ${new Date(subData.subscription.expiresAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`}
+                        </>
+                      ) : subData?.subscription?.expiresAt && subData.subscription.planId !== 'free' ? (
                     <>
                       {' '}• Billing Cycle: <span className="capitalize font-semibold text-neutral-800 dark:text-neutral-200">{subData.subscription.billingCycle || 'Monthly'}</span>
                       <br />
@@ -560,7 +565,7 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
               >
                 Restore Access
               </a>
-            ) : (!subData?.subscription || subData.subscription.planId === 'free') ? (
+            ) : (!subData?.subscription || subData.subscription.planId === 'free' || subData.subscription.planId === 'trial') ? (
               <a
                 href="/pricing"
                 className="text-xs font-semibold px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white transition-colors shrink-0 whitespace-nowrap"
