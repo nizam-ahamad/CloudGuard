@@ -841,22 +841,22 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
               </label>
               <div className="relative">
                 <input
-                  type={showDeletePassword ? 'text' : 'password'}
-                  name="cloudguard-account-purge-verify"
+                  type="text"
+                  style={{ WebkitTextSecurity: showDeletePassword ? 'none' : 'disc' }}
+                  name="danger-zone-confirm-secret"
                   id="danger-zone-verify-pass"
                   value={deletePassword}
                   onChange={(e) => setDeletePassword(e.target.value)}
                   placeholder="Enter your password to verify ownership"
-                  autoComplete="new-password"
+                  autoComplete="off"
                   autoCorrect="off"
                   autoCapitalize="off"
-                  spellCheck="false"
+                  spellCheck={false}
                   data-lpignore="true"
                   data-1p-ignore="true"
+                  data-form-type="other"
                   readOnly
-                  onFocus={(e) => {
-                    e.target.readOnly = false;
-                  }}
+                  onFocus={(e) => e.currentTarget.removeAttribute('readOnly')}
                   className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-white dark:bg-[#121212] border border-neutral-300 dark:border-neutral-700 text-sm text-neutral-900 dark:text-white placeholder-neutral-400 dark:placeholder-zinc-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500/30 transition-colors shadow-sm"
                 />
                 <button
