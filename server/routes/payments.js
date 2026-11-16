@@ -17,10 +17,12 @@ const {
 
 const router = express.Router();
 
-const CASHFREE_BASE_URL =
-  process.env.CASHFREE_ENV === 'PRODUCTION'
-    ? 'https://api.cashfree.com/pg'
-    : 'https://sandbox.cashfree.com/pg';
+const isProductionCashfree =
+  String(process.env.CASHFREE_ENV || '').trim().toUpperCase() === 'PRODUCTION';
+
+const CASHFREE_BASE_URL = isProductionCashfree
+  ? 'https://api.cashfree.com/pg'
+  : 'https://sandbox.cashfree.com/pg';
 
 const REFUND_MAX_PEAK_BYTES = 2 * 1024 * 1024 * 1024; // 2 GB (2,147,483,648 bytes)
 
@@ -336,7 +338,8 @@ router.post('/create-order', auth, async (req, res) => {
       orderId: response.data.order_id,
       paymentSessionId: response.data.payment_session_id,
       transitionType: transition.transitionType,
-      payableAmount: transition.payableAmount
+      payableAmount: transition.payableAmount,
+      cashfreeEnv: isProductionCashfree ? 'production' : 'sandbox',
     });
   } catch (err) {
     console.error('[Cashfree Order Error]:', err.response?.data || err.message);

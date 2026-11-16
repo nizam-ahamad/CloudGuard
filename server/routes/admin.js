@@ -24,7 +24,7 @@ function formatPlanLabel(planId) {
     case 'max':
       return 'Max';
     case 'trial':
-      return 'Trial';
+      return 'Trial (14d)';
     case 'free':
       return 'Free';
     default:
@@ -155,6 +155,7 @@ router.get('/overview', async (req, res) => {
         createdAt: user.createdAt,
         plan: user.plan,
         planLabel,
+        trialExpiresAt: user.trialExpiresAt,
         storageUsed: user.storageUsed || 0,
         storageLimit: user.storageLimit || 5368709120,
         subscription: {

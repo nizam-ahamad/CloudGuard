@@ -54,7 +54,7 @@ const userSchema = new mongoose.Schema(
     },
     plan: {
       type: String,
-      default: 'free',
+      default: 'trial',
     },
     trialExpiresAt: {
       type: Date,
@@ -67,8 +67,8 @@ const userSchema = new mongoose.Schema(
     subscription: {
       planId: { 
         type: String, 
-        enum: ['free', 'tier_50gb', 'tier_100gb', 'tier_200gb'], 
-        default: 'free' 
+        enum: ['free', 'trial', 'tier_50gb', 'tier_100gb', 'tier_200gb'], 
+        default: 'trial' 
       },
       billingCycle: { 
         type: String, 

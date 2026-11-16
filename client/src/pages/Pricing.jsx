@@ -165,9 +165,9 @@ export default function Pricing() {
   const token = localStorage.getItem('token') || sessionStorage.getItem('token');
   const ctaLink = token ? '/dashboard' : '/login';
 
-  const loadCashfree = async () => {
+  const loadCashfree = async (mode = 'production') => {
     if (typeof window.Cashfree === 'function') {
-      return window.Cashfree({ mode: 'sandbox' });
+      return window.Cashfree({ mode });
     }
     throw new Error('Cashfree SDK is not loaded. Please refresh and try again.');
   };
@@ -446,10 +446,11 @@ export default function Pricing() {
       }
 
       // CASE 2: Paid Transition / Standard Purchase via Cashfree
-      const { paymentSessionId, orderId } = res.data;
+      const { paymentSessionId, orderId, cashfreeEnv } = res.data;
       if (!paymentSessionId) throw new Error('Payment session initialization failed');
 
-      const cashfree = await loadCashfree();
+      const mode = cashfreeEnv === 'production' ? 'production' : 'sandbox';
+      const cashfree = await loadCashfree(mode);
       const checkoutOptions = {
         paymentSessionId,
         redirectTarget: '_modal',

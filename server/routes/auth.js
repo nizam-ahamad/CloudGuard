@@ -142,9 +142,17 @@ router.post('/google', async (req, res) => {
           refundCount: priorDeletedLog.refundCount || 0,
         };
       } else {
+        const trialExpiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
         newGoogleUser.trialAlreadyUsed = false;
         newGoogleUser.plan = 'trial';
-        newGoogleUser.trialExpiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+        newGoogleUser.trialExpiresAt = trialExpiresAt;
+        newGoogleUser.subscription = {
+          planId: 'trial',
+          billingCycle: 'none',
+          status: 'active',
+          expiresAt: trialExpiresAt,
+          startDate: new Date(),
+        };
       }
 
       user = await User.create(newGoogleUser);
@@ -250,9 +258,17 @@ router.post('/register', authLimiter, async (req, res) => {
         refundCount: priorDeletedLog.refundCount || 0,
       };
     } else {
+      const trialExpiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
       newUserPayload.trialAlreadyUsed = false;
       newUserPayload.plan = 'trial';
-      newUserPayload.trialExpiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+      newUserPayload.trialExpiresAt = trialExpiresAt;
+      newUserPayload.subscription = {
+        planId: 'trial',
+        billingCycle: 'none',
+        status: 'active',
+        expiresAt: trialExpiresAt,
+        startDate: new Date(),
+      };
     }
 
     const newUser = await User.create(newUserPayload);
@@ -313,9 +329,18 @@ router.post('/verify-activation-otp', otpLimiter, async (req, res) => {
         refundCount: priorDeletedLog.refundCount || 0,
       };
     } else if (!user.trialExpiresAt && user.plan !== 'free') {
+      const trialExpiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
       user.trialAlreadyUsed = false;
       user.plan = 'trial';
-      user.trialExpiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+      user.trialExpiresAt = trialExpiresAt;
+      user.subscription = {
+        ...(user.subscription || {}),
+        planId: 'trial',
+        billingCycle: 'none',
+        status: 'active',
+        expiresAt: trialExpiresAt,
+        startDate: new Date(),
+      };
     }
 
     await user.save();
@@ -386,9 +411,18 @@ router.post('/verify-otp', otpLimiter, async (req, res) => {
         refundCount: priorDeletedLog.refundCount || 0,
       };
     } else if (!user.trialExpiresAt && user.plan !== 'free') {
+      const trialExpiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
       user.trialAlreadyUsed = false;
       user.plan = 'trial';
-      user.trialExpiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+      user.trialExpiresAt = trialExpiresAt;
+      user.subscription = {
+        ...(user.subscription || {}),
+        planId: 'trial',
+        billingCycle: 'none',
+        status: 'active',
+        expiresAt: trialExpiresAt,
+        startDate: new Date(),
+      };
     }
 
     await user.save();

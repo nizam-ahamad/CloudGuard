@@ -62,7 +62,7 @@ function formatDate(dateStr) {
   }
 }
 
-function formatPlanName(planId) {
+function formatPlanName(planId, trialExpiresAt) {
   if (!planId) return 'Free';
   const id = String(planId).toLowerCase().trim();
   switch (id) {
@@ -77,8 +77,14 @@ function formatPlanName(planId) {
       return 'Ultra (200 GB)';
     case 'max':
       return 'Max';
-    case 'trial':
-      return 'Trial';
+    case 'trial': {
+      if (trialExpiresAt) {
+        const msLeft = new Date(trialExpiresAt).getTime() - Date.now();
+        const daysLeft = Math.max(0, Math.ceil(msLeft / (1000 * 60 * 60 * 24)));
+        return `Trial (14d) • ${daysLeft}d left`;
+      }
+      return 'Trial (14d)';
+    }
     case 'free':
       return 'Free';
     default:
@@ -385,14 +391,17 @@ export default function AdminMonitor() {
                 ) : (
                   filteredUsers.map((u) => {
                     const planId = u.subscription?.planId || u.plan || 'free';
-                    const planDisplay = u.planLabel || formatPlanName(planId);
+                    const rawPlan = String(planId).toLowerCase();
+                    const trialExp = u.trialExpiresAt || u.subscription?.expiresAt;
+                    const planDisplay = rawPlan === 'trial'
+                      ? formatPlanName(planId, trialExp)
+                      : (u.planLabel || formatPlanName(planId));
                     const billingCycle = u.subscription?.billingCycle || 'none';
                     const status = u.subscription?.status || 'active';
                     const peakBytes = u.peakBytes !== undefined ? u.peakBytes : Math.max(u.subscription?.peakStorageBytes || 0, u.storageUsed || 0);
                     const peakGB = (peakBytes / (1024 * 1024 * 1024)).toFixed(2);
                     const remainingDays = u.ageDays !== null ? Math.max(0, (7 - u.ageDays)).toFixed(1) : null;
 
-                    const rawPlan = String(planId).toLowerCase();
                     const refundCount = u.refundCount !== undefined ? u.refundCount : (u.subscription?.refundCount || 0);
                     const hasRefundClaimed = refundCount >= 1 || u.refundIneligibleReason === 'Prior Refund Already Claimed' || Boolean(u.hasPriorRefund);
                     const canResetAfterRefund = u.refundEligible === true && refundCount === 0 && !hasRefundClaimed;
@@ -416,6 +425,7 @@ export default function AdminMonitor() {
                         <td className="py-3 px-4">
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <span className={`px-2 py-0.5 rounded text-[11px] font-medium ${
+                              rawPlan === 'trial' ? 'bg-sky-950/60 text-sky-300 border border-sky-800/50' :
                               rawPlan.includes('200') || rawPlan === 'ultra' ? 'bg-purple-950/60 text-purple-300 border border-purple-800/50' :
                               rawPlan.includes('100') || rawPlan === 'pro' ? 'bg-blue-950/60 text-blue-300 border border-blue-800/50' :
                               rawPlan.includes('50') || rawPlan === 'essential' ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-800/50' :
