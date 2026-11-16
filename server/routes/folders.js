@@ -9,6 +9,8 @@ const authMiddleware = require('../middleware/auth');
 const { buildTenantQuery } = require('../utils/tenantQuery');
 const { permanentlyDeleteS3Keys } = require('../utils/s3Delete');
 
+const escapeRegex = (string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 const s3Client = new S3Client({
   region: process.env.AWS_REGION || 'eu-central-003',
   ...(process.env.AWS_ENDPOINT ? { endpoint: process.env.AWS_ENDPOINT } : {}),
@@ -627,7 +629,10 @@ router.get('/', authMiddleware, async (req, res) => {
       isTrash: { $ne: true },
     };
 
-    if (req.query.all !== 'true') {
+    const searchQuery = (req.query.search || req.query.q || '').trim();
+    if (searchQuery) {
+      filter.name = { $regex: escapeRegex(searchQuery), $options: 'i' };
+    } else if (req.query.all !== 'true') {
       filter.parentId = parentId || null;
     }
 
@@ -692,10 +697,11 @@ router.delete('/:id', authMiddleware, async (req, res) => {
     let freedBytes = 0;
     for (const f of files) freedBytes += (f.size || 0);
 
-    // Soft-delete
+    // Soft-delete folder, descendant folders, and child files to 30-Day Bin
+    const trashedAt = new Date();
     await Folder.updateMany(
       { _id: { $in: allFolderObjectIds }, ...userMatch },
-      { $set: { isTrash: true, trashedAt: new Date() } }
+      { $set: { isTrash: true, trashedAt } }
     );
     await File.updateMany(
       {
@@ -711,69 +717,18 @@ router.delete('/:id', authMiddleware, async (req, res) => {
           },
         ],
       },
-      { $set: { isTrash: true, trashedAt: new Date() } }
+      { $set: { isTrash: true, trashedAt } }
     );
 
-    if (freedBytes > 0) {
-      const u = await User.findById(rawUserId);
-      if (u) {
-        u.storageUsed = Math.max(0, (u.storageUsed || 0) - Math.abs(freedBytes));
-        await u.save();
-      }
-    }
+    // In 30-Day Bin lifecycle: items stay in Backblaze B2 and continue counting toward storage quota.
+    // Zero quota deduction and zero premature purge on soft-delete!
 
-    // Schedule S3 purge after 12s
-    setTimeout(async () => {
-      try {
-        const checkFolder = await Folder.findOne({ _id: folderId, isTrash: true, ...userMatch });
-        if (!checkFolder) return; // Restored!
-
-        const childFiles = await File.find({
-          $and: [
-            userMatch,
-            {
-              $or: [
-                { folder: { $in: allFolderObjectIds } },
-                { folderId: { $in: allFolderObjectIds } },
-                { folder: { $in: allFolderStringIds } },
-                { folderId: { $in: allFolderStringIds } },
-              ],
-            },
-            { isTrash: true },
-          ],
-        });
-
-        const keys = [];
-        for (const cf of childFiles) {
-          if (cf.s3Key) keys.push(cf.s3Key);
-          if (cf.thumbnailKey) keys.push(cf.thumbnailKey);
-        }
-
-        if (keys.length > 0) {
-          const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || 'cloudguard-vault-mumbai-2026';
-          await permanentlyDeleteS3Keys(s3Client, bucket, keys).catch((e) => console.warn(`[Folder Child Purge Warning] ${e.message}`));
-        }
-
-        await File.deleteMany({
-          $and: [
-            userMatch,
-            {
-              $or: [
-                { folder: { $in: allFolderObjectIds } },
-                { folderId: { $in: allFolderObjectIds } },
-                { folder: { $in: allFolderStringIds } },
-                { folderId: { $in: allFolderStringIds } },
-              ],
-            },
-          ],
-        });
-        await Folder.deleteMany({ _id: { $in: allFolderObjectIds }, ...userMatch });
-      } catch (err) {
-        console.error('[Deferred Folder Purge Error]:', err);
-      }
-    }, 12000);
-
-    return res.status(200).json({ success: true, message: 'Folder deleted', folderId: folder._id });
+    return res.status(200).json({
+      success: true,
+      message: 'Moved to Bin • Auto-deletes in 30 days',
+      folderId: folder._id,
+      deletedFolderIds: allFolderIds,
+    });
   } catch (err) {
     console.error('Folder delete error:', err);
     return res.status(500).json({ error: 'Failed to delete folder' });

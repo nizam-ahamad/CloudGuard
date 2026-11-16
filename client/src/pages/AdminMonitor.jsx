@@ -188,7 +188,24 @@ export default function AdminMonitor() {
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-neutral-100 font-sans selection:bg-neutral-800 pb-16">
-      <Toaster position="top-right" toastOptions={{ style: { background: '#1c1c1e', color: '#fff', border: '1px solid #333' } }} />
+      <Toaster 
+        position="top-right" 
+        toastOptions={{
+          className: '!bg-white/95 !text-slate-900 !border !border-slate-200 !shadow-xl dark:!bg-slate-900/95 dark:!text-slate-100 dark:!border-slate-700/80 dark:!shadow-2xl !backdrop-blur-md !rounded-xl !text-xs sm:!text-sm',
+          success: {
+            iconTheme: {
+              primary: '#10b981',
+              secondary: '#fff',
+            },
+          },
+          error: {
+            iconTheme: {
+              primary: '#f43f5e',
+              secondary: '#fff',
+            },
+          },
+        }}
+      />
 
       {/* Top Header */}
       <header className="border-b border-[#262626] bg-[#121212]/80 backdrop-blur-md sticky top-0 z-30 px-4 sm:px-8 py-3.5">

@@ -246,6 +246,27 @@ export default function Pricing() {
   const userBillingCycle = user?.subscription?.billingCycle || userSubData?.subscription?.billingCycle || 'monthly';
   const userSubStatus = user?.subscription?.status || userSubData?.subscription?.status || 'active';
 
+  const expiresAtDate = (user?.subscription?.expiresAt || userSubData?.subscription?.expiresAt)
+    ? new Date(user?.subscription?.expiresAt || userSubData?.subscription?.expiresAt)
+    : null;
+  const daysRemaining = expiresAtDate
+    ? Math.max(0, Math.ceil((expiresAtDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
+    : 0;
+  const formattedExpiryDate = expiresAtDate
+    ? expiresAtDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+    : '';
+
+  const isAnnualSubscriber =
+    (user?.subscription?.billingCycle === 'annual' || userBillingCycle === 'annual') &&
+    (user?.subscription?.status === 'active' || userSubStatus === 'active') &&
+    expiresAtDate &&
+    expiresAtDate > new Date();
+
+  const isBlockedAnnualToMonthly =
+    billingCycle === 'monthly' &&
+    isAnnualSubscriber &&
+    daysRemaining > 15;
+
   // Defensive currency & number formatter
   const formatPrice = (val) => {
     if (val === null || val === undefined) return '₹0';
@@ -298,6 +319,10 @@ export default function Pricing() {
   const handleCycleChange = (cycle) => {
     setBillingCycle(cycle);
     if (orderSummaryPlan) {
+      if (cycle === 'monthly' && isAnnualSubscriber && daysRemaining > 15) {
+        setOrderSummaryPlan(null);
+        return;
+      }
       const matched = TIERS_CONFIG.find((t) => t.id === orderSummaryPlan.plan.id || t.tierId === orderSummaryPlan.plan.tierId) || orderSummaryPlan.plan;
       if (matched) {
         const preview = previews[`${matched.tierId}_${cycle}`] || (previews[matched.tierId]?.targetBillingCycle === cycle ? previews[matched.tierId] : null);
@@ -317,6 +342,11 @@ export default function Pricing() {
 
   const handleSelectPlan = (plan) => {
     if (!plan) return;
+
+    if (isBlockedAnnualToMonthly) {
+      toast.error('Annual plans cannot switch to monthly mid-cycle. Upgrade to an Annual tier today or switch to Monthly within 15 days of renewal.');
+      return;
+    }
 
     const isFree = plan.tierId === 'free' || plan.id === 'trial' || plan.price === 0 || plan.price === '₹0';
     const targetTierId = plan.tierId || (plan.id === 'essential' ? 'tier_50gb' : plan.id === 'pro' ? 'tier_100gb' : plan.id === 'ultra' ? 'tier_200gb' : plan.id);
@@ -697,6 +727,26 @@ export default function Pricing() {
               user?.subscription?.scheduledDowngrade?.targetPlanId === plan.tierId ||
               userSubData?.subscription?.scheduledDowngrade?.targetPlanId === plan.tierId;
 
+            const STORAGE_MAP = {
+              free: 5,
+              trial: 5,
+              tier_50gb: 50,
+              tier_100gb: 100,
+              tier_200gb: 200,
+            };
+            const currentStorageGB = STORAGE_MAP[userPlanId] || 5;
+            const targetStorageGB = STORAGE_MAP[plan.tierId] || 5;
+
+            const planBlockedAnnualToMonthly =
+              plan.id !== 'trial' &&
+              (preview?.transitionType === 'BLOCKED_ANNUAL_TO_MONTHLY' ||
+                (billingCycle === 'monthly' &&
+                  (user?.subscription?.billingCycle === 'annual' || userBillingCycle === 'annual') &&
+                  (user?.subscription?.status === 'active' || userSubStatus === 'active') &&
+                  expiresAtDate &&
+                  expiresAtDate > new Date() &&
+                  daysRemaining > 15));
+
             return (
               <div
                 key={plan.id}
@@ -779,6 +829,23 @@ export default function Pricing() {
                     </button>
                   )
                 ) : (() => {
+                  if (planBlockedAnnualToMonthly) {
+                    return (
+                      <div>
+                        <button
+                          disabled={true}
+                          type="button"
+                          className="w-full py-2.5 rounded-xl text-xs font-semibold bg-neutral-800/80 text-neutral-400 border border-neutral-700/60 cursor-not-allowed opacity-75 select-none"
+                        >
+                          <span>Switches at Renewal ({formattedExpiryDate})</span>
+                        </button>
+                        <p className="text-[11px] text-neutral-400 text-center mt-2 leading-relaxed">
+                          Annual plans remain active until expiry. Need more storage today? Switch to Annual billing above.
+                        </p>
+                      </div>
+                    );
+                  }
+
                   if (isLockedCurrentPlan) {
                     return (
                       <button
@@ -811,7 +878,7 @@ export default function Pricing() {
                     ctaText = `Renew for ${priceDisplay} ${cycleDisplay}`;
                   } else if (preview) {
                     if (preview.transitionType === 'SCHEDULED_DOWNGRADE') {
-                      ctaText = `Downgrade (₹0 Today)`;
+                      ctaText = `Downgrade at Renewal (₹0 Today)`;
                     } else if (preview.transitionType === 'RENEWAL_UPGRADE') {
                       ctaText = `Upgrade & Extend (₹${preview.payableAmount})`;
                     } else if (preview.transitionType === 'CYCLE_SWITCH_PREPAID') {
@@ -821,10 +888,20 @@ export default function Pricing() {
                     } else if (preview.transitionType === 'ANNUAL_UPGRADE') {
                       ctaText = `Upgrade for ₹${preview.payableAmount} (Prorated)`;
                     } else if (preview.transitionType === 'CYCLE_UPGRADE') {
-                      ctaText = `Switch to Annual (₹${preview.payableAmount})`;
+                      ctaText = targetStorageGB >= currentStorageGB
+                        ? `Upgrade & Extend (₹${preview.payableAmount})`
+                        : `Switch to Annual (₹${preview.payableAmount})`;
                     } else if (preview.transitionType === 'STACKED_RENEWAL') {
                       const cycleDisplay = billingCycle === 'annual' ? '(+1 Year)' : '(+30 Days)';
                       ctaText = `Renew for ₹${preview.payableAmount} ${cycleDisplay}`;
+                    }
+                  } else if (userPlanId !== 'free' && userPlanId !== 'trial') {
+                    if (targetStorageGB < currentStorageGB) {
+                      ctaText = `Downgrade at Renewal (₹0 Today)`;
+                    } else if (billingCycle === 'annual' && (user?.subscription?.billingCycle === 'monthly' || userBillingCycle === 'monthly')) {
+                      ctaText = targetStorageGB >= currentStorageGB
+                        ? `Upgrade & Extend (₹${plan.annualPrice})`
+                        : `Switch to Annual (₹${plan.annualPrice})`;
                     }
                   }
 
@@ -991,7 +1068,9 @@ export default function Pricing() {
                       <span className="text-neutral-500 dark:text-neutral-400">
                         {isTransitionUpgrade 
                           ? 'Prorated Plan Upgrade' 
-                          : 'Base Storage Subscription'}
+                          : orderSummaryPlan.transitionType === 'CYCLE_UPGRADE'
+                            ? 'Annual Tier Upgrade (+365 Days)'
+                            : 'Base Storage Subscription'}
                       </span>
                       <span className="font-mono text-neutral-900 dark:text-[#F5F5F4] font-medium">
                         ₹{formattedAmount}
@@ -1066,7 +1145,25 @@ export default function Pricing() {
 
       {/* Universal Footer */}
       <Footer />
-      <Toaster position="bottom-right" reverseOrder={false} />
+      <Toaster 
+        position="bottom-right" 
+        reverseOrder={false} 
+        toastOptions={{
+          className: '!bg-white/95 !text-slate-900 !border !border-slate-200 !shadow-xl dark:!bg-slate-900/95 dark:!text-slate-100 dark:!border-slate-700/80 dark:!shadow-2xl !backdrop-blur-md !rounded-xl !text-xs sm:!text-sm',
+          success: {
+            iconTheme: {
+              primary: '#10b981',
+              secondary: '#fff',
+            },
+          },
+          error: {
+            iconTheme: {
+              primary: '#f43f5e',
+              secondary: '#fff',
+            },
+          },
+        }}
+      />
     </div>
   );
 }

@@ -59,16 +59,18 @@ function toValidObjectIds(rawIds) {
 }
 
 // Single-Query BFS Descendant Lookup:
-// Fetches the user's non-trashed folders in 1 lean query and traverses in-memory via Set + queue
-async function getDescendantFolderIds(folderId, userMatch) {
+// Fetches the user's folders in 1 lean query and traverses in-memory via Set + queue
+async function getDescendantFolderIds(folderId, userMatch, includeTrash = false) {
   if (!folderId || !mongoose.Types.ObjectId.isValid(String(folderId))) return [];
   const targetIdStr = String(folderId);
 
-  // Lean single DB query for all active user folders
-  const allUserFolders = await Folder.find({
-    ...userMatch,
-    isTrash: { $ne: true },
-  })
+  const folderQuery = { ...userMatch };
+  if (!includeTrash) {
+    folderQuery.isTrash = { $ne: true };
+  }
+
+  // Lean single DB query for user folders
+  const allUserFolders = await Folder.find(folderQuery)
     .select('_id parentId parentFolder')
     .lean();
 
@@ -1408,7 +1410,7 @@ router.delete('/purge-test-threats', authMiddleware, async (req, res) => {
 });
 
 // -------------------------------------------------------------
-// 6. SOFT-DELETE SINGLE FILE (12-SECOND GRACE PERIOD FOR UNDO)
+// 6. SOFT-DELETE SINGLE FILE (30-DAY BIN LIFECYCLE)
 // -------------------------------------------------------------
 const handleSingleFileDelete = async (req, res) => {
   try {
@@ -1428,19 +1430,16 @@ const handleSingleFileDelete = async (req, res) => {
     file.trashedAt = new Date();
     await file.save();
 
-    // Deduct quota safely ensuring storageUsed never drops below 0
-    if (file.size > 0) {
-      const u = await User.findById(rawUserId);
-      if (u) {
-        u.storageUsed = Math.max(0, (u.storageUsed || 0) - Math.abs(file.size));
-        await u.save();
-      }
-    }
+    // In 30-Day Bin lifecycle: items stay in Backblaze B2 and continue counting toward storage quota.
+    // Zero quota deduction and zero premature purge on soft-delete!
 
-    // Queue S3 & MongoDB purge after 12s grace window
-    scheduleFilePurge(file._id, rawUserId);
-
-    return res.status(200).json({ success: true, message: 'File deleted', fileId: file._id, deletedId: file._id });
+    return res.status(200).json({
+      success: true,
+      message: 'Moved to Bin • Auto-deletes in 30 days',
+      fileId: file._id,
+      deletedId: file._id,
+      trashedAt: file.trashedAt,
+    });
   } catch (err) {
     console.error('Delete file error:', err);
     return res.status(500).json({ error: 'Failed to delete file' });
@@ -1450,7 +1449,7 @@ const handleSingleFileDelete = async (req, res) => {
 router.delete('/:id', authMiddleware, handleSingleFileDelete);
 
 // -------------------------------------------------------------
-// 7. BATCH DELETE FILES & FOLDERS (12-SECOND GRACE PERIOD FOR UNDO)
+// 7. BATCH SOFT-DELETE FILES & FOLDERS (30-DAY BIN LIFECYCLE)
 // -------------------------------------------------------------
 const handleBatchDelete = async (req, res) => {
   try {
@@ -1461,7 +1460,7 @@ const handleBatchDelete = async (req, res) => {
     const validFileIds = toValidObjectIds(fileIds);
     const validFolderIds = toValidObjectIds(folderIds);
 
-    // CRITICAL ZERO-WILDCARD GUARD: If both arrays empty or invalid, return immediately with 0 deletions
+    // Zero-wildcard guard
     if (validFileIds.length === 0 && validFolderIds.length === 0) {
       return res.status(200).json({
         success: true,
@@ -1471,22 +1470,19 @@ const handleBatchDelete = async (req, res) => {
       });
     }
 
-    let freedBytes = 0;
+    const trashedAt = new Date();
 
     if (validFileIds.length > 0) {
-      const files = await File.find({ _id: { $in: validFileIds }, ...userMatch });
-      for (const f of files) freedBytes += (f.size || 0);
-
       await File.updateMany(
         { _id: { $in: validFileIds }, ...userMatch },
-        { $set: { isTrash: true, trashedAt: new Date() } }
+        { $set: { isTrash: true, trashedAt } }
       );
     }
 
     if (validFolderIds.length > 0) {
       const allFolderObjectIds = [...validFolderIds];
       for (const fId of validFolderIds) {
-        const descendants = await getDescendantFolderIds(fId, userMatch);
+        const descendants = await getDescendantFolderIds(fId, userMatch, false);
         allFolderObjectIds.push(...descendants);
       }
 
@@ -1494,24 +1490,9 @@ const handleBatchDelete = async (req, res) => {
       if (uniqueFolderObjectIds.length > 0) {
         const uniqueFolderStringIds = uniqueFolderObjectIds.map((id) => String(id));
 
-        const childFiles = await File.find({
-          $and: [
-            userMatch,
-            {
-              $or: [
-                { folder: { $in: uniqueFolderObjectIds } },
-                { folderId: { $in: uniqueFolderObjectIds } },
-                { folder: { $in: uniqueFolderStringIds } },
-                { folderId: { $in: uniqueFolderStringIds } },
-              ],
-            },
-          ],
-        });
-        for (const cf of childFiles) freedBytes += (cf.size || 0);
-
         await Folder.updateMany(
           { _id: { $in: uniqueFolderObjectIds }, ...userMatch },
-          { $set: { isTrash: true, trashedAt: new Date() } }
+          { $set: { isTrash: true, trashedAt } }
         );
 
         await File.updateMany(
@@ -1528,24 +1509,17 @@ const handleBatchDelete = async (req, res) => {
               },
             ],
           },
-          { $set: { isTrash: true, trashedAt: new Date() } }
+          { $set: { isTrash: true, trashedAt } }
         );
       }
     }
 
-    if (freedBytes > 0) {
-      const u = await User.findById(rawUserId);
-      if (u) {
-        u.storageUsed = Math.max(0, (u.storageUsed || 0) - Math.abs(freedBytes));
-        await u.save();
-      }
-    }
-
-    // Schedule permanent deletion
-    scheduleBatchPurge(validFileIds, validFolderIds, rawUserId);
+    // In 30-Day Bin lifecycle: items stay in Backblaze B2 and continue counting toward storage quota.
+    // Zero quota deduction and zero premature purge on soft-delete!
 
     return res.status(200).json({
       success: true,
+      message: 'Moved to Bin • Auto-deletes in 30 days',
       deletedFiles: validFileIds.length,
       deletedFolders: validFolderIds.length,
       deletedCount: validFileIds.length + validFolderIds.length,
@@ -1561,118 +1535,404 @@ router.post('/batch-delete', authMiddleware, handleBatchDelete);
 router.post('/bulk-delete', authMiddleware, handleBatchDelete);
 
 // -------------------------------------------------------------
-// 8. RESTORE ENDPOINT FOR "UNDO" ACTION
+// 8. 30-DAY BIN (TRASH) ENDPOINTS: GET, RESTORE, PERMANENT DELETE
 // -------------------------------------------------------------
-const handleBatchRestore = async (req, res) => {
+
+/**
+ * GET /api/files/bin
+ * Returns all top-level trashed folders and files with countdowns
+ */
+const handleGetBin = async (req, res) => {
   try {
     const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
-    const userIdObj = mongoose.Types.ObjectId.isValid(rawUserId)
-      ? new mongoose.Types.ObjectId(rawUserId)
-      : rawUserId;
+    const userMatch = { $or: [{ userId: rawUserId }, { user: rawUserId }] };
 
-    const userMatch = {
-      $or: [
-        { userId: userIdObj },
-        { userId: String(rawUserId) },
-        { user: userIdObj },
-        { user: String(rawUserId) },
-      ],
-    };
+    // Fetch all trashed folders and files for user
+    const [allTrashedFolders, allTrashedFiles] = await Promise.all([
+      Folder.find({ ...userMatch, isTrash: true }).sort({ trashedAt: -1, createdAt: -1 }).lean(),
+      File.find({ ...userMatch, isTrash: true }).sort({ trashedAt: -1, createdAt: -1 }).lean(),
+    ]);
 
-    const { fileIds = [], folderIds = [] } = req.body;
+    const trashedFolderIdSet = new Set(allTrashedFolders.map((f) => String(f._id)));
 
-    // CRITICAL FIX: Cancel any pending purge timers immediately
-    (Array.isArray(fileIds) ? fileIds : []).forEach((id) => cancelPurgeTimer(id));
-    (Array.isArray(folderIds) ? folderIds : []).forEach((id) => cancelPurgeTimer(id));
+    // Top-level trashed folders: parentId is null or parentId is NOT also in trash
+    const topLevelFolders = allTrashedFolders.filter(
+      (f) => !f.parentId || !trashedFolderIdSet.has(String(f.parentId))
+    );
 
-    const validFileIds = (Array.isArray(fileIds) ? fileIds : [])
-      .filter((id) => id && mongoose.Types.ObjectId.isValid(String(id)))
-      .map((id) => new mongoose.Types.ObjectId(String(id)));
+    // Top-level trashed files: folderId/folder is null or is NOT in trashedFolderIdSet
+    const topLevelFiles = allTrashedFiles.filter(
+      (f) => (!f.folder && !f.folderId) || !trashedFolderIdSet.has(String(f.folderId || f.folder))
+    );
 
-    const validFolderIds = (Array.isArray(folderIds) ? folderIds : [])
-      .filter((id) => id && mongoose.Types.ObjectId.isValid(String(id)))
-      .map((id) => new mongoose.Types.ObjectId(String(id)));
-
-    let restoredBytes = 0;
-
-    // 1. Restore specific files
-    if (validFileIds.length > 0) {
-      const filesToRestore = await File.find({ _id: { $in: validFileIds }, ...userMatch });
-      for (const f of filesToRestore) {
-        restoredBytes += (f.size || 0);
-      }
-
-      // Check if parent folders still exist; if not, reattach to root
-      const parentFolderIds = filesToRestore.map((f) => f.folderId || f.folder).filter(Boolean);
-      const existingFolders = await Folder.find({ _id: { $in: parentFolderIds }, isTrash: { $ne: true } }).select('_id');
-      const existingFolderIdSet = new Set(existingFolders.map((f) => String(f._id)));
-
-      for (const f of filesToRestore) {
-        const pId = String(f.folderId || f.folder || '');
-        const shouldResetToRoot = pId && !existingFolderIdSet.has(pId);
-
-        await File.updateOne(
-          { _id: f._id },
-          {
-            $set: {
-              isTrash: false,
-              trashedAt: null,
-              ...(shouldResetToRoot ? { folder: null, folderId: null } : {}),
-            },
-          }
-        );
+    // Calculate folder sizes and file counts in memory
+    const folderToFiles = new Map();
+    for (const f of allTrashedFiles) {
+      const pId = String(f.folderId || f.folder || '');
+      if (pId) {
+        if (!folderToFiles.has(pId)) folderToFiles.set(pId, []);
+        folderToFiles.get(pId).push(f);
       }
     }
 
-    // 2. Restore folders and nested contents
-    if (validFolderIds.length > 0) {
+    // Pre-build adjacency map for descendant lookup in memory
+    const parentToChildren = new Map();
+    for (const f of allTrashedFolders) {
+      const p = f.parentId || f.parentFolder;
+      if (p) {
+        const pStr = String(p);
+        if (!parentToChildren.has(pStr)) parentToChildren.set(pStr, []);
+        parentToChildren.get(pStr).push(String(f._id));
+      }
+    }
+
+    const getDescendantsInMemory = (rootId) => {
+      const visited = new Set([String(rootId)]);
+      const queue = [String(rootId)];
+      const res = [];
+      while (queue.length > 0) {
+        const curr = queue.shift();
+        const children = parentToChildren.get(curr) || [];
+        for (const ch of children) {
+          if (!visited.has(ch)) {
+            visited.add(ch);
+            res.push(ch);
+            queue.push(ch);
+          }
+        }
+      }
+      return res;
+    };
+
+    const now = Date.now();
+
+    const foldersWithStats = topLevelFolders.map((folder) => {
+      const folderIdStr = String(folder._id);
+      const allSubFolderIds = [folderIdStr, ...getDescendantsInMemory(folderIdStr)];
+      let folderBytes = 0;
+      let folderFileCount = 0;
+
+      for (const sfId of allSubFolderIds) {
+        const cFiles = folderToFiles.get(sfId) || [];
+        folderFileCount += cFiles.length;
+        for (const cf of cFiles) {
+          folderBytes += (cf.size || 0);
+        }
+      }
+
+      const trashedTimestamp = new Date(folder.trashedAt || folder.updatedAt || now).getTime();
+      const daysAgo = Math.max(0, Math.floor((now - trashedTimestamp) / 86400000));
+      const daysRemaining = Math.max(0, 30 - daysAgo);
+
+      return {
+        ...folder,
+        type: 'folder',
+        isFolder: true,
+        size: folderBytes,
+        fileCount: folderFileCount,
+        daysRemaining,
+        deletedDaysAgo: daysAgo,
+      };
+    });
+
+    const filesWithStats = topLevelFiles.map((file) => {
+      const trashedTimestamp = new Date(file.trashedAt || file.createdAt || now).getTime();
+      const daysAgo = Math.max(0, Math.floor((now - trashedTimestamp) / 86400000));
+      const daysRemaining = Math.max(0, 30 - daysAgo);
+
+      return {
+        ...file,
+        type: 'file',
+        isFolder: false,
+        daysRemaining,
+        deletedDaysAgo: daysAgo,
+      };
+    });
+
+    const totalCount = foldersWithStats.length + filesWithStats.length;
+    const totalBytes = allTrashedFiles.reduce((sum, f) => sum + (f.size || 0), 0);
+
+    return res.status(200).json({
+      success: true,
+      folders: foldersWithStats,
+      files: filesWithStats,
+      totalCount,
+      totalBytes,
+    });
+  } catch (err) {
+    console.error('Get bin error:', err);
+    return res.status(500).json({ error: 'Failed to fetch items in Bin' });
+  }
+};
+
+/**
+ * POST /api/files/bin/restore (and alias /api/files/restore-batch)
+ * Restores items from Bin to their original folder (or root if parent was deleted)
+ */
+const handleBinRestore = async (req, res) => {
+  try {
+    const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
+    const userMatch = { $or: [{ userId: rawUserId }, { user: rawUserId }] };
+    const { fileIds = [], folderIds = [], restoreAll = false } = req.body;
+
+    if (restoreAll) {
+      // 1. Restore all trashed files & folders for user
+      await Promise.all([
+        File.updateMany({ ...userMatch, isTrash: true }, { $set: { isTrash: false, trashedAt: null } }),
+        Folder.updateMany({ ...userMatch, isTrash: true }, { $set: { isTrash: false, trashedAt: null } }),
+      ]);
+
+      // 2. Validate all parent references in one pass
+      const allActiveFolders = await Folder.find({ ...userMatch, isTrash: { $ne: true } }).select('_id').lean();
+      const activeFolderSet = new Set(allActiveFolders.map((f) => String(f._id)));
+
+      const filesToCheck = await File.find({
+        ...userMatch,
+        $or: [{ folder: { $ne: null } }, { folderId: { $ne: null } }],
+      }).select('_id folder folderId').lean();
+
+      const orphanedFileIds = filesToCheck
+        .filter((f) => !activeFolderSet.has(String(f.folderId || f.folder)))
+        .map((f) => f._id);
+
+      if (orphanedFileIds.length > 0) {
+        await File.updateMany(
+          { _id: { $in: orphanedFileIds } },
+          { $set: { folder: null, folderId: null } }
+        );
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: 'All items restored from Bin',
+        restoredAll: true,
+      });
+    }
+
+    const validFileIds = toValidObjectIds(fileIds);
+    const validFolderIds = toValidObjectIds(folderIds);
+
+    if (validFileIds.length === 0 && validFolderIds.length === 0) {
+      return res.status(200).json({ success: true, restoredCount: 0 });
+    }
+
+    // If folder IDs provided, also resolve all descendant folders in trash
+    const allFolderObjectIds = [...validFolderIds];
+    for (const fId of validFolderIds) {
+      const descendants = await getDescendantFolderIds(fId, userMatch, true);
+      allFolderObjectIds.push(...descendants);
+    }
+    const uniqueFolderObjectIds = toValidObjectIds(allFolderObjectIds);
+
+    // 1. Restore folders
+    if (uniqueFolderObjectIds.length > 0) {
       await Folder.updateMany(
-        { _id: { $in: validFolderIds }, ...userMatch },
+        { _id: { $in: uniqueFolderObjectIds }, ...userMatch },
         { $set: { isTrash: false, trashedAt: null } }
       );
 
-      const childFiles = await File.find({
-        $or: [{ folder: { $in: validFolderIds } }, { folderId: { $in: validFolderIds } }],
-        ...userMatch,
-      });
+      const uniqueFolderStringIds = uniqueFolderObjectIds.map((id) => String(id));
 
-      for (const cf of childFiles) {
-        restoredBytes += (cf.size || 0);
-      }
-
+      // Restore child files inside those folders
       await File.updateMany(
         {
-          $or: [{ folder: { $in: validFolderIds } }, { folderId: { $in: validFolderIds } }],
-          ...userMatch,
+          $and: [
+            userMatch,
+            {
+              $or: [
+                { folder: { $in: uniqueFolderObjectIds } },
+                { folderId: { $in: uniqueFolderObjectIds } },
+                { folder: { $in: uniqueFolderStringIds } },
+                { folderId: { $in: uniqueFolderStringIds } },
+              ],
+            },
+          ],
         },
         { $set: { isTrash: false, trashedAt: null } }
       );
     }
 
-    // 3. Increment quota back
-    if (restoredBytes > 0) {
-      const u = await User.findByIdAndUpdate(rawUserId, {
-        $inc: { storageUsed: Math.abs(restoredBytes) },
-      }, { new: true });
-      if (u && u.subscription) {
-        u.subscription.peakStorageBytes = Math.max(u.subscription?.peakStorageBytes || 0, u.storageUsed);
+    // 2. Restore individual files
+    if (validFileIds.length > 0) {
+      await File.updateMany(
+        { _id: { $in: validFileIds }, ...userMatch },
+        { $set: { isTrash: false, trashedAt: null } }
+      );
+    }
+
+    // 3. Safety reattachment check: if an item's parent folder is still in Bin or doesn't exist, reset to root
+    const allActiveFolders = await Folder.find({ ...userMatch, isTrash: { $ne: true } }).select('_id').lean();
+    const activeFolderSet = new Set(allActiveFolders.map((f) => String(f._id)));
+
+    if (validFileIds.length > 0) {
+      const restoredFiles = await File.find({ _id: { $in: validFileIds } }).select('_id folder folderId').lean();
+      const orphanedFileIds = restoredFiles
+        .filter((f) => {
+          const pId = String(f.folderId || f.folder || '');
+          return pId && !activeFolderSet.has(pId);
+        })
+        .map((f) => f._id);
+
+      if (orphanedFileIds.length > 0) {
+        await File.updateMany(
+          { _id: { $in: orphanedFileIds } },
+          { $set: { folder: null, folderId: null } }
+        );
+      }
+    }
+
+    if (uniqueFolderObjectIds.length > 0) {
+      const restoredFolders = await Folder.find({ _id: { $in: uniqueFolderObjectIds } }).select('_id parentId parentFolder').lean();
+      const orphanedFolderIds = restoredFolders
+        .filter((f) => {
+          const pId = String(f.parentId || f.parentFolder || '');
+          return pId && !activeFolderSet.has(pId);
+        })
+        .map((f) => f._id);
+
+      if (orphanedFolderIds.length > 0) {
+        await Folder.updateMany(
+          { _id: { $in: orphanedFolderIds } },
+          { $set: { parentId: null, parentFolder: null } }
+        );
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Items restored from Bin',
+      restoredFiles: validFileIds.length,
+      restoredFolders: uniqueFolderObjectIds.length,
+      restoredCount: validFileIds.length + uniqueFolderObjectIds.length,
+    });
+  } catch (err) {
+    console.error('Restore bin error:', err);
+    return res.status(500).json({ error: 'Failed to restore items from Bin' });
+  }
+};
+
+/**
+ * DELETE /api/files/bin/permanent
+ * Permanently deletes items from Backblaze B2, drops MongoDB docs, and decrements quota
+ */
+const handleBinPermanentDelete = async (req, res) => {
+  try {
+    const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
+    const userMatch = { $or: [{ userId: rawUserId }, { user: rawUserId }] };
+    const { fileIds = [], folderIds = [], emptyAll = false } = req.body;
+
+    let filesToDelete = [];
+    let foldersToDelete = [];
+
+    if (emptyAll) {
+      // Empty entire Bin for user
+      [filesToDelete, foldersToDelete] = await Promise.all([
+        File.find({ ...userMatch, isTrash: true }).select('_id s3Key thumbnailKey size').lean(),
+        Folder.find({ ...userMatch, isTrash: true }).select('_id').lean(),
+      ]);
+    } else {
+      const validFileIds = toValidObjectIds(fileIds);
+      const validFolderIds = toValidObjectIds(folderIds);
+
+      if (validFileIds.length === 0 && validFolderIds.length === 0) {
+        return res.status(200).json({
+          success: true,
+          deletedFiles: 0,
+          deletedFolders: 0,
+          freedBytes: 0,
+        });
+      }
+
+      // Resolve all descendant folders
+      const allFolderObjectIds = [...validFolderIds];
+      for (const fId of validFolderIds) {
+        const descendants = await getDescendantFolderIds(fId, userMatch, true);
+        allFolderObjectIds.push(...descendants);
+      }
+      const uniqueFolderObjectIds = toValidObjectIds(allFolderObjectIds);
+      const uniqueFolderStringIds = uniqueFolderObjectIds.map((id) => String(id));
+
+      const fileConditions = [];
+      if (validFileIds.length > 0) {
+        fileConditions.push({ _id: { $in: validFileIds } });
+      }
+      if (uniqueFolderObjectIds.length > 0) {
+        fileConditions.push(
+          { folder: { $in: uniqueFolderObjectIds } },
+          { folderId: { $in: uniqueFolderObjectIds } },
+          { folder: { $in: uniqueFolderStringIds } },
+          { folderId: { $in: uniqueFolderStringIds } }
+        );
+      }
+
+      filesToDelete = await File.find({
+        $and: [userMatch, { isTrash: true }, { $or: fileConditions }],
+      }).select('_id s3Key thumbnailKey size').lean();
+
+      if (uniqueFolderObjectIds.length > 0) {
+        foldersToDelete = await Folder.find({
+          _id: { $in: uniqueFolderObjectIds },
+          ...userMatch,
+          isTrash: true,
+        }).select('_id').lean();
+      }
+    }
+
+    // 1. Collect all S3 / B2 keys to permanently erase
+    const keysToPurge = filesToDelete
+      .flatMap((f) => [f.s3Key, f.thumbnailKey])
+      .filter(Boolean);
+
+    if (keysToPurge.length > 0) {
+      try {
+        await permanentlyDeleteS3Keys(keysToPurge, rawUserId);
+      } catch (s3Err) {
+        console.warn('[Bin Permanent Delete S3 Warning]:', s3Err.message);
+      }
+    }
+
+    // 2. Sum freed bytes
+    const freedBytes = filesToDelete.reduce((sum, f) => sum + (f.size || 0), 0);
+
+    // 3. Delete records from MongoDB
+    const fileIdsToDelete = filesToDelete.map((f) => f._id);
+    const folderIdsToDelete = foldersToDelete.map((f) => f._id);
+
+    if (fileIdsToDelete.length > 0) {
+      await File.deleteMany({ _id: { $in: fileIdsToDelete } });
+    }
+    if (folderIdsToDelete.length > 0) {
+      await Folder.deleteMany({ _id: { $in: folderIdsToDelete } });
+    }
+
+    // 4. Decrement user.storageUsed
+    if (freedBytes > 0) {
+      const u = await User.findById(rawUserId);
+      if (u) {
+        u.storageUsed = Math.max(0, (u.storageUsed || 0) - freedBytes);
         await u.save();
       }
     }
 
     return res.status(200).json({
       success: true,
-      restoredCount: validFileIds.length + validFolderIds.length,
-      restoredBytes,
+      message: 'Items permanently deleted',
+      deletedFiles: fileIdsToDelete.length,
+      deletedFolders: folderIdsToDelete.length,
+      deletedCount: fileIdsToDelete.length + folderIdsToDelete.length,
+      freedBytes,
     });
   } catch (err) {
-    console.error('Restore error:', err);
-    return res.status(500).json({ error: 'Failed to restore items' });
+    console.error('Permanent delete error:', err);
+    return res.status(500).json({ error: 'Failed to permanently delete items' });
   }
 };
 
-router.post('/restore-batch', authMiddleware, handleBatchRestore);
-router.post('/batch-restore', authMiddleware, handleBatchRestore);
+router.get('/bin', authMiddleware, handleGetBin);
+router.post('/bin/restore', authMiddleware, handleBinRestore);
+router.delete('/bin/permanent', authMiddleware, handleBinPermanentDelete);
+router.post('/restore-batch', authMiddleware, handleBinRestore);
+router.post('/batch-restore', authMiddleware, handleBinRestore);
 
 // -------------------------------------------------------------
 // 9. DYNAMIC LIVE STORAGE AGGREGATION
@@ -1693,12 +1953,11 @@ const getStorageStats = async (req, res) => {
       ],
     };
 
-    // Calculate real active storage
+    // Calculate real active storage (retains items in 30-Day Bin, excludes only purged & pending scans)
     const stats = await File.aggregate([
       {
         $match: {
-          isTrash: { $ne: true },
-          securityStatus: { $ne: 'threat_purged' },
+          securityStatus: { $nin: ['threat_purged', 'pending_scan'] },
           ...userMatch,
         },
       },
@@ -1930,7 +2189,10 @@ router.put('/batch-move', authMiddleware, (req, res, next) => require('./folders
 
 module.exports = router;
 module.exports.handleBatchDelete = handleBatchDelete;
-module.exports.handleBatchRestore = handleBatchRestore;
+module.exports.handleBinRestore = handleBinRestore;
+module.exports.handleBatchRestore = handleBinRestore;
+module.exports.handleGetBin = handleGetBin;
+module.exports.handleBinPermanentDelete = handleBinPermanentDelete;
 module.exports.handleStorageStats = handleStorageStats;
 module.exports.getStorageStats = getStorageStats;
 module.exports.toValidObjectIds = toValidObjectIds;

@@ -46,3 +46,22 @@ input:-webkit-autofill:active {
     -webkit-text-fill-color: #e3e3e3 !important;
     transition: background-color 5000s ease-in-out 0s;
 }
+
+/* Universal React-Hot-Toast Dark & Light Theme Integration */
+html.dark [data-toaster] [role="status"],
+html.dark .react-hot-toast {
+    background-color: rgba(15, 23, 42, 0.95) !important;
+    color: #f1f5f9 !important;
+    border: 1px solid rgba(51, 65, 85, 0.8) !important;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5) !important;
+    backdrop-filter: blur(12px) !important;
+}
+
+html:not(.dark) [data-toaster] [role="status"],
+html:not(.dark) .react-hot-toast {
+    background-color: rgba(255, 255, 255, 0.95) !important;
+    color: #0f172a !important;
+    border: 1px solid rgba(226, 232, 240, 1) !important;
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1) !important;
+    backdrop-filter: blur(12px) !important;
+}

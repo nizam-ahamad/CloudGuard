@@ -13,6 +13,7 @@ import DeleteConfirmModal from './components/DeleteConfirmModal';
 import ProfileSettings from './components/ProfileSettings';
 import CookieConsent from './components/CookieConsent';
 import QuotaUpgradeModal from './components/QuotaUpgradeModal';
+import BinView from './components/BinView';
 import LandingPage from './pages/LandingPage';
 import AuthPage from './pages/AuthPage';
 import PrivacyPolicy from './pages/PrivacyPolicy';
@@ -536,17 +537,20 @@ function App() {
   const [activeFolderMenuId, setActiveFolderMenuId] = useState(null);
 
   const isSettingsOpen = searchParams.get('view') === 'settings' && location.pathname === '/dashboard';
-  const isFilesActive = location.pathname === '/dashboard' && !searchParams.get('view') && searchParams.get('tab') !== 'recent' && viewMode === 'all';
+  const isFilesActive = location.pathname === '/dashboard' && !searchParams.get('view') && searchParams.get('tab') !== 'recent' && searchParams.get('tab') !== 'bin' && viewMode === 'all';
   const isRecentActive = location.pathname === '/dashboard' && !searchParams.get('view') && (searchParams.get('tab') === 'recent' || viewMode === 'recent');
+  const isBinActive = location.pathname === '/dashboard' && (searchParams.get('view') === 'bin' || searchParams.get('tab') === 'bin' || viewMode === 'bin');
   const isPhotosActive = location.pathname === '/dashboard/photos';
 
   // Automatically synchronize viewMode with route and query params
   useEffect(() => {
     if (searchParams.get('view') === 'settings') {
       setViewMode('settings');
+    } else if (searchParams.get('view') === 'bin' || searchParams.get('tab') === 'bin') {
+      setViewMode('bin');
     } else if (searchParams.get('tab') === 'recent') {
       setViewMode('recent');
-    } else if (viewMode === 'settings') {
+    } else if (viewMode === 'settings' || viewMode === 'bin') {
       setViewMode('all');
     }
   }, [location.pathname, searchParams]);
@@ -742,22 +746,28 @@ function App() {
     }
   };
 
-  const fetchFolders = useCallback(async (targetFolderId) => {
+  const fetchFolders = useCallback(async (targetFolderId, searchOverride) => {
     const pathname = window.location.pathname;
     if (pathname !== '/dashboard' && pathname !== '/dashboard/') {
       return;
     }
     try {
-      const parentId = targetFolderId !== undefined ? (targetFolderId || null) : (searchParams.get('folder') || null);
-      const url = parentId 
-        ? `${API_BASE_URL}/api/folders?parentId=${parentId}` 
-        : `${API_BASE_URL}/api/folders`;
+      const q = searchOverride !== undefined ? (searchOverride || '').trim() : (searchQuery || '').trim();
+      let url;
+      if (q) {
+        url = `${API_BASE_URL}/api/folders?search=${encodeURIComponent(q)}`;
+      } else {
+        const parentId = targetFolderId !== undefined ? (targetFolderId || null) : (searchParams.get('folder') || null);
+        url = parentId 
+          ? `${API_BASE_URL}/api/folders?parentId=${parentId}` 
+          : `${API_BASE_URL}/api/folders`;
+      }
       const response = await axios.get(url, { headers: { Authorization: `Bearer ${token}` } });
       setFolders(response.data);
     } catch (error) {
       console.error('Error fetching folders:', error);
     }
-  }, [token, searchParams]);
+  }, [token, searchParams, searchQuery]);
 
   const handleCreateFolder = async (e) => {
     if (e) e.preventDefault();
@@ -824,11 +834,16 @@ function App() {
 
   // 1. Clean Home Breadcrumb Handler: Only clears folder and resets URL
   const handleNavigateHome = () => {
+    if (searchQuery) {
+      setSearchQuery('');
+    }
+
     // If already at root /dashboard with no folder and no query, do nothing
     if (
       window.location.pathname === '/dashboard' &&
       !window.location.search &&
-      !currentFolderId
+      !currentFolderId &&
+      !searchQuery
     ) {
       return;
     }
@@ -848,10 +863,20 @@ function App() {
   // 2. Clean Folder Click Handler: Only updates state and URL
   const handleFolderClick = (folder) => {
     const folderId = folder?._id || folder;
-    if (!folderId || currentFolderId === folderId) return;
+    if (!folderId) return;
 
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
+    }
+
+    if (searchQuery) {
+      setSearchQuery('');
+    }
+
+    if (currentFolderId === folderId) {
+      fetchFolders(folderId, '');
+      fetchFiles(folderId, true);
+      return;
     }
 
     clearSelection();
@@ -871,11 +896,15 @@ function App() {
 
   const handleBreadcrumbClick = (folderId, index) => {
     const targetId = folderId || null;
-    if (currentFolderId === targetId) return;
-
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
+
+    if (searchQuery) {
+      setSearchQuery('');
+    }
+
+    if (currentFolderId === targetId) return;
 
     clearSelection();
     setCurrentFolderId(targetId);
@@ -913,6 +942,16 @@ function App() {
       if (location.pathname !== '/dashboard') {
         navigate('/dashboard?tab=recent');
       }
+    } else if (tab === 'bin') {
+      newParams.delete('tab');
+      newParams.delete('folder');
+      newParams.set('view', 'bin');
+      setViewMode('bin');
+      setSearchParams(newParams);
+      if (location.pathname !== '/dashboard') {
+        navigate('/dashboard?view=bin');
+      }
+      return;
     } else if (tab === 'photos') {
       newParams.delete('tab');
       setViewMode('all');
@@ -986,6 +1025,9 @@ function App() {
     // ROUTE GUARD: Never fetch files if user is in Photos, Trash, or Settings
     const currentPath = window.location.pathname;
     if (currentPath !== '/dashboard' && currentPath !== '/dashboard/') {
+      return;
+    }
+    if (viewMode === 'settings' || viewMode === 'bin') {
       return;
     }
 
@@ -1488,10 +1530,18 @@ function App() {
     if (currentPath !== '/dashboard' && currentPath !== '/dashboard/') {
       return;
     }
+    if (viewMode === 'settings' || viewMode === 'bin') {
+      return;
+    }
 
     const params = new URLSearchParams(window.location.search);
     const activeFolderId = params.get('folder') || null;
     fetchFiles(activeFolderId, true);
+    if (searchQuery && searchQuery.trim()) {
+      fetchFolders(null, searchQuery.trim());
+    } else {
+      fetchFolders(activeFolderId, '');
+    }
   }, [viewMode, searchQuery]);
 
   const handleSortByName = () => {
@@ -1573,15 +1623,15 @@ function App() {
 
   // Dynamic message formatting with single-line truncation
   const getDeleteToastContent = (items) => {
-    if (!items || items.length === 0) return { action: 'Deleted', target: 'Item' };
+    if (!items || items.length === 0) return { action: 'Moved to Bin', target: 'Item' };
     if (items.length === 1) {
       return {
-        action: 'Deleted',
+        action: 'Moved to Bin',
         target: items[0].name || items[0].fileName || 'Item',
       };
     }
     return {
-      action: 'Deleted',
+      action: 'Moved to Bin',
       target: `${items.length} items`,
     };
   };
@@ -1613,6 +1663,9 @@ function App() {
               </span>
               <span className="font-semibold text-neutral-900 dark:text-white" title={toastData.target}>
                 "{toastData.target}"
+              </span>
+              <span className="text-neutral-400 dark:text-neutral-500 text-[11px] ml-1.5 hidden sm:inline">
+                • Auto-deletes in 30 days
               </span>
             </p>
           </div>
@@ -2341,7 +2394,12 @@ function App() {
   };
 
   const sortedFolders = useMemo(() => {
-    return [...folders].sort((a, b) => {
+    let result = [...folders];
+    if (searchQuery && searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      result = result.filter(folder => (folder.name || '').toLowerCase().includes(q));
+    }
+    return result.sort((a, b) => {
       if (sortBy === 'name') {
         const cmp = String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base', numeric: true });
         return sortOrder === 'asc' ? cmp : -cmp;
@@ -2350,7 +2408,7 @@ function App() {
       const timeB = new Date(b.updatedAt || b.uploadedAt || b.createdAt || 0).getTime();
       return sortOrder === 'desc' ? timeB - timeA : timeA - timeB;
     });
-  }, [folders, sortBy, sortOrder]);
+  }, [folders, sortBy, sortOrder, searchQuery]);
 
   const sortedFiles = useMemo(() => {
     return [...files].sort((a, b) => {
@@ -2567,8 +2625,8 @@ function App() {
 
         {/* Forgot Password Modal */}
         {showForgotModal && (
-          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-            <div className="bg-surface dark:bg-[#1e1f20] dark:border dark:border-zinc-800 w-full max-w-sm rounded-xl shadow-xl p-6 relative">
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 w-full max-w-sm rounded-xl shadow-xl p-6 relative text-neutral-900 dark:text-neutral-100">
               <button 
                 onClick={() => {
                   setShowForgotModal(false);
@@ -2663,9 +2721,9 @@ function App() {
       {/* Onboarding Welcome Modal */}
       {showWelcomeModal && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-[#1e1f20] rounded-xl border border-outline-variant dark:border-zinc-800 w-full max-w-md p-6 relative shadow-xl">
-            <h3 className="font-title-lg text-on-surface dark:text-[#e3e3e3] text-xl font-bold">Welcome to your vault</h3>
-            <p className="font-body-md text-on-surface-variant dark:text-[#c4c7c5] mt-2">
+          <div className="bg-white dark:bg-[#1e1f20] rounded-2xl border border-neutral-200 dark:border-zinc-800 w-full max-w-md p-6 relative shadow-2xl">
+            <h3 className="font-title-lg text-neutral-900 dark:text-[#e3e3e3] text-xl font-bold">Welcome to your vault</h3>
+            <p className="font-body-md text-neutral-600 dark:text-[#c4c7c5] mt-2">
               Your secure digital space is ready. Upload documents, run malware scans, and manage your files safely.
             </p>
             <div className="flex justify-end mt-4">
@@ -2674,7 +2732,7 @@ function App() {
                   setShowWelcomeModal(false);
                   localStorage.setItem('has_seen_vault_tour', 'true');
                 }}
-                className="px-4 py-2 bg-primary dark:bg-zinc-800 text-on-primary dark:text-[#e3e3e3] hover:bg-primary/90 dark:hover:bg-zinc-700 rounded-lg transition-colors font-medium"
+                className="px-4 py-2 bg-neutral-900 text-white hover:bg-neutral-800 dark:bg-zinc-800 dark:text-[#e3e3e3] dark:hover:bg-zinc-700 rounded-xl transition-colors font-medium cursor-pointer"
               >
                 Get Started
               </button>
@@ -2715,7 +2773,7 @@ function App() {
             </div>
             <span className={`font-semibold font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-32 opacity-100'}`}>My Files</span>
             {isCollapsed && (
-              <div className="absolute left-full ml-4 px-3 py-1 bg-[#1e1f20] border border-zinc-800 text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+              <div className="absolute left-full ml-4 px-3 py-1 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-800 dark:text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
                 My Files
               </div>
             )}
@@ -2735,7 +2793,7 @@ function App() {
             </div>
             <span className={`text-center font-semibold font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-32 opacity-100'}`}>Photos</span>
             {isCollapsed && (
-              <div className="absolute left-full ml-4 px-3 py-1 bg-[#1e1f20] border border-zinc-800 text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+              <div className="absolute left-full ml-4 px-3 py-1 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-800 dark:text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
                 Photos
               </div>
             )}
@@ -2751,15 +2809,35 @@ function App() {
             </div>
             <span className={`font-semibold font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-32 opacity-100'}`}>Recent</span>
             {isCollapsed && (
-              <div className="absolute left-full ml-4 px-3 py-1 bg-[#1e1f20] border border-zinc-800 text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+              <div className="absolute left-full ml-4 px-3 py-1 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-800 dark:text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
                 Recent
+              </div>
+            )}
+          </button>
+
+          <button 
+            type="button"
+            onClick={() => handleNavClick('bin')}
+            className={`group relative w-full flex items-center h-12 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${
+              isBinActive
+                ? 'text-secondary bg-surface-container-low dark:bg-[#282a2c] dark:text-[#e3e3e3]'
+                : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'
+            }`}
+          >
+            <div className="min-w-[3rem] flex justify-center items-center">
+              <span className="material-symbols-outlined shrink-0" data-weight={isBinActive ? "fill" : ""}>delete</span>
+            </div>
+            <span className={`font-semibold font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-32 opacity-100'}`}>Bin</span>
+            {isCollapsed && (
+              <div className="absolute left-full ml-4 px-3 py-1 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-800 dark:text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+                Bin
               </div>
             )}
           </button>
         </div>
 
         {/* Footer Navigation */}
-        <div className="flex flex-col gap-2 mt-auto border-t border-outline-variant pt-4 mx-4">
+        <div className="flex flex-col gap-2 mt-auto border-t border-slate-200 dark:border-zinc-800 pt-4 mx-4">
           {isAdmin && (
             <button 
               type="button"
@@ -2774,7 +2852,7 @@ function App() {
               </div>
               <span className={`font-semibold font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-32 opacity-100'}`}>Monitor</span>
               {isCollapsed && (
-                <div className="absolute left-full ml-4 px-3 py-1 bg-[#1e1f20] border border-zinc-800 text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+                <div className="absolute left-full ml-4 px-3 py-1 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-800 dark:text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
                   Monitor
                 </div>
               )}
@@ -2794,7 +2872,7 @@ function App() {
             </div>
             <span className={`font-semibold font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-32 opacity-100'}`}>Settings</span>
             {isCollapsed && (
-              <div className="absolute left-full ml-4 px-3 py-1 bg-[#1e1f20] border border-zinc-800 text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+              <div className="absolute left-full ml-4 px-3 py-1 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-800 dark:text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
                 Settings
               </div>
             )}
@@ -2807,7 +2885,7 @@ function App() {
             <span className="material-symbols-outlined transition-transform duration-300" style={{ transform: isCollapsed ? 'rotate(180deg)' : 'rotate(0deg)' }}>
               view_sidebar
             </span>
-            <div className="absolute left-full ml-4 px-3 py-1 bg-[#1e1f20] border border-zinc-800 text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+            <div className="absolute left-full ml-4 px-3 py-1 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-800 dark:text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
               Toggle Sidebar (Ctrl+B)
             </div>
           </button>
@@ -2915,10 +2993,10 @@ function App() {
               >
                 {user?.name ? user.name.charAt(0).toUpperCase() : 'S'}
               </div>
-              <div className={`absolute right-0 mt-2 w-48 bg-surface-container-lowest dark:bg-[#1e1f20] border border-outline-variant dark:border-zinc-800 shadow-lg rounded-xl overflow-hidden z-50 transition-all duration-200 ease-out origin-top-right ${showProfileMenu ? 'opacity-100 scale-100 visible translate-y-0' : 'opacity-0 scale-95 invisible -translate-y-2 pointer-events-none'}`}>
-                <div className="px-4 py-3 border-b border-outline-variant dark:border-zinc-800 bg-surface-container-low dark:bg-[#131314] cursor-default">
-                  <p className="text-sm font-bold text-on-surface dark:text-[#e3e3e3] truncate">{user?.name || 'User'}</p>
-                  <p className="text-xs text-on-surface-variant dark:text-[#c4c7c5] truncate">{user?.email || ''}</p>
+              <div className={`absolute right-0 mt-2 w-48 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 shadow-xl rounded-xl overflow-hidden z-50 transition-all duration-200 ease-out origin-top-right ${showProfileMenu ? 'opacity-100 scale-100 visible translate-y-0' : 'opacity-0 scale-95 invisible -translate-y-2 pointer-events-none'}`}>
+                <div className="px-4 py-3 border-b border-neutral-200 dark:border-zinc-800 bg-neutral-50 dark:bg-[#131314] cursor-default">
+                  <p className="text-sm font-bold text-neutral-900 dark:text-[#e3e3e3] truncate">{user?.name || 'User'}</p>
+                  <p className="text-xs text-neutral-500 dark:text-[#c4c7c5] truncate">{user?.email || ''}</p>
                 </div>
                 <button 
                   type="button"
@@ -2927,18 +3005,18 @@ function App() {
                     setViewMode('settings'); 
                     navigate('/dashboard?view=settings');
                   }}
-                  className="w-full text-left px-4 py-3 text-on-surface dark:text-[#e3e3e3] hover:bg-surface-container-high dark:hover:bg-zinc-800/70 text-sm flex items-center gap-2 transition-colors cursor-pointer"
+                  className="w-full text-left px-4 py-3 text-neutral-700 dark:text-[#e3e3e3] hover:bg-neutral-100 dark:hover:bg-zinc-800/70 text-sm flex items-center gap-2 transition-colors cursor-pointer"
                 >
                   <span className="material-symbols-outlined text-[18px]">person</span> Profile Settings
                 </button>
-                <div className="w-full h-px bg-outline-variant dark:bg-zinc-800"></div>
+                <div className="w-full h-px bg-neutral-200 dark:bg-zinc-800"></div>
                 <button 
                   type="button"
                   onClick={() => {
                     setShowProfileMenu(false);
                     setIsSignOutModalOpen(true);
                   }}
-                  className="w-full text-left px-4 py-3 text-error dark:text-red-400 hover:bg-error/10 dark:hover:bg-red-950/30 text-sm flex items-center gap-2 transition-colors cursor-pointer"
+                  className="w-full text-left px-4 py-3 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 text-sm flex items-center gap-2 transition-colors cursor-pointer"
                 >
                   <span className="material-symbols-outlined text-[18px]">logout</span> Sign out
                 </button>
@@ -2993,6 +3071,8 @@ function App() {
           </div>
         ) : location.pathname === '/dashboard/photos' ? (
           <PhotosView token={token} />
+        ) : viewMode === 'bin' || searchParams.get('view') === 'bin' || searchParams.get('tab') === 'bin' ? (
+          <BinView onStorageUpdate={fetchStorageStats} searchQuery={searchQuery} />
         ) : (
           <>
         {/* Page Title */}
@@ -3377,8 +3457,8 @@ function App() {
                             isSelected
                               ? 'opacity-100 bg-white text-black border-white shadow-sm'
                               : isSelectionActive
-                                ? 'opacity-50 hover:opacity-100 border-neutral-400 dark:border-neutral-500 bg-neutral-100 dark:bg-neutral-900/80'
-                                : 'opacity-0 group-hover:opacity-100 border-neutral-400 dark:border-neutral-500 bg-neutral-100 dark:bg-neutral-900/80 hover:border-neutral-900 dark:hover:border-white shadow-sm'
+                                ? 'opacity-100 md:opacity-50 md:hover:opacity-100 border-neutral-400 dark:border-neutral-500 bg-neutral-100 dark:bg-neutral-900/80'
+                                : 'opacity-100 md:opacity-0 md:group-hover:opacity-100 border-neutral-400 dark:border-neutral-500 bg-neutral-100 dark:bg-neutral-900/80 hover:border-neutral-900 dark:hover:border-white shadow-sm'
                           }`}
                           title={isSelected ? "Deselect folder" : "Select folder"}
                         >
@@ -3498,8 +3578,8 @@ function App() {
                               isSelected
                                 ? 'opacity-100 bg-white text-black border-white'
                                 : isSelectionActive
-                                  ? 'opacity-50 hover:opacity-100 border-neutral-400 dark:border-neutral-500 bg-neutral-100 dark:bg-neutral-900/80'
-                                  : 'opacity-0 group-hover:opacity-100 border-neutral-400 dark:border-neutral-500 bg-neutral-100 dark:bg-neutral-900/80 hover:border-neutral-900 dark:hover:border-white'
+                                  ? 'opacity-100 md:opacity-50 md:hover:opacity-100 border-neutral-400 dark:border-neutral-500 bg-neutral-100 dark:bg-neutral-900/80'
+                                  : 'opacity-100 md:opacity-0 md:group-hover:opacity-100 border-neutral-400 dark:border-neutral-500 bg-neutral-100 dark:bg-neutral-900/80 hover:border-neutral-900 dark:hover:border-white'
                             }`}
                             title={isSelected ? "Deselect folder" : "Select folder"}
                           >
@@ -3711,8 +3791,8 @@ function App() {
                                 selectedFileIds.includes(String(file._id))
                                   ? 'opacity-100 bg-white text-black border-white'
                                   : isSelectionActive
-                                    ? 'opacity-40 hover:opacity-100 border-neutral-500 bg-neutral-900/80 hover:border-white'
-                                    : 'opacity-0 group-hover:opacity-100 border-neutral-500 bg-neutral-900/80 hover:border-white'
+                                    ? 'opacity-100 md:opacity-40 md:hover:opacity-100 border-neutral-500 bg-neutral-900/80 hover:border-white'
+                                    : 'opacity-100 md:opacity-0 md:group-hover:opacity-100 border-neutral-500 bg-neutral-900/80 hover:border-white'
                               }`}
                               title={selectedFileIds.includes(String(file._id)) ? "Deselect file" : "Select file"}
                             >
@@ -3774,24 +3854,24 @@ function App() {
                             <MoreVertical size={20} />
                           </button>
                           
-                          <div className={`absolute right-0 w-44 bg-white dark:bg-[#1e1f20] rounded-xl shadow-xl border border-outline-variant dark:border-zinc-800 z-[60] overflow-hidden flex flex-col py-1 transition-all duration-200 ease-out ${index >= filteredFiles.length - 2 && filteredFiles.length > 3 ? 'bottom-full mb-2 origin-bottom-right' : 'top-full mt-2 origin-top-right'} ${activeMenuId === (file._id || file.id) ? 'opacity-100 scale-100 pointer-events-auto' : 'opacity-0 scale-95 pointer-events-none'}`}>
+                          <div className={`absolute right-0 w-44 bg-white dark:bg-[#1e1f20] rounded-xl shadow-xl border border-neutral-200 dark:border-zinc-800 z-[60] overflow-hidden flex flex-col py-1 transition-all duration-200 ease-out ${index >= filteredFiles.length - 2 && filteredFiles.length > 3 ? 'bottom-full mb-2 origin-bottom-right' : 'top-full mt-2 origin-top-right'} ${activeMenuId === (file._id || file.id) ? 'opacity-100 scale-100 pointer-events-auto' : 'opacity-0 scale-95 pointer-events-none'}`}>
                             {!file.isFolder && (
                               <button 
                                 onClick={(e) => { e.stopPropagation(); handlePreview(file); setActiveMenuId(null); }} 
                                 onMouseEnter={() => prefetchAccessUrl(file._id, token)}
                                 onTouchStart={() => prefetchAccessUrl(file._id, token)}
-                                className="w-full text-left px-4 py-2.5 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-neutral-700 transition-colors flex items-center gap-3"
+                                className="w-full text-left px-4 py-2.5 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:text-gray-900 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-neutral-700/80 transition-colors flex items-center gap-3 cursor-pointer"
                               >
                                 <span className="material-symbols-outlined text-[18px]">visibility</span> Preview
                               </button>
                             )}
                             {!file.isFolder && file.diskName && (file.status === 'Safe' || file.status === 'unscanned_too_large') && (
-                              <button onClick={(e) => { e.stopPropagation(); setActiveMenuId(null); triggerDownload(file); }} className="w-full text-left px-4 py-2.5 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-neutral-700 transition-colors flex items-center gap-3">
+                              <button onClick={(e) => { e.stopPropagation(); setActiveMenuId(null); triggerDownload(file); }} className="w-full text-left px-4 py-2.5 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:text-gray-900 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-neutral-700/80 transition-colors flex items-center gap-3 cursor-pointer">
                                 <span className="material-symbols-outlined text-[18px]">download</span> Download
                               </button>
                             )}
                             {!file.isFolder && (
-                              <button onClick={(e) => { e.stopPropagation(); openMoveModal(file); setActiveMenuId(null); }} className="w-full text-left px-4 py-2.5 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-neutral-700 transition-colors flex items-center gap-3">
+                              <button onClick={(e) => { e.stopPropagation(); openMoveModal(file); setActiveMenuId(null); }} className="w-full text-left px-4 py-2.5 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:text-gray-900 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-neutral-700/80 transition-colors flex items-center gap-3 cursor-pointer">
                                 <FolderInput size={18} strokeWidth={1.5} /> Move
                               </button>
                             )}
@@ -3801,7 +3881,7 @@ function App() {
                               setNewRenameFileName(file.name); 
                               setShowRenameFileModal(true); 
                               setActiveMenuId(null); 
-                            }} className="w-full text-left px-4 py-2.5 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-neutral-700 transition-colors flex items-center gap-3">
+                            }} className="w-full text-left px-4 py-2.5 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:text-gray-900 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-neutral-700/80 transition-colors flex items-center gap-3 cursor-pointer">
                               <Pencil size={18} strokeWidth={1.5} /> Rename
                             </button>
                             <button
@@ -3811,12 +3891,12 @@ function App() {
                                 setActiveMenuId(null);
                                 setFileDetailsTarget(file);
                               }}
-                              className="w-full text-left px-4 py-2.5 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-neutral-700 transition-colors flex items-center gap-3 cursor-pointer"
+                              className="w-full text-left px-4 py-2.5 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:text-gray-900 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-neutral-700/80 transition-colors flex items-center gap-3 cursor-pointer"
                             >
                               <Info size={18} strokeWidth={1.5} /> Details
                             </button>
                             <div className="border-t border-neutral-200 dark:border-neutral-700 my-1"></div>
-                            <button onClick={(e) => { e.stopPropagation(); setFileToDelete(file); setActiveMenuId(null); }} className="w-full text-left px-4 py-2.5 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors flex items-center gap-3">
+                            <button onClick={(e) => { e.stopPropagation(); setFileToDelete(file); setActiveMenuId(null); }} className="w-full text-left px-4 py-2.5 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors flex items-center gap-3 cursor-pointer">
                               <span className="material-symbols-outlined text-[18px]">delete</span> Delete
                             </button>
                           </div>
@@ -3862,8 +3942,9 @@ function App() {
         isOpen={Boolean(folderToDelete)}
         onClose={() => setFolderToDelete(null)}
         onConfirm={confirmFolderDelete}
-        title={`Delete "${folderToDelete?.name}"?`}
-        description="Are you sure? Deleting this folder will permanently delete all files inside it."
+        title={`Move "${folderToDelete?.name}" to Bin?`}
+        description="Items in the bin are kept for 30 days before being permanently deleted."
+        confirmText="Move to Bin"
         isDeleting={isDeletingFolder}
         count={1}
       />
@@ -3893,7 +3974,7 @@ function App() {
       {/* Rename Folder Modal */}
       {showRenameFolderModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-white dark:bg-[#1e1f20] rounded-2xl w-full max-w-md shadow-2xl p-6 border border-outline-variant dark:border-zinc-800">
+          <div className="bg-white dark:bg-[#1e1f20] rounded-2xl w-full max-w-md shadow-2xl p-6 border border-neutral-200 dark:border-zinc-800">
             <h3 className="font-title-lg text-title-lg text-gray-900 dark:text-white mb-2">Rename Folder</h3>
             <p className="text-neutral-600 dark:text-neutral-300 text-sm mb-6">Enter a new name for your folder.</p>
             <form onSubmit={handleRenameFolderSubmit}>
@@ -3902,7 +3983,7 @@ function App() {
                 type="text" 
                 required 
                 disabled={isRenamingFolder}
-                className="w-full px-4 py-3 bg-white dark:bg-[#131314] border border-outline-variant dark:border-zinc-700 dark:text-zinc-200 rounded-xl focus:ring-2 focus:ring-secondary outline-none transition-all mb-6 font-body-md disabled:opacity-60"
+                className="w-full px-4 py-3 bg-white dark:bg-[#131314] border border-neutral-200 dark:border-zinc-700 text-neutral-900 dark:text-zinc-200 rounded-xl focus:ring-2 focus:ring-secondary outline-none transition-all mb-6 font-body-md disabled:opacity-60"
                 placeholder="Folder name" 
                 value={newRenameFolderName} 
                 onChange={(e) => setNewRenameFolderName(e.target.value)}
@@ -3918,7 +3999,7 @@ function App() {
                       setNewRenameFolderName(''); 
                     }
                   }}
-                  className="px-4 py-2 text-sm font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-800 rounded-xl transition-colors duration-200 disabled:opacity-50"
+                  className="px-4 py-2 text-sm font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-xl transition-colors duration-200 disabled:opacity-50"
                 >
                   Cancel
                 </button>
@@ -3945,7 +4026,7 @@ function App() {
       {/* Rename File Modal */}
       {showRenameFileModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-white dark:bg-[#1e1f20] rounded-2xl w-full max-w-md shadow-2xl p-6 border border-outline-variant dark:border-zinc-800">
+          <div className="bg-white dark:bg-[#1e1f20] rounded-2xl w-full max-w-md shadow-2xl p-6 border border-neutral-200 dark:border-zinc-800">
             <h3 className="font-title-lg text-title-lg text-gray-900 dark:text-white mb-2">Rename File</h3>
             <p className="text-neutral-600 dark:text-neutral-300 text-sm mb-6">Enter a new name for your file.</p>
             <form onSubmit={handleRenameFileSubmit}>
@@ -3953,7 +4034,7 @@ function App() {
                 autoFocus
                 type="text" 
                 required 
-                className="w-full px-4 py-3 bg-white dark:bg-[#131314] border border-outline-variant dark:border-zinc-700 dark:text-zinc-200 rounded-xl focus:ring-2 focus:ring-secondary outline-none transition-all mb-6 font-body-md"
+                className="w-full px-4 py-3 bg-white dark:bg-[#131314] border border-neutral-200 dark:border-zinc-700 text-neutral-900 dark:text-zinc-200 rounded-xl focus:ring-2 focus:ring-secondary outline-none transition-all mb-6 font-body-md"
                 placeholder="File name" 
                 value={newRenameFileName} 
                 onChange={(e) => setNewRenameFileName(e.target.value)}
@@ -3962,7 +4043,7 @@ function App() {
                 <button 
                   type="button" 
                   onClick={() => { setShowRenameFileModal(false); setFileToRename(null); setNewRenameFileName(''); }}
-                  className="px-4 py-2 text-sm font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-800 rounded-xl transition-colors duration-200"
+                  className="px-4 py-2 text-sm font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-xl transition-colors duration-200"
                 >
                   Cancel
                 </button>
@@ -4036,34 +4117,34 @@ function App() {
             </div>
           </div>
         ) : (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
-            <div className="bg-white rounded-xl shadow-lg w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
-              <div className="flex items-center justify-between p-4 border-b border-outline-variant bg-surface">
-                <h3 className="font-title-lg text-on-surface truncate pr-4">{previewFile.name}</h3>
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+            <div className="bg-white dark:bg-[#18181b] rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden border border-neutral-200 dark:border-neutral-800 text-neutral-900 dark:text-neutral-100">
+              <div className="flex items-center justify-between p-4 border-b border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900/60">
+                <h3 className="font-title-lg text-neutral-900 dark:text-white font-semibold truncate pr-4">{previewFile.name}</h3>
                 <div className="flex items-center gap-2">
                   <button 
                     onClick={() => handleDownload(previewFile)}
-                    className="bg-secondary text-on-secondary hover:bg-secondary-container transition-colors p-2 rounded-lg flex items-center justify-center"
+                    className="bg-primary text-on-primary hover:bg-primary/90 transition-colors p-2 rounded-lg flex items-center justify-center"
                     title="Download File"
                   >
                     <span className="material-symbols-outlined">download</span>
                   </button>
-                  <button onClick={closePreview} className="p-2 text-on-surface-variant hover:bg-surface-container-high rounded-full transition-colors">
+                  <button onClick={closePreview} className="p-2 text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white hover:bg-neutral-200 dark:hover:bg-neutral-800 rounded-full transition-colors">
                     <span className="material-symbols-outlined">close</span>
                   </button>
                 </div>
               </div>
-              <div className="flex-1 overflow-auto bg-surface-container p-4 flex items-center justify-center">
+              <div className="flex-1 overflow-auto bg-neutral-100 dark:bg-neutral-950 p-4 flex items-center justify-center">
                 {(previewFile.type.toLowerCase() === 'png' || previewFile.type.toLowerCase() === 'jpg' || previewFile.type.toLowerCase() === 'jpeg') ? (
-                  <img src={previewUrl} alt={previewFile.name} className="max-w-full max-h-[70vh] object-contain shadow-sm" />
+                  <img src={previewUrl} alt={previewFile.name} className="max-w-full max-h-[70vh] object-contain shadow-sm rounded" />
                 ) : previewFile.type.toLowerCase() === 'pdf' ? (
-                  <iframe src={previewUrl} className="w-full h-[70vh] border-0" title="PDF Preview" />
+                  <iframe src={previewUrl} className="w-full h-[70vh] border-0 rounded" title="PDF Preview" />
                 ) : (previewFile.type.toLowerCase() === 'txt' || previewFile.type.toLowerCase() === 'md') ? (
-                  <pre className="w-full h-full text-left bg-white p-6 rounded-lg overflow-auto text-sm font-mono whitespace-pre-wrap shadow-inner border border-outline-variant">
+                  <pre className="w-full h-full text-left bg-white dark:bg-[#121212] text-neutral-900 dark:text-neutral-100 p-6 rounded-lg overflow-auto text-sm font-mono whitespace-pre-wrap shadow-inner border border-neutral-200 dark:border-neutral-800">
                     {previewText || "Loading..."}
                   </pre>
                 ) : (
-                  <div className="text-on-surface-variant flex flex-col items-center gap-3">
+                  <div className="text-neutral-500 dark:text-neutral-400 flex flex-col items-center gap-3">
                     <span className="material-symbols-outlined text-4xl">visibility_off</span>
                     <p>Preview not available for this file type.</p>
                   </div>
@@ -4081,21 +4162,21 @@ function App() {
         onConfirm={showBulkDeleteModal ? handleBulkDelete : confirmDelete}
         title={
           showBulkDeleteModal
-            ? `Permanently delete ${selectedFolderIds.length + selectedFileIds.length} items?`
-            : `Delete "${fileToDelete?.name}"?`
+            ? `Move ${selectedFolderIds.length + selectedFileIds.length} items to Bin?`
+            : `Move "${fileToDelete?.name}" to Bin?`
         }
         description={
           showBulkDeleteModal
-            ? `Are you sure you want to permanently delete these ${selectedFolderIds.length + selectedFileIds.length} items? This action cannot be undone and will immediately free up your storage.`
-            : 'Are you sure you want to permanently delete this file? This action cannot be undone and will immediately free up your storage.'
+            ? `Are you sure you want to move these ${selectedFolderIds.length + selectedFileIds.length} items to the Bin? Items in the bin are kept for 30 days before being permanently deleted.`
+            : 'Are you sure you want to move this file to the Bin? Items in the bin are kept for 30 days before being permanently deleted.'
         }
-        confirmText="Permanently delete"
+        confirmText="Move to Bin"
         count={showBulkDeleteModal ? (selectedFolderIds.length + selectedFileIds.length) : 1}
         isDeleting={isDeleting || isBulkDeleting}
       />
 
       {/* Unified Floating Action Pill (Matches PhotosView) */}
-      {totalSelected > 0 && location.pathname !== '/dashboard/photos' && (
+      {totalSelected > 0 && location.pathname !== '/dashboard/photos' && viewMode !== 'bin' && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 sm:py-2.5 rounded-full bg-neutral-900/95 dark:bg-neutral-800/95 backdrop-blur-md border border-neutral-700/60 shadow-2xl text-white select-none max-w-[95vw]">
           
           {/* 1. Counter */}

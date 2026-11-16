@@ -23,11 +23,29 @@ api.interceptors.request.use((config) => {
 function PWAInstallCard() {
   const { isInstalled, isIOS, triggerInstall, isInstallable } = usePWAInstall();
   const [showIOSGuide, setShowIOSGuide] = useState(false);
+  const [showDesktopGuide, setShowDesktopGuide] = useState(false);
 
   const handleInstallClick = async () => {
     const res = await triggerInstall();
-    if (res?.method === 'ios') {
+    if (res?.method === 'already_installed') {
+      toast.success('CloudGuard is already installed on this device.');
+    } else if (res?.method === 'native') {
+      if (res.success) {
+        toast.success('CloudGuard app installed successfully!');
+      }
+    } else if (res?.method === 'ios') {
       setShowIOSGuide(true);
+      setShowDesktopGuide(false);
+      toast('Tap the Share button in Safari, then select "Add to Home Screen".', {
+        icon: '📱',
+      });
+    } else if (res?.method === 'unsupported' || res?.method === 'dismissed') {
+      setShowDesktopGuide(true);
+      setShowIOSGuide(false);
+      toast('To install CloudGuard, click the install icon in your browser address bar or menu.', {
+        icon: 'ℹ️',
+        duration: 5000,
+      });
     }
   };
 
@@ -75,6 +93,16 @@ function PWAInstallCard() {
           <span className="text-blue-400 font-bold shrink-0">iOS:</span>
           <span>
             Tap the <span className="font-semibold underline text-white">Share</span> button in Safari, then scroll down and tap <span className="font-semibold underline text-white">"Add to Home Screen"</span>.
+          </span>
+        </div>
+      )}
+
+      {/* Desktop / Browser Instructions Helper */}
+      {showDesktopGuide && (
+        <div className="mt-3.5 pt-3 border-t border-neutral-800 text-xs text-neutral-300 flex items-start gap-2 animate-in fade-in">
+          <span className="text-blue-400 font-bold shrink-0">Browser:</span>
+          <span>
+            Click the <span className="font-semibold underline text-white">Install App</span> icon (<span className="text-white font-mono">⊕</span> or computer icon) in your browser's address bar, or open your browser menu and choose <span className="font-semibold underline text-white">"Install CloudGuard"</span>.
           </span>
         </div>
       )}
@@ -1032,7 +1060,25 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
           </div>
         </div>
       )}
-      <Toaster position="bottom-right" reverseOrder={false} />
+      <Toaster 
+        position="bottom-right" 
+        reverseOrder={false} 
+        toastOptions={{
+          className: '!bg-white/95 !text-slate-900 !border !border-slate-200 !shadow-xl dark:!bg-slate-900/95 dark:!text-slate-100 dark:!border-slate-700/80 dark:!shadow-2xl !backdrop-blur-md !rounded-xl !text-xs sm:!text-sm',
+          success: {
+            iconTheme: {
+              primary: '#10b981',
+              secondary: '#fff',
+            },
+          },
+          error: {
+            iconTheme: {
+              primary: '#f43f5e',
+              secondary: '#fff',
+            },
+          },
+        }}
+      />
     </div>
   );
 }

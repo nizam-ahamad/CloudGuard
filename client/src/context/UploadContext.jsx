@@ -115,6 +115,8 @@ export function UploadProvider({ children }) {
   const batchCancelledRef = useRef(false);
   const batchTotalRef = useRef(0);
   const batchStartTimeRef = useRef(0);
+  const currentBatchCompletedRef = useRef(0);
+  const currentBatchFailedRef = useRef(0);
   const emaBytesPerSecRef = useRef(0);
   const lastProgressSampleRef = useRef({ time: Date.now(), bytes: 0 });
   const lastEventDispatchRef = useRef(0);
@@ -342,6 +344,10 @@ export function UploadProvider({ children }) {
     const currentActiveCount = (queueRef.current || []).filter((i) =>
       ['uploading', 'hashing', 'finalizing', 'queued', 'pending'].includes(i.status)
     ).length;
+    if (currentActiveCount === 0) {
+      currentBatchCompletedRef.current = 0;
+      currentBatchFailedRef.current = 0;
+    }
     batchTotalRef.current = Math.max(batchTotalRef.current, fileList.length, currentActiveCount + fileList.length);
 
     const newItems = fileList.map((item) => {
@@ -847,6 +853,7 @@ export function UploadProvider({ children }) {
           progress: 100,
           error: 'Threat detected & deleted',
         });
+        currentBatchFailedRef.current += 1;
         if (!batchCancelledRef.current && !controller.signal.aborted) {
           toast.error(`Threat detected: "${file.name}" was automatically deleted from vault.`, {
             duration: 5000,
@@ -861,6 +868,7 @@ export function UploadProvider({ children }) {
         }
       } else {
         updateItem(id, { status: 'clean', progress: 100 });
+        currentBatchCompletedRef.current += 1;
         if (!isBulkUpload && !batchCancelledRef.current && !controller.signal.aborted) {
           toast.success(`"${file.name}" verified safe.`, { duration: 3000 });
         }
@@ -885,6 +893,7 @@ export function UploadProvider({ children }) {
       }
 
       console.error('[Upload Pipeline Error]:', err);
+      currentBatchFailedRef.current += 1;
       const errorData = err.response?.data;
       const errorCode = errorData?.code || errorData?.error;
       const isWriteLock = err.response?.status === 403 && ['SUBSCRIPTION_EXPIRED', 'SUBSCRIPTION_PAST_DUE', 'TRIAL_EXPIRED'].includes(errorCode);
@@ -918,11 +927,18 @@ export function UploadProvider({ children }) {
           dispatchThrottledUpdates(folderId, true);
           window.dispatchEvent(new CustomEvent('cloudguard:all-uploads-completed', { detail: { folderId } }));
 
-          if (!batchCancelledRef.current) {
-            const cleanCount = (queueRef.current || []).filter((i) => i.status === 'clean' || i.status === 'completed').length;
-            if (cleanCount > 5) {
-              toast.success(`Batch upload completed: ${cleanCount} files uploaded safely.`, { duration: 5000 });
+          if (!batchCancelledRef.current && currentBatchCompletedRef.current > 0) {
+            const completedCount = currentBatchCompletedRef.current;
+            currentBatchCompletedRef.current = 0;
+            currentBatchFailedRef.current = 0;
+            if (completedCount === 1) {
+              toast.success('1 file uploaded safely.', { duration: 5000 });
+            } else if (completedCount > 1) {
+              toast.success(`Batch upload completed: ${completedCount} files uploaded safely.`, { duration: 5000 });
             }
+          } else {
+            currentBatchCompletedRef.current = 0;
+            currentBatchFailedRef.current = 0;
           }
         }
       }, 100);
@@ -972,6 +988,8 @@ export function UploadProvider({ children }) {
     batchCancelledRef.current = true;
     batchTotalRef.current = 0;
     batchStartTimeRef.current = 0;
+    currentBatchCompletedRef.current = 0;
+    currentBatchFailedRef.current = 0;
     emaBytesPerSecRef.current = 0;
     lastProgressSampleRef.current = { time: Date.now(), bytes: 0 };
 

@@ -118,7 +118,7 @@ async function autoRecoverVaultData() {
       console.log(`[CloudGuard Recovery] Cleaned up ${staleCleanup.deletedCount} stale pending_scan files.`);
     }
 
-    // Recalculate true active storage quotas for all users (strictly verified clean / unverified active files)
+    // Recalculate true active storage quotas for all users (strictly verified clean / unverified active files, including 30-Day Bin)
     const users = await User.find({}).select('_id email').lean();
     for (const u of users) {
       const stats = await File.aggregate([
@@ -130,8 +130,7 @@ async function autoRecoverVaultData() {
               { userId: String(u._id) },
               { user: String(u._id) },
             ],
-            isTrash: { $ne: true },
-            securityStatus: { $in: ['clean', 'unverified'] },
+            securityStatus: { $nin: ['threat_purged', 'pending_scan'] },
           },
         },
         {
@@ -185,8 +184,9 @@ mongoose.connect(mongoURI, {
       console.warn('[CloudGuard Index Sync Warning]:', indexErr.message);
     }
 
-    // Run subscription expiry reconciliation immediately upon successful DB connection
+    // Run subscription expiry reconciliation and 30-day bin purge immediately upon successful DB connection
     reconcileExpiredSubscriptions();
+    purgeExpiredBinItems();
   })
   .catch(err => {
     console.error("[DB Error]", err);
@@ -623,6 +623,78 @@ async function reconcileExpiredSubscriptions() {
 setInterval(reconcileExpiredSubscriptions, 6 * 60 * 60 * 1000);
 
 /**
+ * 30-Day Automated Bin Purge Runner
+ * Permanently deletes trashed files and folders whose trashedAt is older than 30 days.
+ * Removes versioned objects from Backblaze B2, deletes MongoDB records,
+ * and decrements affected users' storageUsed.
+ */
+async function purgeExpiredBinItems() {
+  try {
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const File = mongoose.models.File || require('./models/File');
+    const Folder = mongoose.models.Folder || require('./models/Folder');
+    const User = mongoose.models.User || require('./models/User');
+
+    // 1. Find all expired trashed files
+    const expiredFiles = await File.find({
+      isTrash: true,
+      trashedAt: { $lte: thirtyDaysAgo }
+    }).select('_id userId user size s3Key thumbnailKey').lean();
+
+    if (expiredFiles.length > 0) {
+      console.log(`[Bin Purge] Found ${expiredFiles.length} expired trashed file(s) older than 30 days.`);
+
+      // Group files by userId
+      const filesByUser = new Map();
+      for (const f of expiredFiles) {
+        const uId = String(f.userId || f.user);
+        if (!filesByUser.has(uId)) filesByUser.set(uId, []);
+        filesByUser.get(uId).push(f);
+      }
+
+      for (const [uId, uFiles] of filesByUser.entries()) {
+        try {
+          const keys = uFiles.flatMap(f => [f.s3Key, f.thumbnailKey]).filter(Boolean);
+          if (keys.length > 0) {
+            await permanentlyDeleteS3Keys(keys, uId);
+          }
+          const fileIds = uFiles.map(f => f._id);
+          await File.deleteMany({ _id: { $in: fileIds } });
+
+          const freedBytes = uFiles.reduce((sum, f) => sum + (f.size || 0), 0);
+          if (freedBytes > 0) {
+            const u = await User.findById(uId);
+            if (u) {
+              u.storageUsed = Math.max(0, (u.storageUsed || 0) - freedBytes);
+              await u.save();
+            }
+          }
+          console.log(`[Bin Purge] Purged ${uFiles.length} file(s) for user ${uId}, freed ${(freedBytes / (1024 * 1024)).toFixed(2)} MB`);
+        } catch (userPurgeErr) {
+          console.error(`[Bin Purge User Error] Failed to purge files for user ${uId}:`, userPurgeErr.message);
+        }
+      }
+    }
+
+    // 2. Find and delete all expired trashed folders
+    const expiredFolders = await Folder.find({
+      isTrash: true,
+      trashedAt: { $lte: thirtyDaysAgo }
+    }).select('_id').lean();
+
+    if (expiredFolders.length > 0) {
+      await Folder.deleteMany({ _id: { $in: expiredFolders.map(f => f._id) } });
+      console.log(`[Bin Purge] Removed ${expiredFolders.length} expired trashed folder(s) older than 30 days.`);
+    }
+  } catch (err) {
+    console.error('[Bin Purge Error]:', err.message);
+  }
+}
+
+// Run 30-Day Bin purge every 24 hours
+setInterval(purgeExpiredBinItems, 24 * 60 * 60 * 1000);
+
+/**
  * Automated Abandoned Upload Reaper
  * Purges orphaned S3 objects and MongoDB records for uploads that were
  * initiated (pending_scan) but never finalized due to network drops or tab closures.
@@ -674,10 +746,24 @@ setInterval(sweepAbandonedUploads, 6 * 60 * 60 * 1000);
 
 
 async function recalculateStorage(userId) {
-    try {
+  try {
+    const rawUserId = userId;
+    const userIdObj = mongoose.Types.ObjectId.isValid(rawUserId)
+      ? new mongoose.Types.ObjectId(rawUserId)
+      : rawUserId;
     const result = await FileModel.aggregate([
-      { $match: { $or: [{ userId: userId }, { userId: String(userId) }, { user: userId }], isTrash: false, securityStatus: { $ne: 'threat_purged' } } },
-      { $group: { _id: null, totalSize: { $sum: "$size" } } }
+      {
+        $match: {
+          $or: [
+            { userId: userIdObj },
+            { user: userIdObj },
+            { userId: String(rawUserId) },
+            { user: String(rawUserId) },
+          ],
+          securityStatus: { $nin: ['threat_purged', 'pending_scan'] },
+        },
+      },
+      { $group: { _id: null, totalSize: { $sum: "$size" } } },
     ]);
     const totalSize = result.length > 0 ? result[0].totalSize : 0;
     await User.findByIdAndUpdate(userId, { storageUsed: totalSize });
@@ -1147,12 +1233,11 @@ const getStorageStatsInServer = async (req, res) => {
       ],
     };
 
-    // Calculate real active storage
+    // Calculate real active storage (retains items in 30-Day Bin, excludes only purged & pending scans)
     const stats = await File.aggregate([
       {
         $match: {
-          isTrash: { $ne: true },
-          securityStatus: { $ne: 'threat_purged' },
+          securityStatus: { $nin: ['threat_purged', 'pending_scan'] },
           ...userMatch,
         },
       },
@@ -1167,7 +1252,14 @@ const getStorageStatsInServer = async (req, res) => {
     const actualStorageUsed = stats[0]?.actualUsedBytes || 0;
 
     // Synchronize user record in background
-    await User.findByIdAndUpdate(rawUserId, { storageUsed: actualStorageUsed });
+    const userDoc = await User.findById(rawUserId);
+    if (userDoc) {
+      userDoc.storageUsed = actualStorageUsed;
+      if (userDoc.subscription) {
+        userDoc.subscription.peakStorageBytes = Math.max(userDoc.subscription?.peakStorageBytes || 0, userDoc.storageUsed);
+      }
+      await userDoc.save();
+    }
 
     const user = await User.findById(rawUserId).select('storageLimit').lean();
     const storageLimit = user?.storageLimit || 5368709120; // 5 GB
@@ -1253,8 +1345,13 @@ app.post('/api/upload', verifyToken, async (req, res) => {
 
   // Check User Quota
   let currentStorageUsed = 0;
-    const result = await FileModel.aggregate([
-    { $match: { userId: userId, securityStatus: { $in: ['Safe', 'unscanned_too_large'] } } },
+  const result = await FileModel.aggregate([
+    {
+      $match: {
+        $or: [{ userId: userId }, { user: userId }, { userId: String(userId) }, { user: String(userId) }],
+        securityStatus: { $nin: ['threat_purged', 'pending_scan'] },
+      },
+    },
     { $group: { _id: null, totalSize: { $sum: "$size" } } }
   ]);
   if (result.length > 0) {
@@ -2776,5 +2873,6 @@ if (require.main === module) {
 
 module.exports = {
   app,
-  sweepAbandonedUploads
+  sweepAbandonedUploads,
+  purgeExpiredBinItems
 };

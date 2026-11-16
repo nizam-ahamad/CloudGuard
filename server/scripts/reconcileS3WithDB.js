@@ -160,8 +160,7 @@ async function reconcileS3() {
         {
           $match: {
             userId: u._id,
-            isTrash: false,
-            securityStatus: { $ne: 'threat_purged' },
+            securityStatus: { $nin: ['threat_purged', 'pending_scan'] },
           },
         },
         {

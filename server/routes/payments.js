@@ -82,7 +82,7 @@ function calculateTierTransition(user, targetPlanId, targetBillingCycle) {
   }
 
   const currentPlan = PLAN_CATALOG[currentPlanId];
-  const daysRemaining = Math.max(1, Math.ceil((currentExpiresAt.getTime() - Date.now()) / 86400000));
+  const daysRemaining = Math.max(0, Math.ceil((currentExpiresAt.getTime() - Date.now()) / 86400000));
   const renewalWindowDays = currentCycle === 'annual' ? 15 : 7;
 
   // Case 2: Same Plan & Same Cycle (Renewal)
@@ -97,7 +97,38 @@ function calculateTierTransition(user, targetPlanId, targetBillingCycle) {
     };
   }
 
-  // Rule A — Deferred Downgrades (Capacity Reductions Only)
+  // Rule 1: Block Mid-Cycle Annual -> Monthly Conversion (Option A — Zero Loophole)
+  if (currentCycle === 'annual' && targetBillingCycle === 'monthly') {
+    if (daysRemaining > 15) {
+      return {
+        transitionType: 'BLOCKED_ANNUAL_TO_MONTHLY',
+        allowed: false,
+        effectiveDate: currentExpiresAt,
+        message: 'Annual plans cannot switch to monthly mid-cycle. Upgrade to an Annual tier today or switch to Monthly within 15 days of renewal.'
+      };
+    }
+
+    // Renewal window (daysRemaining <= 15)
+    if (targetPlan.storageGB < currentPlan.storageGB) {
+      return {
+        transitionType: 'SCHEDULED_DOWNGRADE',
+        payableAmount: 0,
+        targetExpiresAt: currentExpiresAt,
+        effectiveDate: currentExpiresAt,
+        isImmediateQuota: false
+      };
+    }
+
+    return {
+      transitionType: 'CYCLE_SWITCH_PREPAID',
+      payableAmount: targetPlan.monthlyPrice,
+      targetExpiresAt: new Date(currentExpiresAt.getTime() + 30 * 86400000),
+      isImmediateQuota: true,
+      daysRemaining
+    };
+  }
+
+  // Rule 3: All Capacity Downgrades (targetPlan.storageGB < currentPlan.storageGB)
   if (targetPlan.storageGB < currentPlan.storageGB) {
     return {
       transitionType: 'SCHEDULED_DOWNGRADE',
@@ -108,63 +139,55 @@ function calculateTierTransition(user, targetPlanId, targetBillingCycle) {
     };
   }
 
-  // Rule B — Renewal-Window Tier Upgrades (Full new cycle stacked onto remaining days)
-  if (targetPlan.storageGB > currentPlan.storageGB && currentCycle === targetBillingCycle && daysRemaining <= renewalWindowDays) {
-    const amount = targetBillingCycle === 'annual' ? targetPlan.annualPrice : targetPlan.monthlyPrice;
-    const durationDays = targetBillingCycle === 'annual' ? 365 : 30;
-    return {
-      transitionType: 'RENEWAL_UPGRADE',
-      payableAmount: amount,
-      targetExpiresAt: new Date(currentExpiresAt.getTime() + durationDays * 86400000),
-      daysRemaining,
-      isImmediateQuota: true
-    };
-  }
-
-  // Rule C — Annual to Monthly Switch on equal or higher storage (Prepay monthly & stack +30 days)
-  if (currentCycle === 'annual' && targetBillingCycle === 'monthly' && targetPlan.storageGB >= currentPlan.storageGB) {
-    return {
-      transitionType: 'CYCLE_SWITCH_PREPAID',
-      payableAmount: targetPlan.monthlyPrice,
-      targetExpiresAt: new Date(currentExpiresAt.getTime() + 30 * 86400000),
-      isImmediateQuota: true
-    };
-  }
-
-  // Case 4: Monthly to Monthly Mid-Cycle Upgrade (Delta Price, Preserves Expiry)
-  if (currentCycle === 'monthly' && targetBillingCycle === 'monthly' && targetPlan.storageGB > currentPlan.storageGB) {
-    const deltaAmount = targetPlan.monthlyPrice - currentPlan.monthlyPrice;
-    return {
-      transitionType: 'MONTHLY_UPGRADE',
-      payableAmount: Math.max(1, deltaAmount),
-      targetExpiresAt: currentExpiresAt, // Retain existing cycle end
-      isImmediateQuota: true
-    };
-  }
-
-  // Case 5: Annual to Annual Mid-Cycle Upgrade (Co-Termed Delta Math)
-  if (currentCycle === 'annual' && targetBillingCycle === 'annual' && targetPlan.storageGB > currentPlan.storageGB) {
-    const annualPriceDiff = targetPlan.annualPrice - currentPlan.annualPrice;
-    const coTermedDelta = Math.round((annualPriceDiff / 365) * daysRemaining);
-    const payableAmount = Math.max(50, coTermedDelta); // Gateway floor ₹50
-
-    return {
-      transitionType: 'ANNUAL_UPGRADE',
-      payableAmount,
-      targetExpiresAt: currentExpiresAt, // Preserve annual anniversary
-      daysRemaining,
-      isImmediateQuota: true
-    };
-  }
-
-  // Case 6: Monthly to Annual Switch (Additive Duration: Current End + 365 Days)
-  if (currentCycle === 'monthly' && targetBillingCycle === 'annual') {
+  // Rule 2: Monthly -> Annual Upgrades / Same-Tier Switches (targetPlan.storageGB >= currentPlan.storageGB)
+  if (currentCycle === 'monthly' && targetBillingCycle === 'annual' && targetPlan.storageGB >= currentPlan.storageGB) {
     return {
       transitionType: 'CYCLE_UPGRADE',
       payableAmount: targetPlan.annualPrice,
       targetExpiresAt: new Date(currentExpiresAt.getTime() + 365 * 86400000),
       isImmediateQuota: true
     };
+  }
+
+  // Rule 4: Same-Cycle Upgrades (targetPlan.storageGB > currentPlan.storageGB && currentCycle === targetBillingCycle)
+  if (targetPlan.storageGB > currentPlan.storageGB && currentCycle === targetBillingCycle) {
+    if (daysRemaining <= renewalWindowDays) {
+      const amount = targetBillingCycle === 'annual' ? targetPlan.annualPrice : targetPlan.monthlyPrice;
+      const durationDays = targetBillingCycle === 'annual' ? 365 : 30;
+      return {
+        transitionType: 'RENEWAL_UPGRADE',
+        payableAmount: amount,
+        targetExpiresAt: new Date(currentExpiresAt.getTime() + durationDays * 86400000),
+        daysRemaining,
+        isImmediateQuota: true
+      };
+    }
+
+    // Monthly to Monthly Mid-Cycle Upgrade (Delta Price, Preserves Expiry)
+    if (currentCycle === 'monthly') {
+      const deltaAmount = targetPlan.monthlyPrice - currentPlan.monthlyPrice;
+      return {
+        transitionType: 'MONTHLY_UPGRADE',
+        payableAmount: Math.max(1, deltaAmount),
+        targetExpiresAt: currentExpiresAt, // Retain existing cycle end
+        daysRemaining,
+        isImmediateQuota: true
+      };
+    }
+
+    // Annual to Annual Mid-Cycle Upgrade (Co-Termed Delta Math)
+    if (currentCycle === 'annual') {
+      const annualPriceDiff = targetPlan.annualPrice - currentPlan.annualPrice;
+      const coTermedDelta = Math.round((annualPriceDiff / 365) * daysRemaining);
+      const payableAmount = Math.max(50, coTermedDelta); // Gateway floor ₹50
+      return {
+        transitionType: 'ANNUAL_UPGRADE',
+        payableAmount,
+        targetExpiresAt: currentExpiresAt, // Preserve annual anniversary
+        daysRemaining,
+        isImmediateQuota: true
+      };
+    }
   }
 
   // Fallback default
@@ -218,6 +241,15 @@ router.post('/create-order', auth, async (req, res) => {
 
     const targetCycle = billingCycle === 'annual' ? 'annual' : 'monthly';
     const transition = calculateTierTransition(user, planId, targetCycle);
+
+    // Reject blocked mid-cycle Annual -> Monthly transitions
+    if (transition.transitionType === 'BLOCKED_ANNUAL_TO_MONTHLY' || transition.allowed === false) {
+      return res.status(400).json({
+        error: transition.message || 'Annual plans cannot switch to monthly mid-cycle. Upgrade to an Annual tier today or switch to Monthly within 15 days of renewal.',
+        transitionType: transition.transitionType,
+        effectiveDate: transition.effectiveDate
+      });
+    }
 
     // If transition is a deferred downgrade (Payable = 0)
     if (transition.payableAmount === 0 || transition.transitionType === 'SCHEDULED_DOWNGRADE') {
@@ -369,6 +401,7 @@ async function fulfillCashfreeOrder(orderId, orderDetails = null, clientOrigin =
   else if (transitionType === 'MONTHLY_UPGRADE') lineItemTitle += ' — Mid-Cycle Monthly Upgrade Delta';
   else if (transitionType === 'RENEWAL_UPGRADE') lineItemTitle += ' — Tier Upgrade + Cycle Renewal';
   else if (transitionType === 'CYCLE_SWITCH_PREPAID') lineItemTitle += ' — Monthly Cycle Switch (+30 Days)';
+  else if (transitionType === 'CYCLE_UPGRADE') lineItemTitle += ' — Annual Upgrade (+365 Days)';
 
   if (!paymentRecord) {
     try {
