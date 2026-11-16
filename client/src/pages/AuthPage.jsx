@@ -64,6 +64,9 @@ export default function AuthPage() {
   const [otpAttempts, setOtpAttempts] = useState(0);
   const [pendingEmail, setPendingEmail] = useState('');
   const [consentAgreed, setConsentAgreed] = useState(false);
+  const [pendingGoogleAuth, setPendingGoogleAuth] = useState(null);
+  const [googleConsentChecked, setGoogleConsentChecked] = useState(false);
+  const [isGoogleSubmitting, setIsGoogleSubmitting] = useState(false);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -98,6 +101,17 @@ export default function AuthPage() {
         credential: credentialResponse.credential,
       });
 
+      if (res.data?.requiresConsent) {
+        setPendingGoogleAuth({
+          credential: credentialResponse.credential,
+          email: res.data.email,
+          name: res.data.name,
+        });
+        setGoogleConsentChecked(false);
+        setIsLoading(false);
+        return;
+      }
+
       localStorage.setItem('token', res.data.token);
       localStorage.setItem('user', JSON.stringify(res.data.user));
 
@@ -117,6 +131,43 @@ export default function AuthPage() {
       setIsLoading(false);
     }
   }, [toast, getPostAuthDestination]);
+
+  const handleConfirmGoogleConsent = async () => {
+    if (!pendingGoogleAuth || !googleConsentChecked || isGoogleSubmitting) return;
+    try {
+      setIsGoogleSubmitting(true);
+      const res = await axios.post(`${API_BASE_URL}/api/auth/google`, {
+        credential: pendingGoogleAuth.credential,
+        consentGiven: true,
+        isAdultConfirmed: true,
+      });
+
+      localStorage.setItem('token', res.data.token);
+      localStorage.setItem('user', JSON.stringify(res.data.user));
+
+      window.dispatchEvent(new Event('cloudguard:auth-changed'));
+      window.dispatchEvent(new Event('auth-change'));
+      window.dispatchEvent(new Event('storage'));
+
+      setPendingGoogleAuth(null);
+      setGoogleConsentChecked(false);
+
+      toast.success(`Welcome to CloudGuard, ${res.data.user?.name || 'User'}!`);
+      const dest = getPostAuthDestination();
+      window.location.href = dest;
+    } catch (err) {
+      console.error('Google Consent Confirmation Error:', err);
+      const errorMsg = err.response?.data?.error || 'Account creation failed. Please try again.';
+      toast.error(errorMsg);
+    } finally {
+      setIsGoogleSubmitting(false);
+    }
+  };
+
+  const handleCancelGoogleConsent = () => {
+    setPendingGoogleAuth(null);
+    setGoogleConsentChecked(false);
+  };
 
   const handleGoogleError = useCallback(() => {
     toast.error('Google Sign-In failed');
@@ -868,6 +919,84 @@ export default function AuthPage() {
         )}
 
       </div>
+
+      {/* Google OAuth 18+ & DPDP Consent Modal */}
+      {pendingGoogleAuth && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-900 dark:text-zinc-100 rounded-2xl p-5 sm:p-6 max-w-md w-full mx-4 shadow-2xl space-y-4">
+            <div>
+              <h3 className="text-base sm:text-lg font-bold text-neutral-900 dark:text-white">
+                Complete Your Account Setup
+              </h3>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
+                Creating a CloudGuard Vault for{' '}
+                <span className="font-semibold text-neutral-800 dark:text-neutral-200">
+                  {pendingGoogleAuth.email}
+                </span>
+              </p>
+            </div>
+
+            <div className="flex items-start gap-2.5 p-3 rounded-xl bg-neutral-50 dark:bg-zinc-900/60 border border-neutral-200 dark:border-zinc-800/80 text-left">
+              <input
+                type="checkbox"
+                id="google-dpdp-consent"
+                checked={googleConsentChecked}
+                onChange={(e) => setGoogleConsentChecked(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-emerald-500 focus:ring-emerald-500/20 cursor-pointer shrink-0"
+              />
+              <label
+                htmlFor="google-dpdp-consent"
+                className="text-xs text-neutral-600 dark:text-neutral-300 leading-snug cursor-pointer select-none"
+              >
+                I confirm I am 18 years of age or older, and I consent to the collection and processing of my personal data as described in the{' '}
+                <a
+                  href="/privacy"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-emerald-600 dark:text-emerald-400 font-medium hover:underline"
+                >
+                  Privacy Policy
+                </a>{' '}
+                and{' '}
+                <a
+                  href="/terms"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-emerald-600 dark:text-emerald-400 font-medium hover:underline"
+                >
+                  Terms of Service
+                </a>.
+              </label>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={handleCancelGoogleConsent}
+                disabled={isGoogleSubmitting}
+                className="px-4 py-2 text-xs font-semibold rounded-xl text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmGoogleConsent}
+                disabled={!googleConsentChecked || isGoogleSubmitting}
+                className="px-4 py-2 text-xs font-semibold rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+              >
+                {isGoogleSubmitting ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Creating Vault...</span>
+                  </>
+                ) : (
+                  <span>Create Vault</span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

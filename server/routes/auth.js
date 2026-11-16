@@ -66,7 +66,7 @@ const formatUserResponse = (user) => ({
 // ==========================================
 router.post('/google', async (req, res) => {
   try {
-    const { credential } = req.body;
+    const { credential, consentGiven, isAdultConfirmed } = req.body;
     if (!credential) return res.status(400).json({ error: 'Google credential required' });
 
     const ticket = await client.verifyIdToken({
@@ -101,6 +101,15 @@ router.post('/google', async (req, res) => {
       }
       if (modified) await user.save();
     } else {
+      if (consentGiven !== true || isAdultConfirmed !== true) {
+        return res.status(200).json({
+          requiresConsent: true,
+          isNewUser: true,
+          email: normalizedEmail,
+          name: name || normalizedEmail.split('@')[0],
+        });
+      }
+
       const priorDeletedLog = await DeletedAccountLog.findOne({
         emailHash: hashNormalizedEmail(normalizedEmail),
       }).lean();
@@ -115,6 +124,10 @@ router.post('/google', async (req, res) => {
         password: null,
         storageUsed: 0,
         storageLimit: 5 * 1024 * 1024 * 1024,
+        consentGiven: true,
+        isAdultConfirmed: true,
+        consentTimestamp: new Date(),
+        consentVersion: '1.0',
       };
 
       if (priorDeletedLog) {
