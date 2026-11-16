@@ -29,6 +29,7 @@ const handleGetPhotos = async (req, res) => {
 
     const mediaFilter = {
       isTrash: { $ne: true },
+      isDeleted: { $ne: true },
       securityStatus: { $in: ['clean', 'unverified'] },
       $or: [
         { mimeType: { $regex: MEDIA_MIME_REGEX } },

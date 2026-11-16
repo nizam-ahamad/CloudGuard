@@ -88,7 +88,7 @@ export const ToastProvider = ({ children }) => {
           return (
             <div
               key={t.id}
-              className="pointer-events-auto w-full sm:w-auto flex items-center justify-between gap-3 px-4 py-2.5 rounded-full text-xs sm:text-sm font-medium border shadow-2xl backdrop-blur-md transition-all duration-300 ease-out transform translate-y-0 opacity-100 scale-100 animate-in fade-in slide-in-from-bottom-2 bg-[#18181b]/95 text-zinc-200 border-zinc-800/80 shadow-black/40"
+              className="pointer-events-auto w-full sm:w-auto flex items-center justify-between gap-3 px-4 py-2.5 rounded-full text-xs sm:text-sm font-medium border transition-all duration-300 ease-out transform translate-y-0 opacity-100 scale-100 animate-in fade-in slide-in-from-bottom-2 backdrop-blur-md bg-white/95 text-slate-900 border-slate-200 shadow-xl dark:bg-slate-900/95 dark:text-slate-100 dark:border-slate-700/80 dark:shadow-2xl dark:shadow-black/40"
             >
               <div className="flex items-center gap-2.5 min-w-0">
                 {/* Status Dot */}
@@ -114,7 +114,7 @@ export const ToastProvider = ({ children }) => {
               {/* Dismiss Button */}
               <button
                 onClick={() => removeToast(t.id)}
-                className="text-zinc-500 hover:text-zinc-300 text-xs sm:text-sm ml-1 transition-colors leading-none cursor-pointer p-0.5"
+                className="text-slate-400 hover:text-slate-600 dark:text-zinc-500 dark:hover:text-zinc-300 text-xs sm:text-sm ml-1 transition-colors leading-none cursor-pointer p-0.5"
                 title="Dismiss"
               >
                 ✕
@@ -129,6 +129,18 @@ export const ToastProvider = ({ children }) => {
 
 export const useToast = () => {
   const context = useContext(ToastContext);
-  if (!context) throw new Error('useToast must be used within ToastProvider');
+  if (!context) {
+    return {
+      show: () => {},
+      success: () => {},
+      error: () => {},
+      info: () => {},
+      warning: () => {},
+      loading: () => {},
+      custom: () => {},
+      dismiss: () => {},
+      remove: () => {},
+    };
+  }
   return context;
 };

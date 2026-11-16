@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Routes, Route, Navigate, useSearchParams, useLocation, useNavigate, NavLink, Link } from 'react-router-dom';
 import axios from 'axios';
 import ResetPassword from './ResetPassword';
@@ -8,9 +8,12 @@ import OTPVerification from './OTPVerification';
 import { useToast } from './context/ToastContext';
 import MoveModal from './components/MoveModal';
 import FolderDetailsModal from './components/FolderDetailsModal';
+import FileDetailsModal from './components/FileDetailsModal';
 import DeleteConfirmModal from './components/DeleteConfirmModal';
 import ProfileSettings from './components/ProfileSettings';
 import CookieConsent from './components/CookieConsent';
+import QuotaUpgradeModal from './components/QuotaUpgradeModal';
+import BinView from './components/BinView';
 import LandingPage from './pages/LandingPage';
 import AuthPage from './pages/AuthPage';
 import PrivacyPolicy from './pages/PrivacyPolicy';
@@ -18,7 +21,10 @@ import TermsOfService from './pages/TermsOfService';
 import Pricing from './pages/Pricing';
 import RefundPolicy from './pages/RefundPolicy';
 import ContactUs from './pages/ContactUs';
+import AdminMonitor from './pages/AdminMonitor';
 import PhotosView, { invalidatePhotosCache } from './pages/PhotosView';
+import SubscriptionAlertBanner from './components/SubscriptionAlertBanner';
+import StorageQuotaBanner from './components/StorageQuotaBanner';
 import { computeSHA256 } from './pages/Dashboard';
 import { generateMediaThumbnail } from './utils/thumbnailHelper';
 import { 
@@ -27,7 +33,9 @@ import {
 } from './utils/downloadHelper';
 import { HeaderDownloadButton, useDownload } from './context/DownloadContext';
 import { HeaderUploadButton, useUpload, UploadProvider } from './context/UploadContext';
-import { Folder, FolderInput, X, Search, MoreVertical, Pencil, Info, LayoutGrid, List, Check, Trash2, Image, Play, ChevronLeft, ChevronRight, Download, Clock, UploadCloud, FolderPlus, Menu, Sun, Moon, Loader2 } from 'lucide-react';
+import { getCachedAccessUrl, fetchAccessUrl, prefetchAccessUrl } from './utils/accessUrlCache';
+import { Folder, FolderInput, X, Search, MoreVertical, Pencil, Info, LayoutGrid, List, Check, Trash2, Image, Play, ChevronLeft, ChevronRight, Download, Clock, UploadCloud, FolderPlus, Menu, Sun, Moon, Loader2, FileText, ChevronDown, FileUp, FolderUp, ArrowUp, ArrowDown, ShieldCheck } from 'lucide-react';
+import { extractDroppedItems, createFolderHierarchy } from './utils/folderUpload';
 
 import { API_BASE_URL } from "./config";
 
@@ -133,6 +141,84 @@ function App() {
     };
   }, [location.pathname]);
 
+  const [isAdmin, setIsAdmin] = useState(null);
+  const fetchedAdminTokenRef = useRef(null);
+  const adminCheckPromiseRef = useRef(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const activeToken = getActiveToken();
+    if (!activeToken) {
+      fetchedAdminTokenRef.current = null;
+      adminCheckPromiseRef.current = null;
+      setIsAdmin(false);
+      return;
+    }
+
+    if (fetchedAdminTokenRef.current === activeToken) {
+      return;
+    }
+
+    // Reset isAdmin to null whenever token changes before /api/admin/me resolves
+    setIsAdmin(null);
+
+    if (!adminCheckPromiseRef.current || adminCheckPromiseRef.current.token !== activeToken) {
+      adminCheckPromiseRef.current = {
+        token: activeToken,
+        promise: axios.get(`${API_BASE_URL}/api/admin/me`, {
+          headers: { Authorization: `Bearer ${activeToken}` }
+        })
+      };
+    }
+
+    adminCheckPromiseRef.current.promise
+      .then((res) => {
+        if (!cancelled) {
+          fetchedAdminTokenRef.current = activeToken;
+          setIsAdmin(Boolean(res.data?.isAdmin));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setIsAdmin(false);
+          adminCheckPromiseRef.current = null;
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
+  const refreshUser = async () => {
+    try {
+      const activeToken = getActiveToken();
+      if (!activeToken) return;
+      const res = await axios.get(`${API_BASE_URL}/api/payments/subscription-status`, {
+        headers: { Authorization: `Bearer ${activeToken}` }
+      });
+      if (res.data?.success) {
+        setUser((prev) => {
+          const updated = {
+            ...(prev || {}),
+            ...res.data,
+            plan: res.data.plan || res.data.subscription?.planId || prev?.plan || 'free',
+            subscription: res.data.subscription || prev?.subscription,
+            storageLimit: res.data.storageLimit || prev?.storageLimit
+          };
+          if (localStorage.getItem('token')) {
+            localStorage.setItem('user', JSON.stringify(updated));
+          } else {
+            sessionStorage.setItem('user', JSON.stringify(updated));
+          }
+          return updated;
+        });
+      }
+    } catch (err) {
+      console.error('Failed to refresh user subscription status:', err);
+    }
+  };
+
   // Clear ?expired=true from address bar on /login without full reload
   useEffect(() => {
     if (window.location.pathname === '/login' && window.location.search.includes('expired=true')) {
@@ -146,6 +232,7 @@ function App() {
   const [isUnverified, setIsUnverified] = useState(false);
   const [isAuthLoading, setIsAuthLoading] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [isSignOutModalOpen, setIsSignOutModalOpen] = useState(false);
   const [showForgotModal, setShowForgotModal] = useState(false);
   const [forgotEmail, setForgotEmail] = useState('');
   const [isForgotSuccess, setIsForgotSuccess] = useState(false);
@@ -329,6 +416,9 @@ function App() {
     sessionStorage.removeItem('user');
     setToken(null);
     setUser(null);
+    setIsAdmin(false);
+    fetchedAdminTokenRef.current = null;
+    adminCheckPromiseRef.current = null;
     setShowProfileMenu(false);
     invalidatePhotosCache();
   };
@@ -338,7 +428,11 @@ function App() {
   const [hasMoreRecent, setHasMoreRecent] = useState(false);
   const [isLoadingMoreRecent, setIsLoadingMoreRecent] = useState(false);
   const RECENT_PAGE_SIZE = 10;
-  const [sortOrder, setSortOrder] = useState('newest');
+  const [sortBy, setSortBy] = useState('date');
+  const [sortOrder, setSortOrder] = useState('desc');
+  const [isSortMenuOpen, setIsSortMenuOpen] = useState(false);
+  const sortDropdownRef = useRef(null);
+  const [upgradeWelcomeData, setUpgradeWelcomeData] = useState(null);
   const [fileToDelete, setFileToDelete] = useState(null);
   const [itemToDelete, setItemToDelete] = useState(null);
   const [itemsToDelete, setItemsToDelete] = useState([]);
@@ -358,7 +452,7 @@ function App() {
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
   
-  const { enqueueFiles } = useUpload();
+  const { enqueueFiles, quotaUpgradeState, resumePausedUpload, cancelPausedUpload, startFolderPrep, updateFolderPrep, clearFolderPrep } = useUpload();
   const [uploadQueue, setUploadQueue] = useState([]);
   const [isUploadDrawerOpen, setIsUploadDrawerOpen] = useState(true);
   const isQueueProcessing = useRef(false);
@@ -366,6 +460,67 @@ function App() {
   const [viewMode, setViewMode] = useState('all');
   const [currentDirectory, setCurrentDirectory] = useState('');
   const fileInputRef = useRef(null);
+  const folderInputRef = useRef(null);
+  const [isUploadMenuOpen, setIsUploadMenuOpen] = useState(false);
+  const [pendingFolderUpload, setPendingFolderUpload] = useState(null);
+  const [excludeDevFolders, setExcludeDevFolders] = useState(false);
+  const [isReadingFolder, setIsReadingFolder] = useState(false);
+  const desktopUploadMenuRef = useRef(null);
+  const mobileUploadMenuRef = useRef(null);
+
+  useEffect(() => {
+    if (!isUploadMenuOpen) return;
+
+    const handleOutsideClick = (e) => {
+      const clickedDesktop = desktopUploadMenuRef.current && desktopUploadMenuRef.current.contains(e.target);
+      const clickedMobile = mobileUploadMenuRef.current && mobileUploadMenuRef.current.contains(e.target);
+      if (!clickedDesktop && !clickedMobile) {
+        setIsUploadMenuOpen(false);
+      }
+    };
+
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setIsUploadMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('touchstart', handleOutsideClick);
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('touchstart', handleOutsideClick);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isUploadMenuOpen]);
+
+  useEffect(() => {
+    if (!isSortMenuOpen) return;
+
+    const handleOutsideClick = (e) => {
+      if (sortDropdownRef.current && !sortDropdownRef.current.contains(e.target)) {
+        setIsSortMenuOpen(false);
+      }
+    };
+
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setIsSortMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('touchstart', handleOutsideClick);
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('touchstart', handleOutsideClick);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isSortMenuOpen]);
   const prevUploadRef = useRef({ time: 0, loaded: 0 });
   const abortControllerRef = useRef(null);
   const activeFolderIdRef = useRef(null);
@@ -374,6 +529,7 @@ function App() {
   const filesInFlightRef = useRef(false);
   const activeFetchingFolderRef = useRef(undefined);
   const isRefreshingRef = useRef(false);
+  const storageStatsDebounceTimerRef = useRef(null);
   const [isFilesLoading, setIsFilesLoading] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -382,17 +538,20 @@ function App() {
   const [activeFolderMenuId, setActiveFolderMenuId] = useState(null);
 
   const isSettingsOpen = searchParams.get('view') === 'settings' && location.pathname === '/dashboard';
-  const isFilesActive = location.pathname === '/dashboard' && !searchParams.get('view') && searchParams.get('tab') !== 'recent' && viewMode === 'all';
+  const isFilesActive = location.pathname === '/dashboard' && !searchParams.get('view') && searchParams.get('tab') !== 'recent' && searchParams.get('tab') !== 'bin' && viewMode === 'all';
   const isRecentActive = location.pathname === '/dashboard' && !searchParams.get('view') && (searchParams.get('tab') === 'recent' || viewMode === 'recent');
+  const isBinActive = location.pathname === '/dashboard' && (searchParams.get('view') === 'bin' || searchParams.get('tab') === 'bin' || viewMode === 'bin');
   const isPhotosActive = location.pathname === '/dashboard/photos';
 
   // Automatically synchronize viewMode with route and query params
   useEffect(() => {
     if (searchParams.get('view') === 'settings') {
       setViewMode('settings');
+    } else if (searchParams.get('view') === 'bin' || searchParams.get('tab') === 'bin') {
+      setViewMode('bin');
     } else if (searchParams.get('tab') === 'recent') {
       setViewMode('recent');
-    } else if (viewMode === 'settings') {
+    } else if (viewMode === 'settings' || viewMode === 'bin') {
       setViewMode('all');
     }
   }, [location.pathname, searchParams]);
@@ -427,6 +586,7 @@ function App() {
   const [newRenameFileName, setNewRenameFileName] = useState('');
   const [showFolderDetailsModal, setShowFolderDetailsModal] = useState(false);
   const [folderToView, setFolderToView] = useState(null);
+  const [fileDetailsTarget, setFileDetailsTarget] = useState(null);
 
   const handleRenameFileSubmit = async (e) => {
     e.preventDefault();
@@ -587,22 +747,28 @@ function App() {
     }
   };
 
-  const fetchFolders = useCallback(async (targetFolderId) => {
+  const fetchFolders = useCallback(async (targetFolderId, searchOverride) => {
     const pathname = window.location.pathname;
     if (pathname !== '/dashboard' && pathname !== '/dashboard/') {
       return;
     }
     try {
-      const parentId = targetFolderId !== undefined ? (targetFolderId || null) : (searchParams.get('folder') || null);
-      const url = parentId 
-        ? `${API_BASE_URL}/api/folders?parentId=${parentId}` 
-        : `${API_BASE_URL}/api/folders`;
+      const q = searchOverride !== undefined ? (searchOverride || '').trim() : (searchQuery || '').trim();
+      let url;
+      if (q) {
+        url = `${API_BASE_URL}/api/folders?search=${encodeURIComponent(q)}`;
+      } else {
+        const parentId = targetFolderId !== undefined ? (targetFolderId || null) : (searchParams.get('folder') || null);
+        url = parentId 
+          ? `${API_BASE_URL}/api/folders?parentId=${parentId}` 
+          : `${API_BASE_URL}/api/folders`;
+      }
       const response = await axios.get(url, { headers: { Authorization: `Bearer ${token}` } });
       setFolders(response.data);
     } catch (error) {
       console.error('Error fetching folders:', error);
     }
-  }, [token, searchParams]);
+  }, [token, searchParams, searchQuery]);
 
   const handleCreateFolder = async (e) => {
     if (e) e.preventDefault();
@@ -669,11 +835,16 @@ function App() {
 
   // 1. Clean Home Breadcrumb Handler: Only clears folder and resets URL
   const handleNavigateHome = () => {
+    if (searchQuery) {
+      setSearchQuery('');
+    }
+
     // If already at root /dashboard with no folder and no query, do nothing
     if (
       window.location.pathname === '/dashboard' &&
       !window.location.search &&
-      !currentFolderId
+      !currentFolderId &&
+      !searchQuery
     ) {
       return;
     }
@@ -693,10 +864,20 @@ function App() {
   // 2. Clean Folder Click Handler: Only updates state and URL
   const handleFolderClick = (folder) => {
     const folderId = folder?._id || folder;
-    if (!folderId || currentFolderId === folderId) return;
+    if (!folderId) return;
 
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
+    }
+
+    if (searchQuery) {
+      setSearchQuery('');
+    }
+
+    if (currentFolderId === folderId) {
+      fetchFolders(folderId, '');
+      fetchFiles(folderId, true);
+      return;
     }
 
     clearSelection();
@@ -716,11 +897,15 @@ function App() {
 
   const handleBreadcrumbClick = (folderId, index) => {
     const targetId = folderId || null;
-    if (currentFolderId === targetId) return;
-
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
+
+    if (searchQuery) {
+      setSearchQuery('');
+    }
+
+    if (currentFolderId === targetId) return;
 
     clearSelection();
     setCurrentFolderId(targetId);
@@ -758,12 +943,52 @@ function App() {
       if (location.pathname !== '/dashboard') {
         navigate('/dashboard?tab=recent');
       }
+    } else if (tab === 'bin') {
+      newParams.delete('tab');
+      newParams.delete('folder');
+      newParams.set('view', 'bin');
+      setViewMode('bin');
+      setSearchParams(newParams);
+      if (location.pathname !== '/dashboard') {
+        navigate('/dashboard?view=bin');
+      }
+      return;
     } else if (tab === 'photos') {
       newParams.delete('tab');
       setViewMode('all');
       setSearchParams(newParams);
       navigate('/dashboard/photos');
     }
+  };
+
+  const handleNavigateHomeRoot = (e) => {
+    if (e) {
+      if (typeof e.preventDefault === 'function') e.preventDefault();
+      if (typeof e.stopPropagation === 'function') e.stopPropagation();
+    }
+
+    setIsSidebarOpen(false);
+    setCurrentDirectory('');
+    setViewMode('all');
+
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    if (typeof clearSelection === 'function') {
+      clearSelection();
+    }
+
+    setCurrentFolderId(null);
+    setBreadcrumbs([{ id: null, name: 'Home' }]);
+
+    const newParams = new URLSearchParams(searchParams);
+    newParams.delete('view');
+    newParams.delete('tab');
+    newParams.delete('folder');
+    setSearchParams(newParams);
+
+    navigate('/dashboard');
   };
   const handlePasswordUpdate = async (e) => {
     e.preventDefault();
@@ -801,6 +1026,9 @@ function App() {
     // ROUTE GUARD: Never fetch files if user is in Photos, Trash, or Settings
     const currentPath = window.location.pathname;
     if (currentPath !== '/dashboard' && currentPath !== '/dashboard/') {
+      return;
+    }
+    if (viewMode === 'settings' || viewMode === 'bin') {
       return;
     }
 
@@ -952,7 +1180,7 @@ function App() {
     return `${items.length} items moved to ${dest}`;
   };
 
-  // Universal CloudGuard Native Toast Formatter (Full-Width, Non-clamping, Safe Mobile View)
+  // Universal CloudGuard Native Toast Formatter (Theme-Aware, Full-Width, Non-clamping, Safe Mobile View)
   const showPillToast = ({
     message,
     actionText = null,
@@ -962,39 +1190,53 @@ function App() {
     toast.custom(
       (t) => (
         <div
-          className="${
-            t.visible ? 'animate-enter' : 'animate-leave'
-          } pointer-events-auto flex items-center justify-between gap-2.5 sm:gap-3.5 bg-[#18181b]/95 text-zinc-200 px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-full shadow-2xl border border-zinc-800/90 backdrop-blur-md transition-all w-auto max-w-[92vw] sm:max-w-lg md:max-w-xl mx-auto z-[99999]"
+          className={`${
+            t.visible ? 'animate-in fade-in slide-in-from-bottom-3 duration-200' : 'animate-out fade-out slide-out-to-bottom-2 duration-150'
+          } pointer-events-auto flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-2xl shadow-xl border backdrop-blur-md transition-all select-none
+          w-full max-w-[calc(100vw-2rem)] sm:max-w-md mx-auto
+          bg-white/95 text-neutral-900 border-neutral-200/90 shadow-neutral-900/10
+          dark:bg-neutral-900/95 dark:text-neutral-100 dark:border-neutral-800/90 dark:shadow-black/50`}
         >
           {/* Status Dot */}
-          <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0 shadow-[0_0_8px_rgba(52,211,153,0.7)]" />
+          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+            <span className="relative flex h-2 w-2 shrink-0">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+            </span>
 
-          {/* Message Text: Full visibility with clean break-word handling for mobile */}
-          <span className="text-xs sm:text-sm font-medium text-zinc-200 leading-snug break-words line-clamp-2 sm:line-clamp-none flex-1">
-            {message}
-          </span>
+            <p className="text-xs sm:text-sm font-medium truncate leading-tight">
+              <span className="font-semibold text-neutral-900 dark:text-white" title={typeof message === 'string' ? message : undefined}>
+                {message}
+              </span>
+            </p>
+          </div>
 
-          {/* Optional Action (Undo) */}
-          {actionText && onAction && (
+          {/* Right: Divider, Optional Action (Undo) & Dismiss Icon */}
+          <div className="flex items-center gap-2 shrink-0">
+            {actionText && onAction && (
+              <>
+                <div className="h-4 w-[1px] bg-neutral-200 dark:bg-neutral-800" />
+                <button
+                  onClick={() => {
+                    toast.dismiss(t.id);
+                    onAction();
+                  }}
+                  className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 active:bg-emerald-500/25 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 hover:border-emerald-500/30 transition-all cursor-pointer whitespace-nowrap focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                >
+                  {actionText}
+                </button>
+              </>
+            )}
+
             <button
-              onClick={() => {
-                toast.dismiss(t.id);
-                onAction();
-              }}
-              className="text-xs sm:text-sm font-semibold text-emerald-400 hover:text-emerald-300 underline underline-offset-2 shrink-0 cursor-pointer transition-colors px-1 py-0.5"
+              onClick={() => toast.dismiss(t.id)}
+              className="p-1 rounded-md text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800/80 transition-colors cursor-pointer"
+              title="Dismiss"
+              aria-label="Dismiss notification"
             >
-              {actionText}
+              <X className="w-3.5 h-3.5 stroke-[2]"/>
             </button>
-          )}
-
-          {/* Dismiss Button */}
-          <button
-            onClick={() => toast.dismiss(t.id)}
-            className="text-zinc-500 hover:text-zinc-300 text-xs sm:text-sm shrink-0 leading-none cursor-pointer p-1"
-            aria-label="Close notification"
-          >
-            ✕
-          </button>
+          </div>
         </div>
       ),
       {
@@ -1193,25 +1435,92 @@ function App() {
 
   // Real-time listener for live upload completion events across the app
   useEffect(() => {
-    const handleRefresh = () => {
-      globalStorageStatsCache = null;
-      lastFetchedFolderIdRef.current = undefined;
-      const params = new URLSearchParams(window.location.search);
-      const activeFolderId = currentFolderId || params.get('folder') || null;
-      if (typeof fetchFiles === 'function') fetchFiles(activeFolderId, true);
-      if (typeof fetchStorageStats === 'function') fetchStorageStats();
-      if (typeof fetchFolders === 'function') fetchFolders(activeFolderId);
+    const handleRefresh = (event) => {
+      // Prevent files & folders refetch from saturating HTTP sockets when user is on Photos tab
+      const isPhotosRoute = (window.location.pathname && window.location.pathname.includes('/photos')) ||
+                            (location?.pathname && location.pathname.includes('/photos'));
+
+      if (!isPhotosRoute) {
+        globalStorageStatsCache = null;
+        lastFetchedFolderIdRef.current = undefined;
+        const params = new URLSearchParams(window.location.search);
+        const activeFolderId = currentFolderId || params.get('folder') || null;
+        if (typeof fetchFiles === 'function') fetchFiles(activeFolderId, true);
+        if (typeof fetchFolders === 'function') fetchFolders(activeFolderId);
+      }
+
+      // Debounce storage stats updates during active uploads to prevent Chrome socket queue starvation
+      if (event?.type === 'cloudguard:all-uploads-completed') {
+        if (storageStatsDebounceTimerRef.current) {
+          clearTimeout(storageStatsDebounceTimerRef.current);
+          storageStatsDebounceTimerRef.current = null;
+        }
+        if (typeof fetchStorageStats === 'function') fetchStorageStats();
+      } else {
+        if (storageStatsDebounceTimerRef.current) {
+          clearTimeout(storageStatsDebounceTimerRef.current);
+        }
+        storageStatsDebounceTimerRef.current = setTimeout(() => {
+          if (typeof fetchStorageStats === 'function') fetchStorageStats();
+          storageStatsDebounceTimerRef.current = null;
+        }, 3000);
+      }
     };
 
     window.addEventListener('cloudguard:files-updated', handleRefresh);
     window.addEventListener('cloudguard:storage-updated', handleRefresh);
     window.addEventListener('cloudguard:all-uploads-completed', handleRefresh);
     return () => {
+      if (storageStatsDebounceTimerRef.current) {
+        clearTimeout(storageStatsDebounceTimerRef.current);
+        storageStatsDebounceTimerRef.current = null;
+      }
       window.removeEventListener('cloudguard:files-updated', handleRefresh);
       window.removeEventListener('cloudguard:storage-updated', handleRefresh);
       window.removeEventListener('cloudguard:all-uploads-completed', handleRefresh);
     };
-  }, [fetchFiles, fetchStorageStats, fetchFolders, currentFolderId]);
+  }, [fetchFiles, fetchStorageStats, fetchFolders, currentFolderId, location?.pathname]);
+
+  // Upgrade Welcome Modal listener: detects ?upgraded=true or sessionStorage payload
+  useEffect(() => {
+    const isDashboard = location.pathname === '/dashboard' || location.pathname === '/dashboard/';
+    if (!isDashboard) return;
+
+    const isUpgraded = searchParams.get('upgraded') === 'true';
+    let welcomePayload = null;
+    try {
+      const raw = sessionStorage.getItem('cloudguard_upgrade_welcome');
+      if (raw) {
+        welcomePayload = JSON.parse(raw);
+        sessionStorage.removeItem('cloudguard_upgrade_welcome');
+      }
+    } catch (e) {
+      console.error('Failed to parse upgrade welcome payload:', e);
+    }
+
+    if (isUpgraded || welcomePayload) {
+      // 1. Remove ?upgraded=true from address bar
+      if (isUpgraded) {
+        const nextParams = new URLSearchParams(searchParams);
+        nextParams.delete('upgraded');
+        const qs = nextParams.toString();
+        navigate(qs ? `/dashboard?${qs}` : '/dashboard', { replace: true });
+      }
+
+      // 2. Trigger fresh storage and user profile fetch
+      globalStorageStatsCache = null;
+      if (typeof fetchStorageStats === 'function') fetchStorageStats();
+      if (typeof refreshUser === 'function') refreshUser();
+
+      // 3. Open welcome modal
+      setUpgradeWelcomeData({
+        planName: welcomePayload?.planName || 'CloudGuard Vault',
+        storageGB: welcomePayload?.storageGB || (user?.subscription?.planId === 'tier_200gb' ? 200 : user?.subscription?.planId === 'tier_100gb' ? 100 : 50),
+        billingCycle: welcomePayload?.billingCycle || 'annual',
+        expiresAt: welcomePayload?.expiresAt || null,
+      });
+    }
+  }, [location.pathname, searchParams]);
 
   // Separate trigger ONLY for search query or viewMode changes (never on folder navigation)
   useEffect(() => {
@@ -1222,15 +1531,36 @@ function App() {
     if (currentPath !== '/dashboard' && currentPath !== '/dashboard/') {
       return;
     }
+    if (viewMode === 'settings' || viewMode === 'bin') {
+      return;
+    }
 
     const params = new URLSearchParams(window.location.search);
     const activeFolderId = params.get('folder') || null;
     fetchFiles(activeFolderId, true);
+    if (searchQuery && searchQuery.trim()) {
+      fetchFolders(null, searchQuery.trim());
+    } else {
+      fetchFolders(activeFolderId, '');
+    }
   }, [viewMode, searchQuery]);
 
-  const toggleSort = () => {
-    const newOrder = sortOrder === 'newest' ? 'oldest' : 'newest';
-    setSortOrder(newOrder);
+  const handleSortByName = () => {
+    if (sortBy === 'name') {
+      setSortOrder(prev => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortBy('name');
+      setSortOrder('asc');
+    }
+  };
+
+  const handleSortByDate = () => {
+    if (sortBy === 'date') {
+      setSortOrder(prev => (prev === 'desc' ? 'asc' : 'desc'));
+    } else {
+      setSortBy('date');
+      setSortOrder('desc');
+    }
   };
 
   // Dynamic delete success message helper
@@ -1258,6 +1588,124 @@ function App() {
     return false;
   };
 
+  // Dedicated Undo Delete Handler
+  const handleUndoDelete = async (itemsToRestore) => {
+    try {
+      const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+      const headers = { Authorization: `Bearer ${token}` };
+
+      const folderIds = (itemsToRestore || []).filter(checkIsFolder).map((i) => i._id || i.id);
+      const fileIds = (itemsToRestore || []).filter((i) => !checkIsFolder(i)).map((i) => i._id || i.id);
+
+      await axios.post(
+        `${API_BASE_URL}/api/files/restore-batch`,
+        { fileIds, folderIds },
+        { headers }
+      );
+
+      showPillToast({ message: 'Deletion undone', duration: 3000 });
+      lastFetchedFolderIdRef.current = undefined;
+      const activeFolderId = currentFolderId || new URLSearchParams(window.location.search).get('folder') || null;
+      if (typeof fetchFiles === 'function') {
+        await fetchFiles(activeFolderId, true);
+      }
+      if (typeof fetchFolders === 'function') {
+        await fetchFolders(activeFolderId);
+      }
+      if (typeof fetchStorageStats === 'function') {
+        fetchStorageStats();
+      }
+      invalidatePhotosCache();
+    } catch (e) {
+      console.error('Failed to undo deletion:', e);
+      toast.error('Could not undo deletion');
+    }
+  };
+
+  // Dynamic message formatting with single-line truncation
+  const getDeleteToastContent = (items) => {
+    if (!items || items.length === 0) return { action: 'Moved to Bin', target: 'Item' };
+    if (items.length === 1) {
+      return {
+        action: 'Moved to Bin',
+        target: items[0].name || items[0].fileName || 'Item',
+      };
+    }
+    return {
+      action: 'Moved to Bin',
+      target: `${items.length} items`,
+    };
+  };
+
+  const triggerDeleteToast = (itemsToRestore) => {
+    const toastData = getDeleteToastContent(itemsToRestore);
+
+    // Trigger toast using full theme-aware classes:
+    toast.custom(
+      (t) => (
+        <div
+          className={`${
+            t.visible ? 'animate-in fade-in slide-in-from-bottom-3 duration-200' : 'animate-out fade-out slide-out-to-bottom-2 duration-150'
+          } pointer-events-auto flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-2xl shadow-xl border backdrop-blur-md transition-all select-none
+          w-full max-w-[calc(100vw-2rem)] sm:max-w-md mx-auto
+          bg-white/95 text-neutral-900 border-neutral-200/90 shadow-neutral-900/10
+          dark:bg-neutral-900/95 dark:text-neutral-100 dark:border-neutral-800/90 dark:shadow-black/50`}
+        >
+          {/* Left: Status Dot & Truncated Filename */}
+          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+            <span className="relative flex h-2 w-2 shrink-0">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+            </span>
+
+            <p className="text-xs sm:text-sm font-medium truncate leading-tight">
+              <span className="text-neutral-500 dark:text-neutral-400 font-normal mr-1">
+                {toastData.action}
+              </span>
+              <span className="font-semibold text-neutral-900 dark:text-white" title={toastData.target}>
+                "{toastData.target}"
+              </span>
+              <span className="text-neutral-400 dark:text-neutral-500 text-[11px] ml-1.5 hidden sm:inline">
+                • Auto-deletes in 30 days
+              </span>
+            </p>
+          </div>
+
+          {/* Right: Divider, Undo Pill Button & Close Icon */}
+          <div className="flex items-center gap-2 shrink-0">
+            {/* Subtle Vertical Divider */}
+            <div className="h-4 w-[1px] bg-neutral-200 dark:bg-neutral-800" />
+
+            {/* Polished Interactive Undo Button */}
+            <button
+              onClick={() => {
+                toast.dismiss(t.id);
+                handleUndoDelete(itemsToRestore);
+              }}
+              className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 active:bg-emerald-500/25 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 hover:border-emerald-500/30 transition-all cursor-pointer whitespace-nowrap focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+            >
+              Undo
+            </button>
+
+            {/* Clean Dismiss Button */}
+            <button
+              onClick={() => toast.dismiss(t.id)}
+              className="p-1 rounded-md text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800/80 transition-colors cursor-pointer"
+              title="Dismiss"
+              aria-label="Dismiss notification"
+            >
+              <X className="w-3.5 h-3.5 stroke-[2]"/>
+            </button>
+          </div>
+        </div>
+      ),
+      {
+        duration: 6000,
+        position: 'bottom-center',
+      }
+    );
+  };
+
   // Confirm Deletion Handler
   const handleConfirmPermanentDelete = async (customTarget) => {
     const target = itemToDelete || (customTarget && !Array.isArray(customTarget) ? customTarget : (Array.isArray(customTarget) && customTarget.length === 1 ? customTarget[0] : null)) || folderToDelete || fileToDelete;
@@ -1279,7 +1727,12 @@ function App() {
 
     // CASE A: Single Item Deletion (from three dots menu)
     if (target && !bulkTargets) {
-      const targetId = String(target._id || target.id);
+      const rawTargetId = target._id || target.id;
+      if (!rawTargetId) {
+        console.warn('handleConfirmPermanentDelete: Target missing valid id, aborting');
+        return;
+      }
+      const targetId = String(rawTargetId);
       const isFolder = checkIsFolder(target);
 
       setItemToDelete(null);
@@ -1305,35 +1758,9 @@ function App() {
         fetchStorageStats();
         invalidatePhotosCache();
 
-        // 3. Native pill toast with Undo
-        showPillToast({
-          message: `Permanently deleted "${target.name || target.fileName || 'Item'}"`,
-          actionText: 'Undo',
-          onAction: async () => {
-            try {
-              await axios.post(
-                `${API_BASE_URL}/api/files/restore-batch`,
-                isFolder ? { folderIds: [targetId], fileIds: [] } : { folderIds: [], fileIds: [targetId] },
-                { headers }
-              );
-              showPillToast({ message: 'Deletion undone', duration: 3000 });
-              lastFetchedFolderIdRef.current = undefined;
-              const activeFolderId = currentFolderId || new URLSearchParams(window.location.search).get('folder') || null;
-              if (typeof fetchFiles === 'function') {
-                await fetchFiles(activeFolderId, true);
-              }
-              if (typeof fetchFolders === 'function') {
-                await fetchFolders(activeFolderId);
-              }
-              if (typeof fetchStorageStats === 'function') {
-                fetchStorageStats();
-              }
-            } catch (e) {
-              console.error('Failed to undo deletion:', e);
-              toast.error('Could not undo deletion');
-            }
-          },
-        });
+        // 3. Trigger toast with working interactive Undo callback
+        const itemsToRestore = [target];
+        triggerDeleteToast(itemsToRestore);
       } catch (err) {
         console.error('Delete failed:', err);
         toast.error('Failed to delete item');
@@ -1347,8 +1774,13 @@ function App() {
 
     // CASE B: Bulk Deletion (from Floating Bar)
     if (bulkTargets && bulkTargets.length > 0) {
-      const folderIds = bulkTargets.filter(checkIsFolder).map((i) => i._id || i.id);
-      const fileIds = bulkTargets.filter((i) => !checkIsFolder(i)).map((i) => i._id || i.id);
+      const folderIds = bulkTargets.filter(checkIsFolder).map((i) => i._id || i.id).filter(Boolean);
+      const fileIds = bulkTargets.filter((i) => !checkIsFolder(i)).map((i) => i._id || i.id).filter(Boolean);
+
+      if (folderIds.length === 0 && fileIds.length === 0) {
+        console.warn('handleConfirmPermanentDelete: Bulk targets contain no valid IDs, aborting');
+        return;
+      }
 
       setItemsToDelete([]);
       setSelectedFolderIds([]);
@@ -1375,34 +1807,9 @@ function App() {
         fetchStorageStats();
         invalidatePhotosCache();
 
-        showPillToast({
-          message: `Permanently deleted ${bulkTargets.length} items`,
-          actionText: 'Undo',
-          onAction: async () => {
-            try {
-              await axios.post(
-                `${API_BASE_URL}/api/files/restore-batch`,
-                { fileIds, folderIds },
-                { headers }
-              );
-              showPillToast({ message: 'Deletion undone', duration: 3000 });
-              lastFetchedFolderIdRef.current = undefined;
-              const activeFolderId = currentFolderId || new URLSearchParams(window.location.search).get('folder') || null;
-              if (typeof fetchFiles === 'function') {
-                await fetchFiles(activeFolderId, true);
-              }
-              if (typeof fetchFolders === 'function') {
-                await fetchFolders(activeFolderId);
-              }
-              if (typeof fetchStorageStats === 'function') {
-                fetchStorageStats();
-              }
-            } catch (e) {
-              console.error('Failed to undo deletion:', e);
-              toast.error('Could not undo deletion');
-            }
-          },
-        });
+        // 3. Trigger toast with working interactive Undo callback
+        const itemsToRestore = [...bulkTargets];
+        triggerDeleteToast(itemsToRestore);
       } catch (err) {
         console.error('Bulk delete failed:', err);
         toast.error('Failed to delete items');
@@ -1640,30 +2047,254 @@ function App() {
     return [];
   };
 
-  const onDrop = async (e) => {
-    e.preventDefault();
-    let allFiles = [];
-    if (e.dataTransfer.items) {
-      for (let i = 0; i < e.dataTransfer.items.length; i++) {
-        const item = e.dataTransfer.items[i];
-        if (item.kind === 'file') {
-          const entry = item.webkitGetAsEntry();
-          if (entry) {
-            const files = await getFilesFromEntry(entry);
-            allFiles = allFiles.concat(files);
-          }
-        }
+  const handleFolderSelect = async (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    if (!files.length) return;
+
+    setIsReadingFolder(true);
+    await new Promise((r) => setTimeout(r, 0));
+
+    try {
+      const items = files.map((file) => ({
+        file,
+        relativePath: (file.webkitRelativePath || file.name).replace(/\\/g, '/'),
+      }));
+
+      const hasDirectory = items.some((item) => {
+        const rawPath = item.relativePath || item.file?.name || '';
+        return rawPath.replace(/\\/g, '/').includes('/');
+      });
+
+      if (hasDirectory) {
+        const totalBytes = items.reduce((sum, item) => sum + (item.file?.size || 0), 0);
+        const firstDirItem = items.find((item) => (item.relativePath || '').replace(/\\/g, '/').includes('/'));
+        const folderName = firstDirItem
+          ? firstDirItem.relativePath.replace(/\\/g, '/').split('/')[0]
+          : 'Folder';
+
+        setExcludeDevFolders(false);
+        setIsReadingFolder(false);
+        setPendingFolderUpload({
+          folderName,
+          fileCount: items.length,
+          totalBytes,
+          items,
+        });
+        return;
       }
-    } else if (e.dataTransfer.files) {
-      allFiles = Array.from(e.dataTransfer.files);
+
+      setIsReadingFolder(false);
+      await processFolderUpload(items);
+    } catch (err) {
+      console.error('Error selecting folder:', err);
+    } finally {
+      setIsReadingFolder(false);
+    }
+  };
+
+  const handleUploadFolderClick = (e) => {
+    if (e) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+    setIsUploadMenuOpen(false);
+    folderInputRef.current?.click();
+  };
+
+  const processFolderUpload = async (itemsWithPaths) => {
+    if (!itemsWithPaths || itemsWithPaths.length === 0) return;
+    const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+
+    // 1. Pre-flight quota check: storageUsed + totalBatchBytes > storageLimit
+    const totalBatchBytes = itemsWithPaths.reduce((sum, item) => sum + (item.file?.size || 0), 0);
+    const storageUsed = storageStats?.storageUsed || storageStats?.usedBytes || storageStats?.used || 0;
+    const storageLimit = storageStats?.storageLimit || storageStats?.totalLimitBytes || storageStats?.limit || defaultStorageLimit || 5368709120;
+
+    if (storageUsed + totalBatchBytes > storageLimit) {
+      if (toast && typeof toast.error === 'function') {
+        toast.error('Storage quota exceeded. Not enough space in your vault for this folder.');
+      }
+      return;
     }
 
-    if (allFiles.length > 0) {
-      if (typeof enqueueFiles === 'function') {
-        enqueueFiles(allFiles, currentFolderId);
-      } else {
-        await handleFileUpload(allFiles);
+    const activeFolderId = currentFolderId || new URLSearchParams(window.location.search).get('folder') || null;
+
+    const hasDirectory = itemsWithPaths.some((item) => {
+      const rawPath = item.relativePath || item.file?.name || '';
+      return rawPath.replace(/\\/g, '/').includes('/');
+    });
+
+    // If a mobile browser returns flat files with no webkitRelativePath folder prefix
+    if (!hasDirectory) {
+      const flatFiles = itemsWithPaths.map((item) => item.file).filter(Boolean);
+      if (flatFiles.length > 0) {
+        if (typeof enqueueFiles === 'function') {
+          enqueueFiles(flatFiles, activeFolderId);
+        } else {
+          await handleFileUpload(flatFiles);
+        }
       }
+      return;
+    }
+
+    // 0ms Tray Open: resolve initial folder name and trigger tray immediately
+    const firstRel = itemsWithPaths[0]?.relativePath || itemsWithPaths[0]?.file?.name || 'Folder';
+    const initialFolderName = firstRel.replace(/\\/g, '/').split('/')[0] || 'Folder';
+
+    const abortController = new AbortController();
+    if (typeof startFolderPrep === 'function') {
+      startFolderPrep({
+        folderName: initialFolderName,
+        createdCount: 0,
+        totalFolders: 0,
+        totalFiles: itemsWithPaths.length,
+        abortController,
+      });
+    }
+
+    // Yield immediately so React paints and opens the tray at 0ms before heavy path extraction
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Determine folder stats for folder preparation progress
+    const uniqueDirs = new Set();
+    let rootFolderName = initialFolderName;
+    for (const item of itemsWithPaths) {
+      const rawPath = item.relativePath || item.file?.name || '';
+      const cleanPath = rawPath.replace(/\\/g, '/');
+      if (cleanPath.includes('/')) {
+        const parts = cleanPath.split('/');
+        if (!rootFolderName || rootFolderName === 'Folder') {
+          rootFolderName = parts[0];
+        }
+        parts.pop(); // remove file name
+        let accumulated = '';
+        for (const p of parts) {
+          accumulated = accumulated ? `${accumulated}/${p}` : p;
+          uniqueDirs.add(accumulated);
+        }
+      }
+    }
+
+    if (typeof updateFolderPrep === 'function') {
+      updateFolderPrep({
+        folderName: rootFolderName,
+        totalFolders: uniqueDirs.size,
+        totalFiles: itemsWithPaths.length,
+        createdCount: 0,
+      });
+    }
+
+    try {
+      // 2. Create directory tree in MongoDB (bulk ensure-tree with depth fallback)
+      const folderMap = await createFolderHierarchy(
+        itemsWithPaths,
+        activeFolderId,
+        token,
+        {
+          onProgress: (progress) => {
+            if (typeof updateFolderPrep === 'function') {
+              updateFolderPrep({
+                ...progress,
+                folderName: rootFolderName,
+                totalFolders: uniqueDirs.size,
+                totalFiles: itemsWithPaths.length,
+              });
+            }
+          },
+          signal: abortController.signal,
+        }
+      );
+
+      // 3. Map each file to resolved targetFolderId and pass batch to enqueueFiles(...)
+      const filesToEnqueue = itemsWithPaths.map((item) => {
+        let targetFolderId = activeFolderId;
+        const rawPath = item.relativePath || item.file?.name || '';
+        const relPath = rawPath.replace(/\\/g, '/');
+        if (relPath.includes('/')) {
+          const dirPath = relPath.substring(0, relPath.lastIndexOf('/'));
+          targetFolderId = folderMap.get(dirPath) || activeFolderId;
+        }
+        return {
+          file: item.file,
+          targetFolderId,
+        };
+      });
+
+      if (typeof enqueueFiles === 'function') {
+        enqueueFiles(filesToEnqueue, activeFolderId);
+      } else {
+        await handleFileUpload(filesToEnqueue);
+      }
+
+      // 4. Dispatch files-updated event so new folder appears immediately
+      window.dispatchEvent(
+        new CustomEvent('cloudguard:files-updated', { detail: { folderId: activeFolderId } })
+      );
+    } catch (err) {
+      if (err.name === 'AbortError' || abortController.signal.aborted) {
+        if (toast && typeof toast.info === 'function') {
+          toast.info('Folder preparation cancelled');
+        }
+        return;
+      }
+      console.error('Folder upload processing error:', err);
+      if (toast && typeof toast.error === 'function') {
+        toast.error(err.message || 'Failed to process folder upload');
+      }
+    } finally {
+      if (typeof clearFolderPrep === 'function') {
+        clearFolderPrep();
+      }
+    }
+  };
+
+  const onDrop = async (e) => {
+    e.preventDefault();
+    try {
+      const items = e.dataTransfer?.items;
+      setIsReadingFolder(true);
+      await new Promise((r) => setTimeout(r, 0));
+
+      const extracted = await extractDroppedItems(items);
+      if (extracted && extracted.length > 0) {
+        const hasDirectory = extracted.some((item) => {
+          const rawPath = item.relativePath || item.file?.name || '';
+          return rawPath.replace(/\\/g, '/').includes('/');
+        });
+
+        if (hasDirectory) {
+          const totalBytes = extracted.reduce((sum, item) => sum + (item.file?.size || 0), 0);
+          const firstDirItem = extracted.find((item) => (item.relativePath || '').replace(/\\/g, '/').includes('/'));
+          const folderName = firstDirItem
+            ? firstDirItem.relativePath.replace(/\\/g, '/').split('/')[0]
+            : 'Folder';
+
+          setExcludeDevFolders(false);
+          setIsReadingFolder(false);
+          setPendingFolderUpload({
+            folderName,
+            fileCount: extracted.length,
+            totalBytes,
+            items: extracted,
+          });
+          return;
+        }
+
+        setIsReadingFolder(false);
+        await processFolderUpload(extracted);
+      } else if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
+        const flatFiles = Array.from(e.dataTransfer.files).map((file) => ({
+          file,
+          relativePath: file.name,
+        }));
+        setIsReadingFolder(false);
+        await processFolderUpload(flatFiles);
+      }
+    } catch (err) {
+      console.error('Drop error:', err);
+    } finally {
+      setIsReadingFolder(false);
     }
   };
 
@@ -1715,16 +2346,28 @@ function App() {
     }
     
     try {
+      const type = (file.type || '').toLowerCase();
+      const cachedUrl = getCachedAccessUrl(file._id);
+
+      if (cachedUrl) {
+        setPreviewUrl(cachedUrl);
+        setPreviewFile(file);
+
+        if (type === 'txt' || type === 'md') {
+          const textResponse = await fetch(cachedUrl);
+          if (!textResponse.ok) throw new Error("Failed to fetch file content");
+          const text = await textResponse.text();
+          setPreviewText(text);
+        }
+        return;
+      }
+
       setPreviewText('Loading...');
-      const response = await fetch(`${API_BASE_URL}/api/files/${file._id}/access`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (!response.ok) throw new Error("Could not fetch secure access URL");
-      const { url } = await response.json();
+      const url = await fetchAccessUrl(file._id, token);
+      if (!url) throw new Error("Could not fetch secure access URL");
       setPreviewUrl(url);
       setPreviewFile(file);
 
-      const type = file.type.toLowerCase();
       if (type === 'txt' || type === 'md') {
         const textResponse = await fetch(url);
         if (!textResponse.ok) throw new Error("Failed to fetch file content");
@@ -1758,11 +2401,34 @@ function App() {
     }
   };
 
-  const sortedFiles = [...files].sort((a, b) => {
-    const timeA = a.mtimeMs || new Date(a.createdAt || a.uploadDate || 0).getTime();
-    const timeB = b.mtimeMs || new Date(b.createdAt || b.uploadDate || 0).getTime();
-    return sortOrder === 'newest' ? timeB - timeA : timeA - timeB;
-  });
+  const sortedFolders = useMemo(() => {
+    let result = [...folders];
+    if (searchQuery && searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      result = result.filter(folder => (folder.name || '').toLowerCase().includes(q));
+    }
+    return result.sort((a, b) => {
+      if (sortBy === 'name') {
+        const cmp = String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base', numeric: true });
+        return sortOrder === 'asc' ? cmp : -cmp;
+      }
+      const timeA = new Date(a.updatedAt || a.uploadedAt || a.createdAt || 0).getTime();
+      const timeB = new Date(b.updatedAt || b.uploadedAt || b.createdAt || 0).getTime();
+      return sortOrder === 'desc' ? timeB - timeA : timeA - timeB;
+    });
+  }, [folders, sortBy, sortOrder, searchQuery]);
+
+  const sortedFiles = useMemo(() => {
+    return [...files].sort((a, b) => {
+      if (sortBy === 'name') {
+        const cmp = String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base', numeric: true });
+        return sortOrder === 'asc' ? cmp : -cmp;
+      }
+      const timeA = a.mtimeMs || new Date(a.updatedAt || a.uploadedAt || a.createdAt || a.uploadDate || 0).getTime();
+      const timeB = b.mtimeMs || new Date(b.updatedAt || b.uploadedAt || b.createdAt || b.uploadDate || 0).getTime();
+      return sortOrder === 'desc' ? timeB - timeA : timeA - timeB;
+    });
+  }, [files, sortBy, sortOrder]);
 
   const searchFiltered = sortedFiles.filter(file => file.name.toLowerCase().includes(searchQuery.toLowerCase()));
   const filteredFiles = searchFiltered;
@@ -1771,7 +2437,7 @@ function App() {
   const isSomeFilesSelected = selectedFileIds.length > 0 && selectedFileIds.length < selectableFiles.length;
 
   // Calculate total counts across folders + files
-  const currentFolders = viewMode === 'recent' ? [] : folders;
+  const currentFolders = viewMode === 'recent' ? [] : sortedFolders;
   const currentFiles = selectableFiles;
   const totalViewItems = (currentFolders?.length || 0) + (currentFiles?.length || 0);
   const totalSelected = (selectedFolders?.length || 0) + (selectedFiles?.length || 0);
@@ -1967,8 +2633,8 @@ function App() {
 
         {/* Forgot Password Modal */}
         {showForgotModal && (
-          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-            <div className="bg-surface dark:bg-[#1e1f20] dark:border dark:border-zinc-800 w-full max-w-sm rounded-xl shadow-xl p-6 relative">
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 w-full max-w-sm rounded-xl shadow-xl p-6 relative text-neutral-900 dark:text-neutral-100">
               <button 
                 onClick={() => {
                   setShowForgotModal(false);
@@ -2063,9 +2729,9 @@ function App() {
       {/* Onboarding Welcome Modal */}
       {showWelcomeModal && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-[#1e1f20] rounded-xl border border-outline-variant dark:border-zinc-800 w-full max-w-md p-6 relative shadow-xl">
-            <h3 className="font-title-lg text-on-surface dark:text-[#e3e3e3] text-xl font-bold">Welcome to your vault</h3>
-            <p className="font-body-md text-on-surface-variant dark:text-[#c4c7c5] mt-2">
+          <div className="bg-white dark:bg-[#1e1f20] rounded-2xl border border-neutral-200 dark:border-zinc-800 w-full max-w-md p-6 relative shadow-2xl">
+            <h3 className="font-title-lg text-neutral-900 dark:text-[#e3e3e3] text-xl font-bold">Welcome to your vault</h3>
+            <p className="font-body-md text-neutral-600 dark:text-[#c4c7c5] mt-2">
               Your secure digital space is ready. Upload documents, run malware scans, and manage your files safely.
             </p>
             <div className="flex justify-end mt-4">
@@ -2074,7 +2740,7 @@ function App() {
                   setShowWelcomeModal(false);
                   localStorage.setItem('has_seen_vault_tour', 'true');
                 }}
-                className="px-4 py-2 bg-primary dark:bg-zinc-800 text-on-primary dark:text-[#e3e3e3] hover:bg-primary/90 dark:hover:bg-zinc-700 rounded-lg transition-colors font-medium"
+                className="px-4 py-2 bg-neutral-900 text-white hover:bg-neutral-800 dark:bg-zinc-800 dark:text-[#e3e3e3] dark:hover:bg-zinc-700 rounded-xl transition-colors font-medium cursor-pointer"
               >
                 Get Started
               </button>
@@ -2084,7 +2750,18 @@ function App() {
       )}
       {/* SideNavBar */}
       <nav className={`bg-slate-50 dark:bg-[#1e1f20] h-screen ${isCollapsed ? 'w-20' : 'w-64'} fixed left-0 top-0 border-r border-slate-200 dark:border-zinc-800 flex flex-col py-stack-lg z-50 transform transition-all duration-300 ease-in-out overflow-x-hidden md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-        <div className="h-16 mb-6 flex items-center gap-2 px-4">
+        <div 
+          onClick={handleNavigateHomeRoot}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              handleNavigateHomeRoot(e);
+            }
+          }}
+          role="button"
+          tabIndex={0}
+          className="h-16 mb-6 flex items-center gap-2 px-4 cursor-pointer select-none"
+        >
           <div className="min-w-[3rem] flex justify-center items-center">
             <CloudGuardLogo className="h-13 w-auto flex-shrink-0" />
           </div>
@@ -2104,7 +2781,7 @@ function App() {
             </div>
             <span className={`font-semibold font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-32 opacity-100'}`}>My Files</span>
             {isCollapsed && (
-              <div className="absolute left-full ml-4 px-3 py-1 bg-[#1e1f20] border border-zinc-800 text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+              <div className="absolute left-full ml-4 px-3 py-1 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-800 dark:text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
                 My Files
               </div>
             )}
@@ -2124,7 +2801,7 @@ function App() {
             </div>
             <span className={`text-center font-semibold font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-32 opacity-100'}`}>Photos</span>
             {isCollapsed && (
-              <div className="absolute left-full ml-4 px-3 py-1 bg-[#1e1f20] border border-zinc-800 text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+              <div className="absolute left-full ml-4 px-3 py-1 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-800 dark:text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
                 Photos
               </div>
             )}
@@ -2140,15 +2817,55 @@ function App() {
             </div>
             <span className={`font-semibold font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-32 opacity-100'}`}>Recent</span>
             {isCollapsed && (
-              <div className="absolute left-full ml-4 px-3 py-1 bg-[#1e1f20] border border-zinc-800 text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+              <div className="absolute left-full ml-4 px-3 py-1 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-800 dark:text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
                 Recent
+              </div>
+            )}
+          </button>
+
+          <button 
+            type="button"
+            onClick={() => handleNavClick('bin')}
+            className={`group relative w-full flex items-center h-12 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${
+              isBinActive
+                ? 'text-secondary bg-surface-container-low dark:bg-[#282a2c] dark:text-[#e3e3e3]'
+                : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'
+            }`}
+          >
+            <div className="min-w-[3rem] flex justify-center items-center">
+              <span className="material-symbols-outlined shrink-0" data-weight={isBinActive ? "fill" : ""}>delete</span>
+            </div>
+            <span className={`font-semibold font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-32 opacity-100'}`}>Bin</span>
+            {isCollapsed && (
+              <div className="absolute left-full ml-4 px-3 py-1 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-800 dark:text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+                Bin
               </div>
             )}
           </button>
         </div>
 
         {/* Footer Navigation */}
-        <div className="flex flex-col gap-2 mt-auto border-t border-outline-variant pt-4 mx-4">
+        <div className="flex flex-col gap-2 mt-auto border-t border-slate-200 dark:border-zinc-800 pt-4 mx-4">
+          {isAdmin && (
+            <button 
+              type="button"
+              onClick={() => { 
+                setIsSidebarOpen(false); 
+                navigate('/monitor');
+              }}
+              className={`group relative w-full flex items-center h-12 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${location.pathname === '/monitor' ? 'bg-surface-container-low dark:bg-[#282a2c] text-neutral-900 dark:text-white font-semibold' : 'text-neutral-500 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800/60 hover:text-neutral-900 dark:hover:text-white'}`}
+            >
+              <div className="min-w-[3rem] flex justify-center items-center">
+                <span className="material-symbols-outlined shrink-0" data-weight={location.pathname === '/monitor' ? "fill" : ""}>monitoring</span>
+              </div>
+              <span className={`font-semibold font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-32 opacity-100'}`}>Monitor</span>
+              {isCollapsed && (
+                <div className="absolute left-full ml-4 px-3 py-1 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-800 dark:text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+                  Monitor
+                </div>
+              )}
+            </button>
+          )}
           <button 
             type="button"
             onClick={() => { 
@@ -2163,7 +2880,7 @@ function App() {
             </div>
             <span className={`font-semibold font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-32 opacity-100'}`}>Settings</span>
             {isCollapsed && (
-              <div className="absolute left-full ml-4 px-3 py-1 bg-[#1e1f20] border border-zinc-800 text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+              <div className="absolute left-full ml-4 px-3 py-1 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-800 dark:text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
                 Settings
               </div>
             )}
@@ -2176,7 +2893,7 @@ function App() {
             <span className="material-symbols-outlined transition-transform duration-300" style={{ transform: isCollapsed ? 'rotate(180deg)' : 'rotate(0deg)' }}>
               view_sidebar
             </span>
-            <div className="absolute left-full ml-4 px-3 py-1 bg-[#1e1f20] border border-zinc-800 text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+            <div className="absolute left-full ml-4 px-3 py-1 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-800 dark:text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
               Toggle Sidebar (Ctrl+B)
             </div>
           </button>
@@ -2197,7 +2914,18 @@ function App() {
               <Menu className="w-5 h-5"/>
             </button>
 
-            <div className="flex items-center gap-2 sm:gap-2.5 cursor-pointer select-none shrink-0 md:hidden">
+            <div 
+              onClick={handleNavigateHomeRoot}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  handleNavigateHomeRoot(e);
+                }
+              }}
+              role="button"
+              tabIndex={0}
+              className="flex items-center gap-2 sm:gap-2.5 cursor-pointer select-none shrink-0 md:hidden"
+            >
               <CloudGuardLogo className="w-12 h-12 sm:w-12 sm:h-12 shrink-0 transition-transform active:scale-95"/>
               <span className="text-lg sm:text-xl font-bold tracking-tight text-neutral-900 dark:text-white">
                 CloudGuard
@@ -2273,10 +3001,17 @@ function App() {
               >
                 {user?.name ? user.name.charAt(0).toUpperCase() : 'S'}
               </div>
+<<<<<<< HEAD
               <div className={`absolute right-0 mt-2 w-48 bg-surface-container-lowest dark:bg-[#1e1f20] border border-outline-variant dark:border-zinc-800 shadow-lg rounded-xl overflow-hidden z-50 transition-all duration-200 ease-out origin-top-right ${showProfileMenu ? 'opacity-100 scale-100 visible translate-y-0' : 'opacity-0 scale-95 invisible -translate-y-2 pointer-events-none'}`}>
                 <div className="px-4 py-3 border-b border-outline-variant dark:border-zinc-800 bg-surface-container-low dark:bg-[#131314] cursor-default">
                   <p className="text-sm font-bold text-on-surface dark:text-[#e3e3e3] truncate">{user?.name || 'User'}</p>
                   <p className="text-xs text-on-surface-variant dark:text-[#c4c7c5] truncate">{user?.email || ''}</p>
+=======
+              <div className={`absolute right-0 mt-2 w-48 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 shadow-xl rounded-xl overflow-hidden z-50 transition-all duration-200 ease-out origin-top-right ${showProfileMenu ? 'opacity-100 scale-100 visible translate-y-0' : 'opacity-0 scale-95 invisible -translate-y-2 pointer-events-none'}`}>
+                <div className="px-4 py-3 border-b border-neutral-200 dark:border-zinc-800 bg-neutral-50 dark:bg-[#131314] cursor-default">
+                  <p className="text-sm font-bold text-neutral-900 dark:text-[#e3e3e3] truncate">{user?.name || 'User'}</p>
+                  <p className="text-xs text-neutral-500 dark:text-[#c4c7c5] truncate">{user?.email || ''}</p>
+>>>>>>> feature/cashfree-payments
                 </div>
                 <button 
                   type="button"
@@ -2285,14 +3020,18 @@ function App() {
                     setViewMode('settings'); 
                     navigate('/dashboard?view=settings');
                   }}
-                  className="w-full text-left px-4 py-3 text-on-surface dark:text-[#e3e3e3] hover:bg-surface-container-high dark:hover:bg-zinc-800/70 text-sm flex items-center gap-2 transition-colors cursor-pointer"
+                  className="w-full text-left px-4 py-3 text-neutral-700 dark:text-[#e3e3e3] hover:bg-neutral-100 dark:hover:bg-zinc-800/70 text-sm flex items-center gap-2 transition-colors cursor-pointer"
                 >
                   <span className="material-symbols-outlined text-[18px]">person</span> Profile Settings
                 </button>
-                <div className="w-full h-px bg-outline-variant dark:bg-zinc-800"></div>
+                <div className="w-full h-px bg-neutral-200 dark:bg-zinc-800"></div>
                 <button 
-                  onClick={handleLogout}
-                  className="w-full text-left px-4 py-3 text-error dark:text-red-400 hover:bg-error/10 dark:hover:bg-red-950/30 text-sm flex items-center gap-2 transition-colors cursor-pointer"
+                  type="button"
+                  onClick={() => {
+                    setShowProfileMenu(false);
+                    setIsSignOutModalOpen(true);
+                  }}
+                  className="w-full text-left px-4 py-3 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 text-sm flex items-center gap-2 transition-colors cursor-pointer"
                 >
                   <span className="material-symbols-outlined text-[18px]">logout</span> Sign out
                 </button>
@@ -2333,6 +3072,11 @@ function App() {
         onClick={() => { setShowProfileMenu(false); setIsSidebarOpen(false); setActiveMenuId(null); setActiveFolderMenuId(null); }} 
         className={`pt-24 pb-28 px-margin-mobile md:px-margin-desktop max-w-container-max mx-auto w-full min-h-screen bg-white dark:bg-[#131314] transition-all duration-300 ease-in-out ${isCollapsed ? 'md:ml-20' : 'md:ml-64'}`}
       >
+        <SubscriptionAlertBanner />
+        <StorageQuotaBanner
+          storageUsed={storageStats?.storageUsed || storageStats?.usedBytes || storageStats?.used || 0}
+          storageLimit={storageStats?.storageLimit || storageStats?.totalLimitBytes || storageStats?.limit || defaultStorageLimit || 5368709120}
+        />
         {isSettingsOpen ? (
           <div className="max-w-3xl mx-auto space-y-6">
             <h2 className="font-headline-md text-headline-md font-bold text-on-surface dark:text-[#e3e3e3] mb-8">Profile Settings</h2>
@@ -2346,6 +3090,8 @@ function App() {
           </div>
         ) : location.pathname === '/dashboard/photos' ? (
           <PhotosView token={token} />
+        ) : viewMode === 'bin' || searchParams.get('view') === 'bin' || searchParams.get('tab') === 'bin' ? (
+          <BinView onStorageUpdate={fetchStorageStats} searchQuery={searchQuery} />
         ) : (
           <>
         {/* Page Title */}
@@ -2387,6 +3133,15 @@ function App() {
               style={{ display: 'none' }}
               multiple
             />
+            <input
+              ref={folderInputRef}
+              type="file"
+              webkitdirectory=""
+              directory=""
+              multiple
+              className="hidden"
+              onChange={handleFolderSelect}
+            />
             {/* Desktop Drag-and-Drop Area (Hidden on mobile) */}
             <div 
               onDrop={onDrop} 
@@ -2405,12 +3160,50 @@ function App() {
               </p>
               
               <div className="flex items-center gap-3">
-                <button 
-                  onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}
-                  className="px-4 py-2 text-xs font-semibold rounded-lg bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 hover:opacity-90 transition-opacity cursor-pointer"
-                >
-                  Upload
-                </button>
+                {/* Desktop Upload ▾ Dropdown */}
+                <div ref={desktopUploadMenuRef} className="relative inline-block">
+                  <button 
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setIsUploadMenuOpen((prev) => !prev);
+                    }}
+                    className="px-4 py-2 text-xs font-semibold rounded-lg bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 hover:opacity-90 transition-opacity cursor-pointer flex items-center gap-1.5"
+                  >
+                    <span>Upload</span>
+                    <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-150 ${isUploadMenuOpen ? 'rotate-180' : ''}`} />
+                  </button>
+
+                  {isUploadMenuOpen && (
+                    <div 
+                      className="absolute left-0 sm:left-1/2 sm:-translate-x-1/2 top-full mt-2 w-48 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-2xl p-1.5 z-40 text-left"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setIsUploadMenuOpen(false);
+                          fileInputRef.current?.click();
+                        }}
+                        className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-xs font-medium text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer"
+                      >
+                        <FileUp className="w-4 h-4 text-neutral-500 dark:text-neutral-400" />
+                        <span>Upload Files</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleUploadFolderClick}
+                        className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-xs font-medium text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer"
+                      >
+                        <FolderUp className="w-4 h-4 text-neutral-500 dark:text-neutral-400" />
+                        <span>Upload Folder</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+
                 <button 
                   onClick={(e) => { e.stopPropagation(); setShowNewFolderModal(true); }}
                   className="px-4 py-2 text-xs font-semibold rounded-lg bg-neutral-100 text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200 hover:bg-neutral-200 dark:hover:bg-neutral-700 transition-colors cursor-pointer"
@@ -2422,13 +3215,50 @@ function App() {
 
             {/* Mobile Compact Upload Bar (Visible only on mobile) */}
             <div className="flex sm:hidden items-center gap-2 mb-4">
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className="flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900 text-xs font-semibold shadow-sm hover:opacity-90 active:scale-[0.98] transition-all cursor-pointer"
-              >
-                <UploadCloud className="w-4 h-4"/>
-                <span>Upload Files</span>
-              </button>
+              <div ref={mobileUploadMenuRef} className="relative inline-block flex-1">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setIsUploadMenuOpen((prev) => !prev);
+                  }}
+                  className="w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900 text-xs font-semibold shadow-sm hover:opacity-90 active:scale-[0.98] transition-all cursor-pointer"
+                >
+                  <UploadCloud className="w-4 h-4"/>
+                  <span>Upload Files</span>
+                  <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-150 ${isUploadMenuOpen ? 'rotate-180' : ''}`} />
+                </button>
+
+                {isUploadMenuOpen && (
+                  <div 
+                    className="absolute left-0 sm:left-1/2 sm:-translate-x-1/2 top-full mt-2 w-48 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-2xl p-1.5 z-40 text-left"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIsUploadMenuOpen(false);
+                        fileInputRef.current?.click();
+                      }}
+                      className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-xs font-medium text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer"
+                    >
+                      <FileUp className="w-4 h-4 text-neutral-500 dark:text-neutral-400" />
+                      <span>Upload Files</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleUploadFolderClick}
+                      className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-xs font-medium text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer"
+                    >
+                      <FolderUp className="w-4 h-4 text-neutral-500 dark:text-neutral-400" />
+                      <span>Upload Folder</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+
               <button
                 onClick={() => setShowNewFolderModal(true)}
                 className="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-neutral-100 dark:bg-neutral-800 text-neutral-800 dark:text-neutral-200 text-xs font-semibold border border-neutral-200/80 dark:border-neutral-700/60 active:scale-[0.98] transition-transform cursor-pointer"
@@ -2497,14 +3327,95 @@ function App() {
                       <List className="w-4 h-4" />
                     </button>
                   </div>
-                  <button 
-                    onClick={toggleSort}
-                    className="px-2.5 sm:px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-colors bg-neutral-200 hover:bg-neutral-300 dark:bg-neutral-800 dark:hover:bg-neutral-700 flex items-center gap-1 text-neutral-800 dark:text-neutral-100 whitespace-nowrap"
-                  >
-                    <span className="material-symbols-outlined text-sm">sort</span>
-                    <span>Sort: {sortOrder === 'newest' ? 'Newest' : 'Oldest'}</span>
-                    <span className="hidden sm:inline"> First</span>
-                  </button>
+                  <div className="relative inline-block" ref={sortDropdownRef}>
+                    <button 
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIsSortMenuOpen(prev => !prev);
+                      }}
+                      className="px-2.5 sm:px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-colors bg-neutral-200 hover:bg-neutral-300 dark:bg-neutral-800 dark:hover:bg-neutral-700 flex items-center gap-1 text-neutral-800 dark:text-neutral-100 whitespace-nowrap cursor-pointer"
+                    >
+                      <span className="material-symbols-outlined text-sm">sort</span>
+                      <span className="hidden sm:inline">Sort: </span>
+                      <span>{sortBy === 'name' ? 'Name' : 'Date'}</span>
+                      {sortOrder === 'asc' ? (
+                        <ArrowUp className="w-3.5 h-3.5" />
+                      ) : (
+                        <ArrowDown className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+
+                    {isSortMenuOpen && (
+                      <div className="absolute right-0 top-full mt-2 w-48 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-2xl p-1.5 z-40 text-left select-none">
+                        <div className="px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-neutral-400 dark:text-neutral-500">
+                          Sort by
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (sortBy !== 'name') {
+                              setSortBy('name');
+                              setSortOrder('asc');
+                            }
+                            setIsSortMenuOpen(false);
+                          }}
+                          className="w-full flex items-center justify-between px-2.5 py-1.5 text-xs sm:text-sm rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-700 dark:text-neutral-200 transition-colors cursor-pointer"
+                        >
+                          <span>Name</span>
+                          {sortBy === 'name' && <Check className="w-3.5 h-3.5 text-blue-500" />}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (sortBy !== 'date') {
+                              setSortBy('date');
+                              setSortOrder('desc');
+                            }
+                            setIsSortMenuOpen(false);
+                          }}
+                          className="w-full flex items-center justify-between px-2.5 py-1.5 text-xs sm:text-sm rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-700 dark:text-neutral-200 transition-colors cursor-pointer"
+                        >
+                          <span>Date</span>
+                          {sortBy === 'date' && <Check className="w-3.5 h-3.5 text-blue-500" />}
+                        </button>
+
+                        <div className="my-1 border-t border-neutral-100 dark:border-neutral-800" />
+
+                        <div className="px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-neutral-400 dark:text-neutral-500">
+                          Sort direction
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const target = sortBy === 'name' ? 'asc' : 'desc';
+                            setSortOrder(target);
+                            setIsSortMenuOpen(false);
+                          }}
+                          className="w-full flex items-center justify-between px-2.5 py-1.5 text-xs sm:text-sm rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-700 dark:text-neutral-200 transition-colors cursor-pointer"
+                        >
+                          <span>{sortBy === 'name' ? 'A to Z' : 'New to old'}</span>
+                          {sortOrder === (sortBy === 'name' ? 'asc' : 'desc') && (
+                            <Check className="w-3.5 h-3.5 text-blue-500" />
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const target = sortBy === 'name' ? 'desc' : 'asc';
+                            setSortOrder(target);
+                            setIsSortMenuOpen(false);
+                          }}
+                          className="w-full flex items-center justify-between px-2.5 py-1.5 text-xs sm:text-sm rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-700 dark:text-neutral-200 transition-colors cursor-pointer"
+                        >
+                          <span>{sortBy === 'name' ? 'Z to A' : 'Old to new'}</span>
+                          {sortOrder === (sortBy === 'name' ? 'desc' : 'asc') && (
+                            <Check className="w-3.5 h-3.5 text-blue-500" />
+                          )}
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
@@ -2535,14 +3446,14 @@ function App() {
             </div>
           ) : (
             <>
-          {viewMode !== 'recent' && folders.length > 0 && (
+          {viewMode !== 'recent' && sortedFolders.length > 0 && (
             <div className="mb-6">
               <div className="text-neutral-500 dark:text-neutral-400 text-xs font-semibold uppercase tracking-wider mb-3">
                 Folders
               </div>
               {folderView === 'grid' ? (
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                  {folders.map((folder, index) => {
+                  {sortedFolders.map((folder, index) => {
                     const isSelected = selectedFolderIds.includes(String(folder._id));
                     const isRightColumn = index % 2 === 1;
                     return (
@@ -2565,8 +3476,8 @@ function App() {
                             isSelected
                               ? 'opacity-100 bg-white text-black border-white shadow-sm'
                               : isSelectionActive
-                                ? 'opacity-50 hover:opacity-100 border-neutral-400 dark:border-neutral-500 bg-neutral-100 dark:bg-neutral-900/80'
-                                : 'opacity-0 group-hover:opacity-100 border-neutral-400 dark:border-neutral-500 bg-neutral-100 dark:bg-neutral-900/80 hover:border-neutral-900 dark:hover:border-white shadow-sm'
+                                ? 'opacity-100 md:opacity-50 md:hover:opacity-100 border-neutral-400 dark:border-neutral-500 bg-neutral-100 dark:bg-neutral-900/80'
+                                : 'opacity-100 md:opacity-0 md:group-hover:opacity-100 border-neutral-400 dark:border-neutral-500 bg-neutral-100 dark:bg-neutral-900/80 hover:border-neutral-900 dark:hover:border-white shadow-sm'
                           }`}
                           title={isSelected ? "Deselect folder" : "Select folder"}
                         >
@@ -2662,7 +3573,7 @@ function App() {
                 </div>
               ) : (
                 <div className="flex flex-col">
-                  {folders.map(folder => {
+                  {sortedFolders.map(folder => {
                     const isSelected = selectedFolderIds.includes(String(folder._id));
                     return (
                       <div 
@@ -2686,8 +3597,8 @@ function App() {
                               isSelected
                                 ? 'opacity-100 bg-white text-black border-white'
                                 : isSelectionActive
-                                  ? 'opacity-50 hover:opacity-100 border-neutral-400 dark:border-neutral-500 bg-neutral-100 dark:bg-neutral-900/80'
-                                  : 'opacity-0 group-hover:opacity-100 border-neutral-400 dark:border-neutral-500 bg-neutral-100 dark:bg-neutral-900/80 hover:border-neutral-900 dark:hover:border-white'
+                                  ? 'opacity-100 md:opacity-50 md:hover:opacity-100 border-neutral-400 dark:border-neutral-500 bg-neutral-100 dark:bg-neutral-900/80'
+                                  : 'opacity-100 md:opacity-0 md:group-hover:opacity-100 border-neutral-400 dark:border-neutral-500 bg-neutral-100 dark:bg-neutral-900/80 hover:border-neutral-900 dark:hover:border-white'
                             }`}
                             title={isSelected ? "Deselect folder" : "Select folder"}
                           >
@@ -2780,7 +3691,7 @@ function App() {
             </div>
           )}
 
-          {viewMode !== 'recent' && folders.length > 0 && (
+          {viewMode !== 'recent' && sortedFolders.length > 0 && (
             <div className="text-neutral-500 dark:text-neutral-400 text-xs font-semibold uppercase tracking-wider mb-3">
               Files
             </div>
@@ -2811,8 +3722,38 @@ function App() {
                         </div>
                       </div>
                     </th>
-                    <th className="py-4 px-6 font-medium">File Name</th>
-                    <th className="py-4 px-6 font-medium">Date Modified</th>
+                    <th className="py-4 px-6 font-medium">
+                      <button
+                        type="button"
+                        onClick={handleSortByName}
+                        className="cursor-pointer select-none inline-flex items-center gap-1 hover:text-neutral-900 dark:hover:text-white transition-colors"
+                      >
+                        <span>File Name</span>
+                        {sortBy === 'name' && (
+                          sortOrder === 'asc' ? (
+                            <ArrowUp className="w-3.5 h-3.5 shrink-0" />
+                          ) : (
+                            <ArrowDown className="w-3.5 h-3.5 shrink-0" />
+                          )
+                        )}
+                      </button>
+                    </th>
+                    <th className="py-4 px-6 font-medium">
+                      <button
+                        type="button"
+                        onClick={handleSortByDate}
+                        className="cursor-pointer select-none inline-flex items-center gap-1 hover:text-neutral-900 dark:hover:text-white transition-colors"
+                      >
+                        <span>Date Modified</span>
+                        {sortBy === 'date' && (
+                          sortOrder === 'desc' ? (
+                            <ArrowDown className="w-3.5 h-3.5 shrink-0" />
+                          ) : (
+                            <ArrowUp className="w-3.5 h-3.5 shrink-0" />
+                          )
+                        )}
+                      </button>
+                    </th>
                     <th className="py-4 px-6 font-medium">Size</th>
                     <th className="py-4 px-6 font-medium">Security Status</th>
                     <th className="py-4 px-6 font-medium text-right">Actions</th>
@@ -2821,8 +3762,32 @@ function App() {
                 <tbody className="block md:table-row-group font-body-md text-body-md text-on-surface dark:text-zinc-300 divide-y divide-outline-variant/50 dark:divide-zinc-800/50">
                   {filteredFiles.length === 0 ? (
                     <tr className="block md:table-row">
-                      <td colSpan="6" className="py-8 text-center text-on-surface-variant block md:table-cell">
-                        {files.length === 0 ? "No files have been uploaded yet." : "No files match your search."}
+                      <td colSpan="6" className="py-8 text-center block md:table-cell">
+                        {files.length === 0 ? (
+                          <div className="flex flex-col items-center justify-center py-16 text-center select-none">
+                            <div className="w-12 h-12 rounded-2xl bg-neutral-100 dark:bg-neutral-800/60 border border-neutral-200/60 dark:border-neutral-700/40 flex items-center justify-center text-neutral-400 dark:text-neutral-500 mb-3">
+                              <FileText className="w-6 h-6 stroke-[1.5]"/>
+                            </div>
+                            <p className="text-sm font-medium text-neutral-600 dark:text-neutral-300">
+                              No files uploaded yet
+                            </p>
+                            <p className="text-xs text-neutral-400 dark:text-neutral-500 mt-1 max-w-xs">
+                              Upload files or drag and drop documents into this folder to get started.
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-center justify-center py-16 text-center select-none">
+                            <div className="w-12 h-12 rounded-2xl bg-neutral-100 dark:bg-neutral-800/60 border border-neutral-200/60 dark:border-neutral-700/40 flex items-center justify-center text-neutral-400 dark:text-neutral-500 mb-3">
+                              <Search className="w-6 h-6 stroke-[1.5]"/>
+                            </div>
+                            <p className="text-sm font-medium text-neutral-600 dark:text-neutral-300">
+                              No files match your search
+                            </p>
+                            <p className="text-xs text-neutral-400 dark:text-neutral-500 mt-1 max-w-xs">
+                              Try searching for a different keyword or file extension.
+                            </p>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ) : 
@@ -2830,6 +3795,11 @@ function App() {
                     <ErrorBoundary key={file?._id || file?.id || Math.random()}>
                     <tr 
                       onClick={() => file.isFolder ? setCurrentDirectory(file.diskName || file.name) : handlePreview(file)}
+<<<<<<< HEAD
+=======
+                      onMouseEnter={() => !file.isFolder && prefetchAccessUrl(file._id, token)}
+                      onTouchStart={() => !file.isFolder && prefetchAccessUrl(file._id, token)}
+>>>>>>> feature/cashfree-payments
                       className={`flex flex-wrap md:table-row items-center py-3 px-4 md:p-0 hover:bg-surface-bright dark:hover:bg-zinc-800/70 dark:text-zinc-300 transition-colors group md:h-14 ${
                         selectedFileIds.includes(String(file._id)) ? 'bg-neutral-100 dark:bg-zinc-800/60' : ''
                       } ${file.isFolder || (!file.isMalicious && file.status !== 'Malicious' && file.status !== 'malware' && file.securityStatus !== 'threat_purged') ? 'cursor-pointer' : ''}`}
@@ -2843,8 +3813,8 @@ function App() {
                                 selectedFileIds.includes(String(file._id))
                                   ? 'opacity-100 bg-white text-black border-white'
                                   : isSelectionActive
-                                    ? 'opacity-40 hover:opacity-100 border-neutral-500 bg-neutral-900/80 hover:border-white'
-                                    : 'opacity-0 group-hover:opacity-100 border-neutral-500 bg-neutral-900/80 hover:border-white'
+                                    ? 'opacity-100 md:opacity-40 md:hover:opacity-100 border-neutral-500 bg-neutral-900/80 hover:border-white'
+                                    : 'opacity-100 md:opacity-0 md:group-hover:opacity-100 border-neutral-500 bg-neutral-900/80 hover:border-white'
                               }`}
                               title={selectedFileIds.includes(String(file._id)) ? "Deselect file" : "Select file"}
                             >
@@ -2906,19 +3876,28 @@ function App() {
                             <MoreVertical size={20} />
                           </button>
                           
-                          <div className={`absolute right-0 w-44 bg-white dark:bg-[#1e1f20] rounded-xl shadow-xl border border-outline-variant dark:border-zinc-800 z-[60] overflow-hidden flex flex-col py-1 transition-all duration-200 ease-out ${index >= filteredFiles.length - 2 && filteredFiles.length > 3 ? 'bottom-full mb-2 origin-bottom-right' : 'top-full mt-2 origin-top-right'} ${activeMenuId === (file._id || file.id) ? 'opacity-100 scale-100 pointer-events-auto' : 'opacity-0 scale-95 pointer-events-none'}`}>
+                          <div className={`absolute right-0 w-44 bg-white dark:bg-[#1e1f20] rounded-xl shadow-xl border border-neutral-200 dark:border-zinc-800 z-[60] overflow-hidden flex flex-col py-1 transition-all duration-200 ease-out ${index >= filteredFiles.length - 2 && filteredFiles.length > 3 ? 'bottom-full mb-2 origin-bottom-right' : 'top-full mt-2 origin-top-right'} ${activeMenuId === (file._id || file.id) ? 'opacity-100 scale-100 pointer-events-auto' : 'opacity-0 scale-95 pointer-events-none'}`}>
                             {!file.isFolder && (
-                              <button onClick={(e) => { e.stopPropagation(); handlePreview(file); setActiveMenuId(null); }} className="w-full text-left px-4 py-2.5 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-neutral-700 transition-colors flex items-center gap-3">
+                              <button 
+                                onClick={(e) => { e.stopPropagation(); handlePreview(file); setActiveMenuId(null); }} 
+                                onMouseEnter={() => prefetchAccessUrl(file._id, token)}
+                                onTouchStart={() => prefetchAccessUrl(file._id, token)}
+                                className="w-full text-left px-4 py-2.5 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:text-gray-900 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-neutral-700/80 transition-colors flex items-center gap-3 cursor-pointer"
+                              >
                                 <span className="material-symbols-outlined text-[18px]">visibility</span> Preview
                               </button>
                             )}
                             {!file.isFolder && !file.isMalicious && file.status !== 'Malicious' && file.status !== 'malware' && file.securityStatus !== 'threat_purged' && (
+<<<<<<< HEAD
                               <button onClick={(e) => { e.stopPropagation(); setActiveMenuId(null); handleDownload(file); }} className="w-full text-left px-4 py-2.5 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-neutral-700 transition-colors flex items-center gap-3">
+=======
+                              <button onClick={(e) => { e.stopPropagation(); setActiveMenuId(null); handleDownload(file); }} className="w-full text-left px-4 py-2.5 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:text-gray-900 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-neutral-700/80 transition-colors flex items-center gap-3 cursor-pointer">
+>>>>>>> feature/cashfree-payments
                                 <span className="material-symbols-outlined text-[18px]">download</span> Download
                               </button>
                             )}
                             {!file.isFolder && (
-                              <button onClick={(e) => { e.stopPropagation(); openMoveModal(file); setActiveMenuId(null); }} className="w-full text-left px-4 py-2.5 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-neutral-700 transition-colors flex items-center gap-3">
+                              <button onClick={(e) => { e.stopPropagation(); openMoveModal(file); setActiveMenuId(null); }} className="w-full text-left px-4 py-2.5 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:text-gray-900 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-neutral-700/80 transition-colors flex items-center gap-3 cursor-pointer">
                                 <FolderInput size={18} strokeWidth={1.5} /> Move
                               </button>
                             )}
@@ -2928,11 +3907,22 @@ function App() {
                               setNewRenameFileName(file.name); 
                               setShowRenameFileModal(true); 
                               setActiveMenuId(null); 
-                            }} className="w-full text-left px-4 py-2.5 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-neutral-700 transition-colors flex items-center gap-3">
+                            }} className="w-full text-left px-4 py-2.5 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:text-gray-900 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-neutral-700/80 transition-colors flex items-center gap-3 cursor-pointer">
                               <Pencil size={18} strokeWidth={1.5} /> Rename
                             </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setActiveMenuId(null);
+                                setFileDetailsTarget(file);
+                              }}
+                              className="w-full text-left px-4 py-2.5 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:text-gray-900 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-neutral-700/80 transition-colors flex items-center gap-3 cursor-pointer"
+                            >
+                              <Info size={18} strokeWidth={1.5} /> Details
+                            </button>
                             <div className="border-t border-neutral-200 dark:border-neutral-700 my-1"></div>
-                            <button onClick={(e) => { e.stopPropagation(); setFileToDelete(file); setActiveMenuId(null); }} className="w-full text-left px-4 py-2.5 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors flex items-center gap-3">
+                            <button onClick={(e) => { e.stopPropagation(); setFileToDelete(file); setActiveMenuId(null); }} className="w-full text-left px-4 py-2.5 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors flex items-center gap-3 cursor-pointer">
                               <span className="material-symbols-outlined text-[18px]">delete</span> Delete
                             </button>
                           </div>
@@ -2978,8 +3968,9 @@ function App() {
         isOpen={Boolean(folderToDelete)}
         onClose={() => setFolderToDelete(null)}
         onConfirm={confirmFolderDelete}
-        title={`Delete "${folderToDelete?.name}"?`}
-        description="Are you sure? Deleting this folder will permanently delete all files inside it."
+        title={`Move "${folderToDelete?.name}" to Bin?`}
+        description="Items in the bin are kept for 30 days before being permanently deleted."
+        confirmText="Move to Bin"
         isDeleting={isDeletingFolder}
         count={1}
       />
@@ -2997,10 +3988,19 @@ function App() {
         token={token}
       />
 
+      {/* File Details Modal */}
+      {fileDetailsTarget && (
+        <FileDetailsModal
+          file={fileDetailsTarget}
+          locationPath={viewMode === 'recent' ? 'Recent' : (breadcrumbs?.map(b => b.name).join(' > ') || 'My Files')}
+          onClose={() => setFileDetailsTarget(null)}
+        />
+      )}
+
       {/* Rename Folder Modal */}
       {showRenameFolderModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-white dark:bg-[#1e1f20] rounded-2xl w-full max-w-md shadow-2xl p-6 border border-outline-variant dark:border-zinc-800">
+          <div className="bg-white dark:bg-[#1e1f20] rounded-2xl w-full max-w-md shadow-2xl p-6 border border-neutral-200 dark:border-zinc-800">
             <h3 className="font-title-lg text-title-lg text-gray-900 dark:text-white mb-2">Rename Folder</h3>
             <p className="text-neutral-600 dark:text-neutral-300 text-sm mb-6">Enter a new name for your folder.</p>
             <form onSubmit={handleRenameFolderSubmit}>
@@ -3009,7 +4009,7 @@ function App() {
                 type="text" 
                 required 
                 disabled={isRenamingFolder}
-                className="w-full px-4 py-3 bg-white dark:bg-[#131314] border border-outline-variant dark:border-zinc-700 dark:text-zinc-200 rounded-xl focus:ring-2 focus:ring-secondary outline-none transition-all mb-6 font-body-md disabled:opacity-60"
+                className="w-full px-4 py-3 bg-white dark:bg-[#131314] border border-neutral-200 dark:border-zinc-700 text-neutral-900 dark:text-zinc-200 rounded-xl focus:ring-2 focus:ring-secondary outline-none transition-all mb-6 font-body-md disabled:opacity-60"
                 placeholder="Folder name" 
                 value={newRenameFolderName} 
                 onChange={(e) => setNewRenameFolderName(e.target.value)}
@@ -3025,7 +4025,7 @@ function App() {
                       setNewRenameFolderName(''); 
                     }
                   }}
-                  className="px-4 py-2 text-sm font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-800 rounded-xl transition-colors duration-200 disabled:opacity-50"
+                  className="px-4 py-2 text-sm font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-xl transition-colors duration-200 disabled:opacity-50"
                 >
                   Cancel
                 </button>
@@ -3052,7 +4052,7 @@ function App() {
       {/* Rename File Modal */}
       {showRenameFileModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-white dark:bg-[#1e1f20] rounded-2xl w-full max-w-md shadow-2xl p-6 border border-outline-variant dark:border-zinc-800">
+          <div className="bg-white dark:bg-[#1e1f20] rounded-2xl w-full max-w-md shadow-2xl p-6 border border-neutral-200 dark:border-zinc-800">
             <h3 className="font-title-lg text-title-lg text-gray-900 dark:text-white mb-2">Rename File</h3>
             <p className="text-neutral-600 dark:text-neutral-300 text-sm mb-6">Enter a new name for your file.</p>
             <form onSubmit={handleRenameFileSubmit}>
@@ -3060,7 +4060,7 @@ function App() {
                 autoFocus
                 type="text" 
                 required 
-                className="w-full px-4 py-3 bg-white dark:bg-[#131314] border border-outline-variant dark:border-zinc-700 dark:text-zinc-200 rounded-xl focus:ring-2 focus:ring-secondary outline-none transition-all mb-6 font-body-md"
+                className="w-full px-4 py-3 bg-white dark:bg-[#131314] border border-neutral-200 dark:border-zinc-700 text-neutral-900 dark:text-zinc-200 rounded-xl focus:ring-2 focus:ring-secondary outline-none transition-all mb-6 font-body-md"
                 placeholder="File name" 
                 value={newRenameFileName} 
                 onChange={(e) => setNewRenameFileName(e.target.value)}
@@ -3069,7 +4069,7 @@ function App() {
                 <button 
                   type="button" 
                   onClick={() => { setShowRenameFileModal(false); setFileToRename(null); setNewRenameFileName(''); }}
-                  className="px-4 py-2 text-sm font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-800 rounded-xl transition-colors duration-200"
+                  className="px-4 py-2 text-sm font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-xl transition-colors duration-200"
                 >
                   Cancel
                 </button>
@@ -3099,6 +4099,14 @@ function App() {
         folders={moveFolders}
         currentPath={breadcrumbs}
         onMove={handleMoveConfirm}
+        onFolderCreated={(newFolder) => {
+          if (newFolder) {
+            setMoveFolders(prev => {
+              if (prev.some(f => (f._id || f.id) === (newFolder._id || newFolder.id))) return prev;
+              return [...prev, newFolder];
+            });
+          }
+        }}
         initialFolderId={currentFolderId}
         isMoving={isMoveLoading}
       />
@@ -3127,6 +4135,7 @@ function App() {
                 controls
                 autoPlay
                 playsInline
+                preload="auto"
                 className="max-w-full max-h-[80vh] rounded-lg object-contain shadow-2xl bg-black"
               >
                 Your browser does not support the video tag.
@@ -3134,34 +4143,34 @@ function App() {
             </div>
           </div>
         ) : (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
-            <div className="bg-white rounded-xl shadow-lg w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
-              <div className="flex items-center justify-between p-4 border-b border-outline-variant bg-surface">
-                <h3 className="font-title-lg text-on-surface truncate pr-4">{previewFile.name}</h3>
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+            <div className="bg-white dark:bg-[#18181b] rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden border border-neutral-200 dark:border-neutral-800 text-neutral-900 dark:text-neutral-100">
+              <div className="flex items-center justify-between p-4 border-b border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900/60">
+                <h3 className="font-title-lg text-neutral-900 dark:text-white font-semibold truncate pr-4">{previewFile.name}</h3>
                 <div className="flex items-center gap-2">
                   <button 
                     onClick={() => handleDownload(previewFile)}
-                    className="bg-secondary text-on-secondary hover:bg-secondary-container transition-colors p-2 rounded-lg flex items-center justify-center"
+                    className="bg-primary text-on-primary hover:bg-primary/90 transition-colors p-2 rounded-lg flex items-center justify-center"
                     title="Download File"
                   >
                     <span className="material-symbols-outlined">download</span>
                   </button>
-                  <button onClick={closePreview} className="p-2 text-on-surface-variant hover:bg-surface-container-high rounded-full transition-colors">
+                  <button onClick={closePreview} className="p-2 text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white hover:bg-neutral-200 dark:hover:bg-neutral-800 rounded-full transition-colors">
                     <span className="material-symbols-outlined">close</span>
                   </button>
                 </div>
               </div>
-              <div className="flex-1 overflow-auto bg-surface-container p-4 flex items-center justify-center">
+              <div className="flex-1 overflow-auto bg-neutral-100 dark:bg-neutral-950 p-4 flex items-center justify-center">
                 {(previewFile.type.toLowerCase() === 'png' || previewFile.type.toLowerCase() === 'jpg' || previewFile.type.toLowerCase() === 'jpeg') ? (
-                  <img src={previewUrl} alt={previewFile.name} className="max-w-full max-h-[70vh] object-contain shadow-sm" />
+                  <img src={previewUrl} alt={previewFile.name} className="max-w-full max-h-[70vh] object-contain shadow-sm rounded" />
                 ) : previewFile.type.toLowerCase() === 'pdf' ? (
-                  <iframe src={previewUrl} className="w-full h-[70vh] border-0" title="PDF Preview" />
+                  <iframe src={previewUrl} className="w-full h-[70vh] border-0 rounded" title="PDF Preview" />
                 ) : (previewFile.type.toLowerCase() === 'txt' || previewFile.type.toLowerCase() === 'md') ? (
-                  <pre className="w-full h-full text-left bg-white p-6 rounded-lg overflow-auto text-sm font-mono whitespace-pre-wrap shadow-inner border border-outline-variant">
+                  <pre className="w-full h-full text-left bg-white dark:bg-[#121212] text-neutral-900 dark:text-neutral-100 p-6 rounded-lg overflow-auto text-sm font-mono whitespace-pre-wrap shadow-inner border border-neutral-200 dark:border-neutral-800">
                     {previewText || "Loading..."}
                   </pre>
                 ) : (
-                  <div className="text-on-surface-variant flex flex-col items-center gap-3">
+                  <div className="text-neutral-500 dark:text-neutral-400 flex flex-col items-center gap-3">
                     <span className="material-symbols-outlined text-4xl">visibility_off</span>
                     <p>Preview not available for this file type.</p>
                   </div>
@@ -3179,21 +4188,21 @@ function App() {
         onConfirm={showBulkDeleteModal ? handleBulkDelete : confirmDelete}
         title={
           showBulkDeleteModal
-            ? undefined
-            : `Delete "${fileToDelete?.name}"?`
+            ? `Move ${selectedFolderIds.length + selectedFileIds.length} items to Bin?`
+            : `Move "${fileToDelete?.name}" to Bin?`
         }
         description={
           showBulkDeleteModal
-            ? `Are you sure you want to permanently delete the ${selectedFolderIds.length + selectedFileIds.length} selected item${selectedFolderIds.length + selectedFileIds.length === 1 ? '' : 's'}? This action will immediately remove the data from your storage.`
-            : `Are you sure you want to permanently delete "${fileToDelete?.name}"? This action will immediately remove the data from your storage.`
+            ? `Are you sure you want to move these ${selectedFolderIds.length + selectedFileIds.length} items to the Bin? Items in the bin are kept for 30 days before being permanently deleted.`
+            : 'Are you sure you want to move this file to the Bin? Items in the bin are kept for 30 days before being permanently deleted.'
         }
-        confirmText="Permanently delete"
+        confirmText="Move to Bin"
         count={showBulkDeleteModal ? (selectedFolderIds.length + selectedFileIds.length) : 1}
         isDeleting={isDeleting || isBulkDeleting}
       />
 
       {/* Unified Floating Action Pill (Matches PhotosView) */}
-      {totalSelected > 0 && location.pathname !== '/dashboard/photos' && (
+      {totalSelected > 0 && location.pathname !== '/dashboard/photos' && viewMode !== 'bin' && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 sm:py-2.5 rounded-full bg-neutral-900/95 dark:bg-neutral-800/95 backdrop-blur-md border border-neutral-700/60 shadow-2xl text-white select-none max-w-[95vw]">
           
           {/* 1. Counter */}
@@ -3337,6 +4346,186 @@ function App() {
           </div>
         </div>
       )}
+      {/* Branded Sign-Out Confirmation Modal */}
+      {isSignOutModalOpen && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm select-none animate-in fade-in"
+          onClick={() => setIsSignOutModalOpen(false)}
+        >
+          <div 
+            className="rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-2xl p-6 max-w-sm w-full"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="signout-modal-title"
+          >
+            <div className="flex items-start gap-3.5 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-red-500/10 dark:bg-red-500/20 text-red-600 dark:text-red-400 flex items-center justify-center shrink-0">
+                <span className="material-symbols-outlined text-[22px]">logout</span>
+              </div>
+              <div className="flex-1 min-w-0 pt-0.5">
+                <h3 id="signout-modal-title" className="text-base font-semibold text-neutral-900 dark:text-white">
+                  Sign out of CloudGuard?
+                </h3>
+                <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 leading-relaxed">
+                  You will need to sign in again to access your vault. Any active uploads or downloads in this tab will be interrupted.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsSignOutModalOpen(false)}
+                className="px-4 py-2 text-xs font-medium rounded-xl text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  handleLogout();
+                  setIsSignOutModalOpen(false);
+                  navigate('/login');
+                }}
+                className="px-4 py-2 text-xs font-semibold rounded-xl bg-red-600 hover:bg-red-500 active:scale-95 text-white transition-all shadow-sm cursor-pointer"
+              >
+                Sign Out
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Branded Folder Upload Confirmation Modal */}
+      {pendingFolderUpload && (() => {
+        const items = pendingFolderUpload.items || [];
+        const isDevIgnoredPath = (relPath) => /(^|\/)(node_modules|\.git)(\/|$)/i.test(relPath || '');
+
+        let devCount = 0;
+        let devBytes = 0;
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
+          const relPath = (item.relativePath || item.file?.name || '').replace(/\\/g, '/');
+          if (isDevIgnoredPath(relPath)) {
+            devCount++;
+            devBytes += (item.file?.size || 0);
+          }
+        }
+
+        const activeItems = excludeDevFolders
+          ? items.filter((i) => !isDevIgnoredPath((i.relativePath || i.file?.name || '').replace(/\\/g, '/')))
+          : items;
+
+        const effectiveCount = activeItems.length;
+        const effectiveBytes = activeItems.reduce((sum, i) => sum + (i.file?.size || 0), 0);
+
+        return (
+          <div 
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-150 select-none"
+            onClick={() => setPendingFolderUpload(null)}
+          >
+            <div 
+              className="w-full max-w-md rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-5 sm:p-6 shadow-2xl space-y-4"
+              onClick={(e) => e.stopPropagation()}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="folder-upload-modal-title"
+            >
+              {/* Header */}
+              <div className="flex items-start justify-between gap-3 sm:gap-4">
+                <div className="flex items-start gap-3 sm:gap-4 min-w-0">
+                  <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-500 flex items-center justify-center shrink-0">
+                    <FolderUp className="w-5 h-5 sm:w-6 sm:h-6" />
+                  </div>
+                  <div className="flex-1 min-w-0 pt-0.5">
+                    <h3 id="folder-upload-modal-title" className="text-base sm:text-lg font-bold text-neutral-900 dark:text-white leading-tight">
+                      Upload Folder to Vault?
+                    </h3>
+                    <p className="text-xs sm:text-sm text-neutral-500 dark:text-neutral-400 truncate mt-0.5">
+                      {pendingFolderUpload.folderName}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPendingFolderUpload(null)}
+                  className="p-1 rounded-md text-neutral-400 hover:text-neutral-700 dark:hover:text-white transition-colors cursor-pointer shrink-0"
+                  title="Close"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Summary Box */}
+              <div className="bg-neutral-100 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-700/60 rounded-xl p-3.5 text-xs space-y-1.5 text-neutral-700 dark:text-neutral-300">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-neutral-500 dark:text-neutral-400">Folder</span>
+                  <span className="font-semibold text-neutral-900 dark:text-white truncate max-w-[220px]">
+                    {pendingFolderUpload.folderName}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-neutral-500 dark:text-neutral-400">Contents</span>
+                  <span className="font-semibold text-neutral-900 dark:text-white">
+                    {effectiveCount.toLocaleString()} {effectiveCount === 1 ? 'file' : 'files'}{' '}
+                    <span className="font-normal text-neutral-500 dark:text-neutral-400">
+                      ({formatBytes(effectiveBytes)})
+                    </span>
+                  </span>
+                </div>
+                <div className="pt-2 border-t border-neutral-200/80 dark:border-neutral-700/60 text-[11px] text-neutral-500 dark:text-neutral-400">
+                  Security: All files will be encrypted and scanned for threats before storage.
+                </div>
+              </div>
+
+              {/* Dev Folders Exclude Checkbox */}
+              {devCount > 0 && (
+                <label className="flex items-center gap-2.5 p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-neutral-800 dark:text-neutral-200 text-xs cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={excludeDevFolders}
+                    onChange={(e) => setExcludeDevFolders(e.target.checked)}
+                    className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-neutral-300 dark:border-neutral-700 cursor-pointer"
+                  />
+                  <span className="font-medium">
+                    Exclude <span className="font-mono text-[11px]">node_modules</span> & <span className="font-mono text-[11px]">.git</span> ({devCount.toLocaleString()} {devCount === 1 ? 'file' : 'files'}, {formatBytes(devBytes)})
+                  </span>
+                </label>
+              )}
+
+              {/* Footer Buttons */}
+              <div className="flex flex-col-reverse sm:flex-row items-center justify-end gap-2.5 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setPendingFolderUpload(null)}
+                  className="w-full sm:w-auto px-4 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-xs sm:text-sm font-medium cursor-pointer transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPendingFolderUpload(null);
+                    processFolderUpload(activeItems);
+                  }}
+                  className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 hover:opacity-90 text-xs sm:text-sm font-semibold shadow-sm cursor-pointer transition-opacity"
+                >
+                  Start Upload
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* 0ms Instant Visual Feedback Pill While Reading Folder Contents */}
+      {isReadingFolder && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2.5 px-4 py-2.5 rounded-full bg-white/95 dark:bg-neutral-900/95 text-neutral-800 dark:text-neutral-100 border border-neutral-200 dark:border-neutral-800 shadow-2xl backdrop-blur-md max-w-[92vw] text-xs sm:text-sm font-medium pointer-events-none select-none">
+          <Loader2 className="w-4 h-4 text-blue-500 animate-spin shrink-0"/>
+          <span className="truncate">Reading folder contents...</span>
+        </div>
+      )}
     </div>
   );
 
@@ -3354,9 +4543,100 @@ function App() {
         <Route path="/refund-policy" element={<RefundPolicy />} />
         <Route path="/refund" element={<Navigate to="/refund-policy" replace />} />
         <Route path="/contact" element={<ContactUs />} />
+        <Route 
+          path="/monitor" 
+          element={
+            !token ? (
+              <Navigate to="/login" replace />
+            ) : isAdmin === null ? (
+              <div className="min-h-screen bg-black" />
+            ) : isAdmin === false ? (
+              <Navigate to="/dashboard" replace />
+            ) : (
+              <AdminMonitor />
+            )
+          } 
+        />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
       <CookieConsent />
+      <QuotaUpgradeModal
+        quotaData={quotaUpgradeState}
+        onResume={resumePausedUpload}
+        onCancel={cancelPausedUpload}
+        user={user}
+        refreshUser={refreshUser}
+      />
+
+      {/* Upgrade Welcome Modal */}
+      {upgradeWelcomeData && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-150"
+          onClick={() => setUpgradeWelcomeData(null)}
+        >
+          <div 
+            className="w-full max-w-md rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-5 sm:p-6 shadow-2xl space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header: Emerald Check/Shield Badge + Title + Subtitle */}
+            <div className="flex items-start gap-3.5">
+              <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 flex items-center justify-center shrink-0">
+                <ShieldCheck className="w-5 h-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-lg font-bold text-neutral-900 dark:text-white leading-tight">
+                  Welcome to {upgradeWelcomeData.planName}
+                </h3>
+                <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 leading-normal">
+                  Your encrypted vault capacity has been upgraded and activated.
+                </p>
+              </div>
+            </div>
+
+            {/* Summary Box */}
+            <div className="bg-neutral-100 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-700/60 rounded-xl p-3.5 text-xs space-y-2 text-neutral-700 dark:text-neutral-300">
+              <div className="flex items-center justify-between">
+                <span className="text-neutral-500 dark:text-neutral-400">Storage Quota:</span>
+                <span className="font-semibold text-neutral-900 dark:text-white">{upgradeWelcomeData.storageGB} GB</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-neutral-500 dark:text-neutral-400">Billing Cycle:</span>
+                <span className="font-semibold text-neutral-900 dark:text-white">
+                  {upgradeWelcomeData.billingCycle === 'annual' ? 'Annual' : 'Monthly'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between pt-1 border-t border-neutral-200/60 dark:border-neutral-700/40">
+                <span className="text-neutral-500 dark:text-neutral-400">Security:</span>
+                <span className="font-medium text-emerald-600 dark:text-emerald-400 text-[11px] text-right">
+                  Zero-trust encryption & real-time malware defense active
+                </span>
+              </div>
+            </div>
+
+            {/* Footer Buttons */}
+            <div className="flex flex-col-reverse sm:flex-row items-center justify-end gap-2.5 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setUpgradeWelcomeData(null);
+                  setViewMode('settings');
+                  navigate('/dashboard?view=settings');
+                }}
+                className="w-full sm:w-auto px-4 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-xs sm:text-sm font-medium cursor-pointer transition-colors text-center"
+              >
+                View Invoice & Plan
+              </button>
+              <button
+                type="button"
+                onClick={() => setUpgradeWelcomeData(null)}
+                className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 hover:opacity-90 text-xs sm:text-sm font-semibold shadow-sm cursor-pointer transition-opacity text-center"
+              >
+                Start Using Vault
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

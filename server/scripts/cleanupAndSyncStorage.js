@@ -95,8 +95,7 @@ async function executeSync() {
     const stats = await File.aggregate([
       {
         $match: {
-          isTrash: { $ne: true },
-          securityStatus: { $ne: 'threat_purged' },
+          securityStatus: { $nin: ['threat_purged', 'pending_scan'] },
           $or: [{ userId: rawId }, { user: rawId }, { userId: String(rawId) }, { user: String(rawId) }]
         }
       },

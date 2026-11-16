@@ -14,14 +14,20 @@ const {
   UploadPartCommand,
   CompleteMultipartUploadCommand,
   AbortMultipartUploadCommand,
+  ListMultipartUploadsCommand,
 } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const User = require('../models/User');
 const File = require('../models/File');
 const Folder = require('../models/Folder');
 const { buildTenantQuery } = require('../utils/tenantQuery');
+const { permanentlyDeleteS3Keys, purgeAllVersionsUnderPrefix } = require('../utils/s3Delete');
 const { applyCdnToUrl } = require('../utils/cdnHelper');
-const { permanentlyDeleteS3Keys } = require('../utils/s3Delete');
+
+// In-memory cache for presigned preview/access URLs (30-minute TTL)
+// Key: `${file._id}:${file.s3Key}` -> Value: { url: string, expiresAt: number }
+const accessUrlCache = new Map();
+const ACCESS_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
 const escapeRegex = (string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -45,148 +51,247 @@ const s3Client = new S3Client({
 // Auth Middleware for modular files route
 const authMiddleware = require('../middleware/auth');
 
-// Helper to recursively collect all descendant subfolder IDs
-async function getDescendantFolderIds(folderId, userMatch) {
-  const visited = new Set([String(folderId)]);
-  let currentLevelIds = [folderId];
+// Strict sanitization helper: converts input into verified non-null ObjectIds
+function toValidObjectIds(rawIds) {
+  return (Array.isArray(rawIds) ? rawIds : [rawIds])
+    .filter((id) => id && mongoose.Types.ObjectId.isValid(String(id)))
+    .map((id) => new mongoose.Types.ObjectId(String(id)));
+}
+
+// Single-Query BFS Descendant Lookup:
+// Fetches the user's folders in 1 lean query and traverses in-memory via Set + queue
+async function getDescendantFolderIds(folderId, userMatch, includeTrash = false) {
+  if (!folderId || !mongoose.Types.ObjectId.isValid(String(folderId))) return [];
+  const targetIdStr = String(folderId);
+
+  const folderQuery = { ...userMatch };
+  if (!includeTrash) {
+    folderQuery.isTrash = { $ne: true };
+  }
+
+  // Lean single DB query for user folders
+  const allUserFolders = await Folder.find(folderQuery)
+    .select('_id parentId parentFolder')
+    .lean();
+
+  // In-memory adjacency map: parentId -> [childId]
+  const parentToChildren = new Map();
+  for (const f of allUserFolders) {
+    const parent = f.parentId || f.parentFolder;
+    if (parent) {
+      const pStr = String(parent);
+      if (!parentToChildren.has(pStr)) {
+        parentToChildren.set(pStr, []);
+      }
+      parentToChildren.get(pStr).push(f._id);
+    }
+  }
+
+  // BFS traversal using queue and visited set
+  const visited = new Set([targetIdStr]);
+  const queue = [targetIdStr];
   const allDescendants = [];
 
-  while (currentLevelIds.length > 0) {
-    const objectIds = currentLevelIds
-      .filter((id) => mongoose.Types.ObjectId.isValid(String(id)))
-      .map((id) => new mongoose.Types.ObjectId(String(id)));
-    const stringIds = currentLevelIds.map((id) => String(id));
-
-    const children = await Folder.find({
-      $and: [
-        userMatch,
-        {
-          isTrash: { $ne: true },
-          $or: [
-            { parentId: { $in: objectIds } },
-            { parentFolder: { $in: objectIds } },
-            { parentId: { $in: stringIds } },
-            { parentFolder: { $in: stringIds } },
-          ],
-        },
-      ],
-    })
-      .select('_id')
-      .lean();
-
-    const nextLevelIds = [];
-    for (const child of children) {
-      const childIdStr = String(child._id);
+  while (queue.length > 0) {
+    const currentId = queue.shift();
+    const children = parentToChildren.get(currentId) || [];
+    for (const childId of children) {
+      const childIdStr = String(childId);
       if (!visited.has(childIdStr)) {
         visited.add(childIdStr);
-        allDescendants.push(child._id);
-        nextLevelIds.push(child._id);
+        allDescendants.push(childId);
+        queue.push(childIdStr);
       }
     }
-    currentLevelIds = nextLevelIds;
   }
 
   return allDescendants;
 }
 
-// Purge a single file from S3 & DB if not restored
+// Active purge timer registry: Map<string, NodeJS.Timeout>
+const activePurgeTimers = new Map();
+
+/**
+ * Safely cancels a running deletion timer if the user restores the file/folder
+ */
+const cancelPurgeTimer = (id) => {
+  const idStr = String(id);
+  if (activePurgeTimers.has(idStr)) {
+    clearTimeout(activePurgeTimers.get(idStr));
+    activePurgeTimers.delete(idStr);
+  }
+};
+
+// 1. Single File Purge Scheduler
 const scheduleFilePurge = (fileId, rawUserId, delayMs = 12000) => {
-  setTimeout(async () => {
+  if (!fileId || !mongoose.Types.ObjectId.isValid(String(fileId))) return;
+  const fileIdStr = String(fileId);
+  cancelPurgeTimer(fileIdStr);
+
+  const purgeScheduledAt = Date.now();
+
+  const timer = setTimeout(async () => {
+    activePurgeTimers.delete(fileIdStr);
     try {
-      const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || 'cloudguard-vault-mumbai-2026';
       const userMatch = { $or: [{ userId: rawUserId }, { user: rawUserId }] };
       const file = await File.findOne({ _id: fileId, isTrash: true, ...userMatch });
-      if (!file) return; // Restored via Undo or already removed
+      if (!file) return;
 
-      const keysToPurge = [file.s3Key, file.thumbnailKey].filter(Boolean);
-      if (keysToPurge.length > 0) {
-        await permanentlyDeleteS3Keys(s3Client, bucket, keysToPurge).catch(e => console.warn(`[S3 Purge Warning] ${e.message}`));
+      // Timestamp Guard: If the file was restored and re-deleted later, abort this stale timer
+      if (file.trashedAt && new Date(file.trashedAt).getTime() > purgeScheduledAt) {
+        return;
       }
 
-      await File.deleteOne({ _id: file._id });
+      const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || 'cloudguard-vault-b2';
+      const userPrefix = `uploads/${String(rawUserId)}/`;
+      const thumbPrefix = `thumbnails/${String(rawUserId)}/`;
+      const rawKeys = [file.s3Key, file.thumbnailKey].filter(Boolean);
+      const keysToPurge = rawKeys.filter((k) => k.startsWith(userPrefix) || k.startsWith(thumbPrefix));
+
+      if (keysToPurge.length > 0) {
+        await permanentlyDeleteS3Keys(s3Client, bucket, keysToPurge, rawUserId).catch((e) => console.warn(`[S3 Purge Warning] ${e.message}`));
+      }
+
+      await File.deleteOne({ _id: file._id, ...userMatch });
       console.log(`[Auto-Purge] Un-restored file "${file.name}" permanently deleted from S3 & DB.`);
     } catch (err) {
       console.error('[Deferred File Purge Error]:', err);
     }
   }, delayMs);
+
+  activePurgeTimers.set(fileIdStr, timer);
 };
 
-// Purge batch files & folders from S3 & DB if not restored
+// 2. Batch Purge Scheduler
 const scheduleBatchPurge = (fileIds = [], folderIds = [], rawUserId, delayMs = 12000) => {
-  setTimeout(async () => {
-    try {
-      const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || 'cloudguard-vault-mumbai-2026';
-      const userMatch = { $or: [{ userId: rawUserId }, { user: rawUserId }] };
+  const validFileIds = toValidObjectIds(fileIds);
+  const validFolderIds = toValidObjectIds(folderIds);
 
-      // A. Purge un-restored files
-      if (fileIds.length > 0) {
+  if (validFileIds.length === 0 && validFolderIds.length === 0) return;
+
+  const batchKey = `batch_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const purgeScheduledAt = Date.now();
+
+  // Register individual keys so restore-batch can cancel them
+  validFileIds.forEach((id) => cancelPurgeTimer(id));
+  validFolderIds.forEach((id) => cancelPurgeTimer(id));
+
+  const timer = setTimeout(async () => {
+    activePurgeTimers.delete(batchKey);
+    validFileIds.forEach((id) => activePurgeTimers.delete(String(id)));
+    validFolderIds.forEach((id) => activePurgeTimers.delete(String(id)));
+
+    try {
+      const userMatch = { $or: [{ userId: rawUserId }, { user: rawUserId }] };
+      const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || 'cloudguard-vault-b2';
+      const userPrefix = `uploads/${String(rawUserId)}/`;
+      const thumbPrefix = `thumbnails/${String(rawUserId)}/`;
+
+      // Purge un-restored files
+      if (validFileIds.length > 0) {
         const trashedFiles = await File.find({
-          _id: { $in: fileIds },
+          _id: { $in: validFileIds },
           isTrash: true,
           ...userMatch,
         });
+
+        // Only purge files whose trashedAt is not newer than this timer
+        const validToPurge = trashedFiles.filter(
+          (f) => !f.trashedAt || new Date(f.trashedAt).getTime() <= purgeScheduledAt
+        );
 
         const keys = [];
-        for (const f of trashedFiles) {
-          if (f.s3Key) keys.push(f.s3Key);
-          if (f.thumbnailKey) keys.push(f.thumbnailKey);
-        }
+        validToPurge.forEach((f) => {
+          if (f.s3Key && (f.s3Key.startsWith(userPrefix) || f.s3Key.startsWith(thumbPrefix))) keys.push(f.s3Key);
+          if (f.thumbnailKey && (f.thumbnailKey.startsWith(userPrefix) || f.thumbnailKey.startsWith(thumbPrefix))) keys.push(f.thumbnailKey);
+        });
 
         if (keys.length > 0) {
-          await permanentlyDeleteS3Keys(s3Client, bucket, keys).catch(e => console.warn(`[S3 Batch Purge Warning] ${e.message}`));
+          await permanentlyDeleteS3Keys(s3Client, bucket, keys, rawUserId).catch((e) => console.warn(`[S3 Batch Purge Warning] ${e.message}`));
         }
 
-        await File.deleteMany({
-          _id: { $in: trashedFiles.map(f => f._id) },
-          ...userMatch,
-        });
+        if (validToPurge.length > 0) {
+          await File.deleteMany({
+            _id: { $in: validToPurge.map((f) => f._id) },
+            ...userMatch,
+          });
+        }
       }
 
-      // B. Purge un-restored folders & their child files
-      if (folderIds.length > 0) {
+      // Purge un-restored folders & children
+      if (validFolderIds.length > 0) {
         const trashedFolders = await Folder.find({
-          _id: { $in: folderIds },
+          _id: { $in: validFolderIds },
           isTrash: true,
           ...userMatch,
         });
 
-        if (trashedFolders.length > 0) {
-          const allFolderIds = trashedFolders.map(f => f._id);
-          if (typeof getDescendantFolderIds === 'function') {
-            for (const f of trashedFolders) {
-              const desc = await getDescendantFolderIds(f._id, userMatch);
-              allFolderIds.push(...desc);
+        const validFolders = trashedFolders.filter(
+          (f) => !f.trashedAt || new Date(f.trashedAt).getTime() <= purgeScheduledAt
+        );
+
+        if (validFolders.length > 0) {
+          const allFolderObjectIds = toValidObjectIds(validFolders.map((f) => f._id));
+          for (const f of validFolders) {
+            const desc = await getDescendantFolderIds(f._id, userMatch);
+            allFolderObjectIds.push(...desc);
+          }
+
+          const uniqueFolderObjectIds = toValidObjectIds(allFolderObjectIds);
+          if (uniqueFolderObjectIds.length > 0) {
+            const uniqueFolderStringIds = uniqueFolderObjectIds.map((id) => String(id));
+
+            const childFiles = await File.find({
+              $and: [
+                userMatch,
+                {
+                  $or: [
+                    { folder: { $in: uniqueFolderObjectIds } },
+                    { folderId: { $in: uniqueFolderObjectIds } },
+                    { folder: { $in: uniqueFolderStringIds } },
+                    { folderId: { $in: uniqueFolderStringIds } },
+                  ],
+                },
+                { isTrash: true },
+              ],
+            });
+
+            const childKeys = [];
+            childFiles.forEach((cf) => {
+              if (cf.s3Key && (cf.s3Key.startsWith(userPrefix) || cf.s3Key.startsWith(thumbPrefix))) childKeys.push(cf.s3Key);
+              if (cf.thumbnailKey && (cf.thumbnailKey.startsWith(userPrefix) || cf.thumbnailKey.startsWith(thumbPrefix))) childKeys.push(cf.thumbnailKey);
+            });
+
+            if (childKeys.length > 0) {
+              await permanentlyDeleteS3Keys(s3Client, bucket, childKeys, rawUserId).catch((e) => console.warn(`[S3 Folder Child Purge Warning] ${e.message}`));
             }
+
+            await File.deleteMany({
+              $and: [
+                userMatch,
+                {
+                  $or: [
+                    { folder: { $in: uniqueFolderObjectIds } },
+                    { folderId: { $in: uniqueFolderObjectIds } },
+                    { folder: { $in: uniqueFolderStringIds } },
+                    { folderId: { $in: uniqueFolderStringIds } },
+                  ],
+                },
+              ],
+            });
+
+            await Folder.deleteMany({ _id: { $in: uniqueFolderObjectIds }, ...userMatch });
           }
-
-          const childFiles = await File.find({
-            $or: [{ folder: { $in: allFolderIds } }, { folderId: { $in: allFolderIds } }],
-            isTrash: true,
-            ...userMatch,
-          });
-
-          const childKeys = [];
-          for (const cf of childFiles) {
-            if (cf.s3Key) childKeys.push(cf.s3Key);
-            if (cf.thumbnailKey) childKeys.push(cf.thumbnailKey);
-          }
-
-          if (childKeys.length > 0) {
-            await permanentlyDeleteS3Keys(s3Client, bucket, childKeys).catch(e => console.warn(`[S3 Folder Child Purge Warning] ${e.message}`));
-          }
-
-          await File.deleteMany({
-            $or: [{ folder: { $in: allFolderIds } }, { folderId: { $in: allFolderIds } }],
-            ...userMatch,
-          });
-
-          await Folder.deleteMany({ _id: { $in: allFolderIds }, ...userMatch });
         }
       }
     } catch (err) {
       console.error('[Deferred Batch Purge Error]:', err);
     }
   }, delayMs);
+
+  activePurgeTimers.set(batchKey, timer);
+  validFileIds.forEach((id) => activePurgeTimers.set(String(id), timer));
+  validFolderIds.forEach((id) => activePurgeTimers.set(String(id), timer));
 };
 
 // Helper for direct Node-level MalwareBazaar check
@@ -262,21 +367,57 @@ router.get('/:id/access', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'S3 Key missing' });
     }
 
+    const isDownload = req.query.download === 'true';
+    const cacheKey = `${file._id}:${targetKey}`;
+
+    if (!isDownload) {
+      const cached = accessUrlCache.get(cacheKey);
+      if (cached && cached.expiresAt > Date.now()) {
+        return res.json({
+          success: true,
+          accessUrl: cached.url,
+          downloadUrl: cached.url,
+          url: cached.url,
+          file,
+        });
+      }
+    }
+
     const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
+    const disposition = isDownload
+      ? `attachment; filename="${encodeURIComponent(file.name || file.originalName || 'file')}"`
+      : `inline; filename="${encodeURIComponent(file.name || file.originalName || 'file')}"`;
+
     const command = new GetObjectCommand({
       Bucket: bucket,
       Key: targetKey,
-      ResponseContentDisposition: `inline; filename="${encodeURIComponent(file.name || file.originalName || 'file')}"`,
+      ResponseContentDisposition: disposition,
     });
 
-    const accessUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
-    const finalAccessUrl = applyCdnToUrl(accessUrl);
+    // 2-hour signature validity (7200 seconds) so Cloudflare and browser can cache responses
+    const rawUrl = await getSignedUrl(s3Client, command, { expiresIn: 7200 });
+    const accessUrl = applyCdnToUrl(rawUrl);
+
+    if (!isDownload) {
+      accessUrlCache.set(cacheKey, {
+        url: accessUrl,
+        expiresAt: Date.now() + ACCESS_CACHE_TTL_MS, // 30-minute TTL
+      });
+
+      // Periodic memory guard
+      if (accessUrlCache.size > 2000) {
+        const now = Date.now();
+        for (const [k, v] of accessUrlCache.entries()) {
+          if (v.expiresAt <= now) accessUrlCache.delete(k);
+        }
+      }
+    }
 
     return res.json({
       success: true,
-      accessUrl: finalAccessUrl,
-      downloadUrl: finalAccessUrl,
-      url: finalAccessUrl,
+      accessUrl,
+      downloadUrl: accessUrl,
+      url: accessUrl,
       file,
     });
   } catch (err) {
@@ -404,13 +545,70 @@ router.post('/presigned-url', authMiddleware, async (req, res) => {
     }
 
     // 2. Storage Quota Enforcement
-    const user = await User.findById(userId).select('storageUsed storageLimit').lean();
+    const user = await User.findById(userId).select('plan trialExpiresAt storageUsed storageLimit subscription').lean();
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    const currentUsed = user.storageUsed || 0;
-    const limit = user.storageLimit || 5368709120; // 5 GB fallback default
-    if (currentUsed + Number(fileSize) > limit) {
-      return res.status(403).json({ error: 'Storage quota exceeded. Upgrade required.' });
+    const now = new Date();
+    if ((user.plan === 'trial' || user.subscription?.planId === 'trial') && user.trialExpiresAt && new Date(user.trialExpiresAt) <= now) {
+      return res.status(403).json({
+        error: 'Your 14-day evaluation trial has ended. Select a plan to restore upload privileges.',
+        code: 'TRIAL_EXPIRED'
+      });
+    }
+
+    if (user.subscription?.status === 'past_due') {
+      return res.status(403).json({
+        error: 'Your vault is in a read-only grace period. Renew or upgrade your plan to resume uploads.',
+        code: 'SUBSCRIPTION_PAST_DUE'
+      });
+    }
+
+    if (user.subscription?.status === 'expired') {
+      return res.status(403).json({
+        error: 'Your subscription has expired. Select a plan on the Pricing page to resume uploading.',
+        code: 'SUBSCRIPTION_EXPIRED'
+      });
+    }
+
+    // Storage Quota Enforcement (with in-flight pending_scan quota accounting)
+    const uploadSize = Number(fileSize);
+    const storageLimit = user.storageLimit || 5368709120;
+    const thirtyMinsAgo = new Date(Date.now() - 30 * 60 * 1000);
+    const pendingAggregation = await File.aggregate([
+      {
+        $match: {
+          $or: [
+            { userId: new mongoose.Types.ObjectId(String(userId)) },
+            { user: new mongoose.Types.ObjectId(String(userId)) },
+          ],
+          securityStatus: 'pending_scan',
+          createdAt: { $gte: thirtyMinsAgo },
+        },
+      },
+      { $group: { _id: null, totalPending: { $sum: '$size' } } },
+    ]);
+    const inFlightPendingBytes = pendingAggregation.length > 0 ? (pendingAggregation[0].totalPending || 0) : 0;
+    const effectiveUsed = (user.storageUsed || 0) + inFlightPendingBytes;
+
+    if (effectiveUsed + uploadSize > storageLimit) {
+      // Determine suggested upgrade tier based on current quota
+      let suggestedUpgrade = 'tier_100gb';
+      if (storageLimit >= 200 * 1024 * 1024 * 1024) {
+        suggestedUpgrade = null; // Max tier reached
+      } else if (storageLimit >= 100 * 1024 * 1024 * 1024) {
+        suggestedUpgrade = 'tier_200gb';
+      }
+
+      return res.status(403).json({
+        error: 'Storage quota exceeded. Please upgrade your vault to complete this upload.',
+        code: 'QUOTA_EXCEEDED',
+        storageUsed: user.storageUsed || 0,
+        inFlightPendingBytes,
+        effectiveUsed,
+        storageLimit,
+        requiredBytes: uploadSize,
+        suggestedUpgrade
+      });
     }
 
     const sanitized = String(fileName).replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -460,7 +658,7 @@ router.post('/presigned-url', authMiddleware, async (req, res) => {
   }
 });
 
-// POST /api/files/multipart/init — Initialize multipart upload for large files (>= 100 MB)
+// POST /api/files/multipart/init — Initialize multipart upload for large files (>= 25 MB)
 router.post('/multipart/init', authMiddleware, async (req, res) => {
   try {
     const { fileName, fileSize, mimeType, folderId, folder } = req.body;
@@ -471,14 +669,69 @@ router.post('/multipart/init', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'Filename and file size are required' });
     }
 
-    // 1. Pre-flight storage quota check (identical to single-PUT)
-    const user = await User.findById(userId).select('storageUsed storageLimit').lean();
+    // 1. Pre-flight storage quota and write-lock checks (identical to single-PUT)
+    const user = await User.findById(userId).select('plan trialExpiresAt storageUsed storageLimit subscription').lean();
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    const currentUsed = user.storageUsed || 0;
+    const now = new Date();
+    if ((user.plan === 'trial' || user.subscription?.planId === 'trial') && user.trialExpiresAt && new Date(user.trialExpiresAt) <= now) {
+      return res.status(403).json({
+        error: 'Your 14-day evaluation trial has ended. Select a plan to restore upload privileges.',
+        code: 'TRIAL_EXPIRED'
+      });
+    }
+
+    if (user.subscription?.status === 'past_due') {
+      return res.status(403).json({
+        error: 'Your vault is in a read-only grace period. Renew or upgrade your plan to resume uploads.',
+        code: 'SUBSCRIPTION_PAST_DUE'
+      });
+    }
+
+    if (user.subscription?.status === 'expired') {
+      return res.status(403).json({
+        error: 'Your subscription has expired. Select a plan on the Pricing page to resume uploading.',
+        code: 'SUBSCRIPTION_EXPIRED'
+      });
+    }
+
+    const numericFileSize = Number(fileSize);
     const limit = user.storageLimit || 5368709120;
-    if (currentUsed + Number(fileSize) > limit) {
-      return res.status(403).json({ error: 'Storage quota exceeded. Upgrade required.' });
+    const thirtyMinsAgo = new Date(Date.now() - 30 * 60 * 1000);
+    const pendingAggregation = await File.aggregate([
+      {
+        $match: {
+          $or: [
+            { userId: new mongoose.Types.ObjectId(String(userId)) },
+            { user: new mongoose.Types.ObjectId(String(userId)) },
+          ],
+          securityStatus: 'pending_scan',
+          createdAt: { $gte: thirtyMinsAgo },
+        },
+      },
+      { $group: { _id: null, totalPending: { $sum: '$size' } } },
+    ]);
+    const inFlightPendingBytes = pendingAggregation.length > 0 ? (pendingAggregation[0].totalPending || 0) : 0;
+    const effectiveUsed = (user.storageUsed || 0) + inFlightPendingBytes;
+
+    if (effectiveUsed + numericFileSize > limit) {
+      let suggestedUpgrade = 'tier_100gb';
+      if (limit >= 200 * 1024 * 1024 * 1024) {
+        suggestedUpgrade = null;
+      } else if (limit >= 100 * 1024 * 1024 * 1024) {
+        suggestedUpgrade = 'tier_200gb';
+      }
+
+      return res.status(403).json({
+        error: 'Storage quota exceeded. Upgrade required.',
+        code: 'QUOTA_EXCEEDED',
+        storageUsed: user.storageUsed || 0,
+        inFlightPendingBytes,
+        effectiveUsed,
+        storageLimit: limit,
+        requiredBytes: numericFileSize,
+        suggestedUpgrade,
+      });
     }
 
     // 2. Key generation & MongoDB pre-creation
@@ -518,9 +771,14 @@ router.post('/multipart/init', authMiddleware, async (req, res) => {
 
     const { UploadId } = await s3Client.send(createCmd);
 
-    // 4. Generate 50 MB chunk presigned URLs (4-hour validity for multi-GB transfers)
-    const partSize = 50 * 1024 * 1024; // 50 MB
-    const totalParts = Math.ceil(Number(fileSize) / partSize);
+    // 4. Adaptive part sizing (>= 10 MB: strictly above Backblaze B2's 5 MB minimum, well under 10k parts)
+    let partSize = 10 * 1024 * 1024; // 10 MB for files < 250 MB
+    if (numericFileSize >= 1024 * 1024 * 1024) {
+      partSize = 50 * 1024 * 1024; // 50 MB for files >= 1 GB
+    } else if (numericFileSize >= 250 * 1024 * 1024) {
+      partSize = 25 * 1024 * 1024; // 25 MB for files 250 MB to < 1 GB
+    }
+    const totalParts = Math.ceil(numericFileSize / partSize);
 
     const partUrls = await Promise.all(
       Array.from({ length: totalParts }, async (_, idx) => {
@@ -563,6 +821,30 @@ router.post('/multipart/complete', authMiddleware, async (req, res) => {
     const file = await File.findOne({ _id: fileId, userId });
     if (!file) return res.status(404).json({ error: 'File record not found' });
 
+    // Write-lock enforcement
+    const user = await User.findById(userId).select('plan trialExpiresAt subscription').lean();
+    if (user) {
+      const now = new Date();
+      if ((user.plan === 'trial' || user.subscription?.planId === 'trial') && user.trialExpiresAt && new Date(user.trialExpiresAt) <= now) {
+        return res.status(403).json({
+          error: 'Your 14-day evaluation trial has ended. Select a plan to restore upload privileges.',
+          code: 'TRIAL_EXPIRED',
+        });
+      }
+      if (user.subscription?.status === 'past_due') {
+        return res.status(403).json({
+          error: 'Your vault is in a read-only grace period. Renew or upgrade your plan to resume uploads.',
+          code: 'SUBSCRIPTION_PAST_DUE',
+        });
+      }
+      if (user.subscription?.status === 'expired') {
+        return res.status(403).json({
+          error: 'Your subscription has expired. Select a plan on the Pricing page to resume uploading.',
+          code: 'SUBSCRIPTION_EXPIRED',
+        });
+      }
+    }
+
     // S3 and Backblaze B2 strictly require parts sorted ascending by PartNumber
     const sortedParts = [...parts]
       .sort((a, b) => Number(a.PartNumber) - Number(b.PartNumber))
@@ -588,45 +870,166 @@ router.post('/multipart/complete', authMiddleware, async (req, res) => {
   }
 });
 
-// POST /api/files/multipart/abort — Clean up incomplete chunks & pending DB record on failure/cancel
-router.post('/multipart/abort', authMiddleware, async (req, res) => {
-  try {
-    const { fileId, s3Key, uploadId } = req.body;
-    const userId = req.user.id || req.user._id;
+// In-memory set lock to serialize and coalesce concurrent abort calls for the same s3Key
+const activeAborts = new Set();
 
-    if (s3Key && uploadId) {
-      const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
-      await s3Client
-        .send(
+// POST /api/files/cancel-upload & POST /api/files/multipart/abort — Clean up S3 objects & pending DB records
+const handleCancelUpload = async (req, res) => {
+  const { fileId, s3Key, uploadId } = req.body;
+  const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
+  const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
+
+  // Verify ownership and key isolation
+  const userMatch = buildTenantQuery(rawUserId);
+
+  // Look up the File document before deleting to obtain s3Key and thumbnailKey
+  let existingFile = null;
+  const lookupFilter = {
+    ...userMatch,
+    ...(fileId && mongoose.Types.ObjectId.isValid(String(fileId))
+      ? { _id: fileId }
+      : (s3Key ? { s3Key } : {})),
+  };
+  if (lookupFilter._id || lookupFilter.s3Key) {
+    try {
+      existingFile = await File.findOne(lookupFilter).select('s3Key thumbnailKey securityStatus').lean();
+    } catch (e) {
+      // ignore lookup error
+    }
+  }
+
+  const effectiveS3Key = s3Key || existingFile?.s3Key;
+  const lockKey = effectiveS3Key || (fileId ? String(fileId) : null);
+
+  // In-memory lock: coalesce concurrent abort calls for the same key
+  if (lockKey && activeAborts.has(lockKey)) {
+    return res.status(200).json({ success: true, message: 'Abort already in progress' });
+  }
+
+  if (lockKey) {
+    activeAborts.add(lockKey);
+  }
+
+  try {
+    // 1. Abort explicit uploadId AND any open multipart uploads matching Prefix: s3Key via ListMultipartUploadsCommand + AbortMultipartUploadCommand
+    if (effectiveS3Key && uploadId) {
+      try {
+        await s3Client.send(
           new AbortMultipartUploadCommand({
             Bucket: bucket,
-            Key: s3Key,
+            Key: effectiveS3Key,
             UploadId: uploadId,
           })
-        )
-        .catch((e) => console.warn('[Multipart Abort S3 Notice]:', e.message));
+        );
+      } catch (e) {
+        if (e.name !== 'NoSuchUpload' && e.code !== 'NoSuchUpload') {
+          console.warn('[Upload Abort Multipart S3 Notice]:', e.message);
+        }
+      }
     }
 
-    if (fileId) {
-      await File.deleteOne({ _id: fileId, userId, securityStatus: 'pending_scan' });
+    if (effectiveS3Key) {
+      const userPrefix = `uploads/${String(rawUserId)}/`;
+      if (effectiveS3Key.startsWith(userPrefix)) {
+        try {
+          const listMultiRes = await s3Client.send(
+            new ListMultipartUploadsCommand({
+              Bucket: bucket,
+              Prefix: effectiveS3Key,
+            })
+          );
+          if (Array.isArray(listMultiRes.Uploads)) {
+            for (const u of listMultiRes.Uploads) {
+              if (u.Key === effectiveS3Key && u.UploadId && u.UploadId !== uploadId) {
+                try {
+                  await s3Client.send(
+                    new AbortMultipartUploadCommand({
+                      Bucket: bucket,
+                      Key: u.Key,
+                      UploadId: u.UploadId,
+                    })
+                  );
+                } catch (abortErr) {
+                  // Ignore NoSuchUpload
+                }
+              }
+            }
+          }
+        } catch (listErr) {
+          console.warn('[Multipart Fallback List Notice]:', listErr.message);
+        }
+      }
+    }
+
+    // 2. Run await permanentlyDeleteS3Keys(keysToPurge, rawUserId) immediately
+    const keysToPurge = Array.from(
+      new Set([s3Key, existingFile?.s3Key, existingFile?.thumbnailKey].filter(Boolean))
+    );
+    if (keysToPurge.length > 0) {
+      try {
+        await permanentlyDeleteS3Keys(keysToPurge, rawUserId);
+      } catch (delErr) {
+        console.warn('[Upload Abort S3 Purge Notice]:', delErr.message);
+      }
+    }
+
+    // 3. Delete any pending_scan MongoDB records for that fileId / s3Key
+    const deleteFilter = {
+      ...userMatch,
+      securityStatus: 'pending_scan',
+      ...(fileId && mongoose.Types.ObjectId.isValid(String(fileId))
+        ? { _id: fileId }
+        : (effectiveS3Key ? { s3Key: effectiveS3Key } : {})),
+    };
+
+    if (deleteFilter._id || deleteFilter.s3Key) {
+      await File.deleteMany(deleteFilter);
+    }
+
+    // 4. Late-Settling B2 Pod Sweep:
+    // Schedule a non-blocking sweep 2000ms after abort so any 0 bytes hide marker created by
+    // Backblaze B2's storage pod as in-flight TCP chunks drop is automatically purged via VersionId
+    if (keysToPurge.length > 0) {
+      setTimeout(async () => {
+        try {
+          await permanentlyDeleteS3Keys(keysToPurge, rawUserId);
+        } catch (sweepErr) {
+          // non-blocking cleanup
+        } finally {
+          if (lockKey) {
+            activeAborts.delete(lockKey);
+          }
+        }
+      }, 2000);
+    } else {
+      if (lockKey) {
+        activeAborts.delete(lockKey);
+      }
     }
 
     return res.status(200).json({ success: true });
   } catch (err) {
-    console.error('[Multipart Abort Error]:', err);
-    return res.status(500).json({ error: 'Failed to abort multipart upload' });
+    if (lockKey) {
+      activeAborts.delete(lockKey);
+    }
+    console.error('[Cancel Upload Error]:', err);
+    return res.status(500).json({ error: 'Failed to cancel upload' });
   }
-});
+};
+
+router.post('/cancel-upload', authMiddleware, handleCancelUpload);
+router.post('/multipart/abort', authMiddleware, handleCancelUpload);
 
 // -------------------------------------------------------------
 // 4. FINALIZE UPLOAD & THREAT AUTO-DELETE PIPELINE
 // -------------------------------------------------------------
 router.post('/finalize-upload', authMiddleware, async (req, res) => {
+  let file;
   try {
     const { fileId, sha256, thumbnail } = req.body;
     const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
 
-    const file = await File.findOne(buildTenantQuery(rawUserId, { _id: fileId }));
+    file = await File.findOne(buildTenantQuery(rawUserId, { _id: fileId }));
     if (!file) return res.status(404).json({ error: 'File record not found' });
 
     const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
@@ -647,9 +1050,46 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
 
     // Enforce storage quota against actual S3 bytes
     const user = await User.findById(rawUserId);
+    const now = new Date();
+    if (
+      user &&
+      (user.plan === 'trial' || user.subscription?.planId === 'trial') &&
+      user.trialExpiresAt &&
+      new Date(user.trialExpiresAt) <= now
+    ) {
+      try {
+        await permanentlyDeleteS3Keys([file.s3Key, file.thumbnailKey].filter(Boolean), rawUserId);
+      } catch (delErr) {}
+      await File.deleteOne({ _id: file._id });
+      return res.status(403).json({
+        error: 'Your 14-day evaluation trial has ended. Select a plan to restore upload privileges.',
+        code: 'TRIAL_EXPIRED',
+      });
+    }
+    if (user && user.subscription?.status === 'past_due') {
+      try {
+        await permanentlyDeleteS3Keys([file.s3Key, file.thumbnailKey].filter(Boolean), rawUserId);
+      } catch (delErr) {}
+      await File.deleteOne({ _id: file._id });
+      return res.status(403).json({
+        success: false,
+        error: 'Uploads locked: subscription is past due or over quota.',
+        code: 'SUBSCRIPTION_PAST_DUE'
+      });
+    }
+    if (user && user.subscription?.status === 'expired') {
+      try {
+        await permanentlyDeleteS3Keys([file.s3Key, file.thumbnailKey].filter(Boolean), rawUserId);
+      } catch (delErr) {}
+      await File.deleteOne({ _id: file._id });
+      return res.status(403).json({
+        error: 'Your subscription has expired. Select a plan on the Pricing page to resume uploading.',
+        code: 'SUBSCRIPTION_EXPIRED'
+      });
+    }
     if (user && user.storageUsed + actualBytes > user.storageLimit) {
       try {
-        await permanentlyDeleteS3Keys(s3Client, bucket, file.s3Key);
+        await permanentlyDeleteS3Keys([file.s3Key, file.thumbnailKey].filter(Boolean), rawUserId);
       } catch (delErr) {}
       await File.deleteOne({ _id: file._id });
       return res.status(403).json({ success: false, error: 'Storage limit exceeded by uploaded file.' });
@@ -693,22 +1133,43 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
     // 0. STRICT CRYPTOGRAPHIC WHITELIST: Antigravity ONLY via verified SHA-256
     if (normalizedHash && ANTIGRAVITY_HASH_WHITELIST.has(normalizedHash)) {
       console.log(`[CloudGuard Security] Verified clean via Antigravity SHA-256 whitelist: ${normalizedHash}`);
-      const previousSecurityStatus = file.securityStatus;
-      file.securityStatus = 'clean';
-      file.isMalicious = false;
-      file.status = 'safe';
-      await file.save();
+      
+      const claimedFile = await File.findOneAndUpdate(
+        buildTenantQuery(rawUserId, { _id: file._id, securityStatus: 'pending_scan' }),
+        {
+          $set: {
+            securityStatus: 'clean',
+            isMalicious: false,
+            status: 'safe',
+            size: actualBytes,
+            ...(file.thumbnailKey ? { thumbnailKey: file.thumbnailKey } : {}),
+          },
+        },
+        { new: true }
+      );
 
-      if (previousSecurityStatus !== 'clean') {
-        await User.findByIdAndUpdate(rawUserId, {
-          $inc: { storageUsed: file.size },
+      if (claimedFile) {
+        const u = await User.findByIdAndUpdate(
+          rawUserId,
+          { $inc: { storageUsed: claimedFile.size } },
+          { new: true }
+        );
+        if (u && u.subscription) {
+          u.subscription.peakStorageBytes = Math.max(u.subscription?.peakStorageBytes || 0, u.storageUsed);
+          await u.save();
+        }
+        return res.status(200).json({
+          success: true,
+          isMalicious: false,
+          file: claimedFile,
         });
       }
 
+      const existingFile = await File.findOne(buildTenantQuery(rawUserId, { _id: file._id }));
       return res.status(200).json({
         success: true,
         isMalicious: false,
-        file,
+        file: existingFile || file,
       });
     }
 
@@ -762,7 +1223,7 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
         ) {
           console.log(`[CloudGuard Security] Threat intercepted: EICAR content signature detected in ${file.s3Key}`);
           try {
-            await permanentlyDeleteS3Keys(s3Client, bucket, [file.s3Key, file.thumbnailKey].filter(Boolean));
+            await permanentlyDeleteS3Keys([file.s3Key, file.thumbnailKey].filter(Boolean), rawUserId);
           } catch (delErr) {
             console.error('[S3 Delete Error on EICAR]:', delErr.message);
           }
@@ -824,8 +1285,7 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
       console.log(`[CloudGuard Threat Alert] Purging malicious object from S3: ${file.s3Key} (${threatReason})`);
 
       try {
-        const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
-        await permanentlyDeleteS3Keys(s3Client, bucket, [file.s3Key, file.thumbnailKey].filter(Boolean));
+        await permanentlyDeleteS3Keys([file.s3Key, file.thumbnailKey].filter(Boolean), rawUserId);
       } catch (delErr) {
         console.error('[S3 Delete Error]:', delErr.message);
       }
@@ -853,28 +1313,61 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
       });
     }
 
-    // 5. Commit Clean File
-    const previousSecurityStatus = file.securityStatus;
-    file.securityStatus = 'clean';
-    file.isMalicious = false;
-    file.status = 'safe';
-    await file.save();
+    // 5. Commit Clean File with Atomic Claim
+    const claimedFile = await File.findOneAndUpdate(
+      buildTenantQuery(rawUserId, { _id: file._id, securityStatus: 'pending_scan' }),
+      {
+        $set: {
+          securityStatus: 'clean',
+          isMalicious: false,
+          status: 'safe',
+          size: actualBytes,
+          ...(file.thumbnailKey ? { thumbnailKey: file.thumbnailKey } : {}),
+        },
+      },
+      { new: true }
+    );
 
-    // Only increment quota if the file was not already clean
-    if (previousSecurityStatus !== 'clean') {
-      await User.findByIdAndUpdate(rawUserId || file.userId, {
-        $inc: { storageUsed: file.size },
+    if (claimedFile) {
+      const u = await User.findByIdAndUpdate(
+        rawUserId || file.userId,
+        { $inc: { storageUsed: claimedFile.size } },
+        { new: true }
+      );
+      if (u && u.subscription) {
+        u.subscription.peakStorageBytes = Math.max(u.subscription?.peakStorageBytes || 0, u.storageUsed);
+        await u.save();
+      }
+      return res.status(200).json({
+        success: true,
+        isMalicious: false,
+        file: claimedFile,
       });
     }
 
+    // Idempotency: If already claimed and marked clean by concurrent request, return clean record without double-incrementing quota
+    const existingFile = await File.findOne(buildTenantQuery(rawUserId, { _id: file._id }));
     return res.status(200).json({
       success: true,
       isMalicious: false,
-      file,
+      file: existingFile || file,
     });
   } catch (err) {
-    console.error('Finalize error:', err);
-    res.status(500).json({ error: 'Failed to finalize upload' });
+    console.error('[Finalize Upload Error] Initiating S3 rollback cleanup:', err.message);
+
+    // If s3Key exists in request or resolved file, purge the binary so an incomplete upload never remains orphaned
+    const targetS3Key = req.body?.s3Key || file?.s3Key;
+    if (targetS3Key) {
+      try {
+        const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
+        await permanentlyDeleteS3Keys(s3Client, bucket, targetS3Key);
+        console.log(`[Rollback] Removed orphaned S3 object: ${targetS3Key}`);
+      } catch (cleanupErr) {
+        console.warn('[Rollback Warning] Could not remove S3 object on finalize failure:', cleanupErr.message);
+      }
+    }
+
+    return res.status(500).json({ error: 'Failed to finalize upload' });
   }
 });
 
@@ -917,11 +1410,15 @@ router.delete('/purge-test-threats', authMiddleware, async (req, res) => {
 });
 
 // -------------------------------------------------------------
-// 6. SOFT-DELETE SINGLE FILE (12-SECOND GRACE PERIOD FOR UNDO)
+// 6. SOFT-DELETE SINGLE FILE (30-DAY BIN LIFECYCLE)
 // -------------------------------------------------------------
 const handleSingleFileDelete = async (req, res) => {
   try {
     const rawUserId = req.user.id || req.user._id || req.user.userId;
+    if (!req.params.id || !mongoose.Types.ObjectId.isValid(String(req.params.id))) {
+      return res.status(400).json({ error: 'Invalid file ID' });
+    }
+
     const file = await File.findOne({
       _id: req.params.id,
       $or: [{ userId: rawUserId }, { user: rawUserId }],
@@ -933,15 +1430,16 @@ const handleSingleFileDelete = async (req, res) => {
     file.trashedAt = new Date();
     await file.save();
 
-    // Deduct quota immediately
-    await User.findByIdAndUpdate(rawUserId, {
-      $inc: { storageUsed: -Math.abs(file.size || 0) },
+    // In 30-Day Bin lifecycle: items stay in Backblaze B2 and continue counting toward storage quota.
+    // Zero quota deduction and zero premature purge on soft-delete!
+
+    return res.status(200).json({
+      success: true,
+      message: 'Moved to Bin • Auto-deletes in 30 days',
+      fileId: file._id,
+      deletedId: file._id,
+      trashedAt: file.trashedAt,
     });
-
-    // Queue S3 & MongoDB purge after 12s grace window
-    scheduleFilePurge(file._id, rawUserId);
-
-    return res.status(200).json({ success: true, message: 'File deleted', fileId: file._id, deletedId: file._id });
   } catch (err) {
     console.error('Delete file error:', err);
     return res.status(500).json({ error: 'Failed to delete file' });
@@ -951,7 +1449,7 @@ const handleSingleFileDelete = async (req, res) => {
 router.delete('/:id', authMiddleware, handleSingleFileDelete);
 
 // -------------------------------------------------------------
-// 7. BATCH DELETE FILES & FOLDERS (12-SECOND GRACE PERIOD FOR UNDO)
+// 7. BATCH SOFT-DELETE FILES & FOLDERS (30-DAY BIN LIFECYCLE)
 // -------------------------------------------------------------
 const handleBatchDelete = async (req, res) => {
   try {
@@ -959,66 +1457,69 @@ const handleBatchDelete = async (req, res) => {
     const { fileIds = [], folderIds = [] } = req.body;
     const userMatch = { $or: [{ userId: rawUserId }, { user: rawUserId }] };
 
-    const validFileIds = (Array.isArray(fileIds) ? fileIds : [])
-      .filter((id) => id && mongoose.Types.ObjectId.isValid(String(id)))
-      .map((id) => new mongoose.Types.ObjectId(String(id)));
+    const validFileIds = toValidObjectIds(fileIds);
+    const validFolderIds = toValidObjectIds(folderIds);
 
-    const validFolderIds = (Array.isArray(folderIds) ? folderIds : [])
-      .filter((id) => id && mongoose.Types.ObjectId.isValid(String(id)))
-      .map((id) => new mongoose.Types.ObjectId(String(id)));
+    // Zero-wildcard guard
+    if (validFileIds.length === 0 && validFolderIds.length === 0) {
+      return res.status(200).json({
+        success: true,
+        deletedFiles: 0,
+        deletedFolders: 0,
+        deletedCount: 0,
+      });
+    }
 
-    let freedBytes = 0;
+    const trashedAt = new Date();
 
     if (validFileIds.length > 0) {
-      const files = await File.find({ _id: { $in: validFileIds }, ...userMatch });
-      for (const f of files) freedBytes += (f.size || 0);
-
       await File.updateMany(
         { _id: { $in: validFileIds }, ...userMatch },
-        { $set: { isTrash: true, trashedAt: new Date() } }
+        { $set: { isTrash: true, trashedAt } }
       );
     }
 
     if (validFolderIds.length > 0) {
-      const allFolderIds = [...validFolderIds];
-      if (typeof getDescendantFolderIds === 'function') {
-        for (const fId of validFolderIds) {
-          const descendants = await getDescendantFolderIds(fId, userMatch);
-          allFolderIds.push(...descendants);
-        }
+      const allFolderObjectIds = [...validFolderIds];
+      for (const fId of validFolderIds) {
+        const descendants = await getDescendantFolderIds(fId, userMatch, false);
+        allFolderObjectIds.push(...descendants);
       }
 
-      const childFiles = await File.find({
-        $or: [{ folder: { $in: allFolderIds } }, { folderId: { $in: allFolderIds } }],
-        ...userMatch,
-      });
-      for (const cf of childFiles) freedBytes += (cf.size || 0);
+      const uniqueFolderObjectIds = toValidObjectIds(allFolderObjectIds);
+      if (uniqueFolderObjectIds.length > 0) {
+        const uniqueFolderStringIds = uniqueFolderObjectIds.map((id) => String(id));
 
-      await Folder.updateMany(
-        { _id: { $in: allFolderIds }, ...userMatch },
-        { $set: { isTrash: true, trashedAt: new Date() } }
-      );
+        await Folder.updateMany(
+          { _id: { $in: uniqueFolderObjectIds }, ...userMatch },
+          { $set: { isTrash: true, trashedAt } }
+        );
 
-      await File.updateMany(
-        {
-          $or: [{ folder: { $in: allFolderIds } }, { folderId: { $in: allFolderIds } }],
-          ...userMatch,
-        },
-        { $set: { isTrash: true, trashedAt: new Date() } }
-      );
+        await File.updateMany(
+          {
+            $and: [
+              userMatch,
+              {
+                $or: [
+                  { folder: { $in: uniqueFolderObjectIds } },
+                  { folderId: { $in: uniqueFolderObjectIds } },
+                  { folder: { $in: uniqueFolderStringIds } },
+                  { folderId: { $in: uniqueFolderStringIds } },
+                ],
+              },
+            ],
+          },
+          { $set: { isTrash: true, trashedAt } }
+        );
+      }
     }
 
-    if (freedBytes > 0) {
-      await User.findByIdAndUpdate(rawUserId, {
-        $inc: { storageUsed: -Math.abs(freedBytes) },
-      });
-    }
-
-    // Schedule permanent deletion
-    scheduleBatchPurge(validFileIds, validFolderIds, rawUserId);
+    // In 30-Day Bin lifecycle: items stay in Backblaze B2 and continue counting toward storage quota.
+    // Zero quota deduction and zero premature purge on soft-delete!
 
     return res.status(200).json({
       success: true,
+      message: 'Moved to Bin • Auto-deletes in 30 days',
       deletedFiles: validFileIds.length,
       deletedFolders: validFolderIds.length,
       deletedCount: validFileIds.length + validFolderIds.length,
@@ -1034,110 +1535,404 @@ router.post('/batch-delete', authMiddleware, handleBatchDelete);
 router.post('/bulk-delete', authMiddleware, handleBatchDelete);
 
 // -------------------------------------------------------------
-// 8. RESTORE ENDPOINT FOR "UNDO" ACTION
+// 8. 30-DAY BIN (TRASH) ENDPOINTS: GET, RESTORE, PERMANENT DELETE
 // -------------------------------------------------------------
-const handleBatchRestore = async (req, res) => {
+
+/**
+ * GET /api/files/bin
+ * Returns all top-level trashed folders and files with countdowns
+ */
+const handleGetBin = async (req, res) => {
   try {
     const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
-    const userIdObj = mongoose.Types.ObjectId.isValid(rawUserId)
-      ? new mongoose.Types.ObjectId(rawUserId)
-      : rawUserId;
+    const userMatch = { $or: [{ userId: rawUserId }, { user: rawUserId }] };
 
-    const userMatch = {
-      $or: [
-        { userId: userIdObj },
-        { userId: String(rawUserId) },
-        { user: userIdObj },
-        { user: String(rawUserId) },
-      ],
-    };
+    // Fetch all trashed folders and files for user
+    const [allTrashedFolders, allTrashedFiles] = await Promise.all([
+      Folder.find({ ...userMatch, isTrash: true }).sort({ trashedAt: -1, createdAt: -1 }).lean(),
+      File.find({ ...userMatch, isTrash: true }).sort({ trashedAt: -1, createdAt: -1 }).lean(),
+    ]);
 
-    const { fileIds = [], folderIds = [] } = req.body;
+    const trashedFolderIdSet = new Set(allTrashedFolders.map((f) => String(f._id)));
 
-    const validFileIds = (Array.isArray(fileIds) ? fileIds : [])
-      .filter((id) => id && mongoose.Types.ObjectId.isValid(String(id)))
-      .map((id) => new mongoose.Types.ObjectId(String(id)));
+    // Top-level trashed folders: parentId is null or parentId is NOT also in trash
+    const topLevelFolders = allTrashedFolders.filter(
+      (f) => !f.parentId || !trashedFolderIdSet.has(String(f.parentId))
+    );
 
-    const validFolderIds = (Array.isArray(folderIds) ? folderIds : [])
-      .filter((id) => id && mongoose.Types.ObjectId.isValid(String(id)))
-      .map((id) => new mongoose.Types.ObjectId(String(id)));
+    // Top-level trashed files: folderId/folder is null or is NOT in trashedFolderIdSet
+    const topLevelFiles = allTrashedFiles.filter(
+      (f) => (!f.folder && !f.folderId) || !trashedFolderIdSet.has(String(f.folderId || f.folder))
+    );
 
-    let restoredBytes = 0;
-
-    // 1. Restore specific files
-    if (validFileIds.length > 0) {
-      const filesToRestore = await File.find({ _id: { $in: validFileIds }, ...userMatch });
-      for (const f of filesToRestore) {
-        restoredBytes += (f.size || 0);
-      }
-
-      // Check if parent folders still exist; if not, reattach to root
-      const parentFolderIds = filesToRestore.map((f) => f.folderId || f.folder).filter(Boolean);
-      const existingFolders = await Folder.find({ _id: { $in: parentFolderIds }, isTrash: { $ne: true } }).select('_id');
-      const existingFolderIdSet = new Set(existingFolders.map((f) => String(f._id)));
-
-      for (const f of filesToRestore) {
-        const pId = String(f.folderId || f.folder || '');
-        const shouldResetToRoot = pId && !existingFolderIdSet.has(pId);
-
-        await File.updateOne(
-          { _id: f._id },
-          {
-            $set: {
-              isTrash: false,
-              trashedAt: null,
-              ...(shouldResetToRoot ? { folder: null, folderId: null } : {}),
-            },
-          }
-        );
+    // Calculate folder sizes and file counts in memory
+    const folderToFiles = new Map();
+    for (const f of allTrashedFiles) {
+      const pId = String(f.folderId || f.folder || '');
+      if (pId) {
+        if (!folderToFiles.has(pId)) folderToFiles.set(pId, []);
+        folderToFiles.get(pId).push(f);
       }
     }
 
-    // 2. Restore folders and nested contents
-    if (validFolderIds.length > 0) {
+    // Pre-build adjacency map for descendant lookup in memory
+    const parentToChildren = new Map();
+    for (const f of allTrashedFolders) {
+      const p = f.parentId || f.parentFolder;
+      if (p) {
+        const pStr = String(p);
+        if (!parentToChildren.has(pStr)) parentToChildren.set(pStr, []);
+        parentToChildren.get(pStr).push(String(f._id));
+      }
+    }
+
+    const getDescendantsInMemory = (rootId) => {
+      const visited = new Set([String(rootId)]);
+      const queue = [String(rootId)];
+      const res = [];
+      while (queue.length > 0) {
+        const curr = queue.shift();
+        const children = parentToChildren.get(curr) || [];
+        for (const ch of children) {
+          if (!visited.has(ch)) {
+            visited.add(ch);
+            res.push(ch);
+            queue.push(ch);
+          }
+        }
+      }
+      return res;
+    };
+
+    const now = Date.now();
+
+    const foldersWithStats = topLevelFolders.map((folder) => {
+      const folderIdStr = String(folder._id);
+      const allSubFolderIds = [folderIdStr, ...getDescendantsInMemory(folderIdStr)];
+      let folderBytes = 0;
+      let folderFileCount = 0;
+
+      for (const sfId of allSubFolderIds) {
+        const cFiles = folderToFiles.get(sfId) || [];
+        folderFileCount += cFiles.length;
+        for (const cf of cFiles) {
+          folderBytes += (cf.size || 0);
+        }
+      }
+
+      const trashedTimestamp = new Date(folder.trashedAt || folder.updatedAt || now).getTime();
+      const daysAgo = Math.max(0, Math.floor((now - trashedTimestamp) / 86400000));
+      const daysRemaining = Math.max(0, 30 - daysAgo);
+
+      return {
+        ...folder,
+        type: 'folder',
+        isFolder: true,
+        size: folderBytes,
+        fileCount: folderFileCount,
+        daysRemaining,
+        deletedDaysAgo: daysAgo,
+      };
+    });
+
+    const filesWithStats = topLevelFiles.map((file) => {
+      const trashedTimestamp = new Date(file.trashedAt || file.createdAt || now).getTime();
+      const daysAgo = Math.max(0, Math.floor((now - trashedTimestamp) / 86400000));
+      const daysRemaining = Math.max(0, 30 - daysAgo);
+
+      return {
+        ...file,
+        type: 'file',
+        isFolder: false,
+        daysRemaining,
+        deletedDaysAgo: daysAgo,
+      };
+    });
+
+    const totalCount = foldersWithStats.length + filesWithStats.length;
+    const totalBytes = allTrashedFiles.reduce((sum, f) => sum + (f.size || 0), 0);
+
+    return res.status(200).json({
+      success: true,
+      folders: foldersWithStats,
+      files: filesWithStats,
+      totalCount,
+      totalBytes,
+    });
+  } catch (err) {
+    console.error('Get bin error:', err);
+    return res.status(500).json({ error: 'Failed to fetch items in Bin' });
+  }
+};
+
+/**
+ * POST /api/files/bin/restore (and alias /api/files/restore-batch)
+ * Restores items from Bin to their original folder (or root if parent was deleted)
+ */
+const handleBinRestore = async (req, res) => {
+  try {
+    const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
+    const userMatch = { $or: [{ userId: rawUserId }, { user: rawUserId }] };
+    const { fileIds = [], folderIds = [], restoreAll = false } = req.body;
+
+    if (restoreAll) {
+      // 1. Restore all trashed files & folders for user
+      await Promise.all([
+        File.updateMany({ ...userMatch, isTrash: true }, { $set: { isTrash: false, trashedAt: null } }),
+        Folder.updateMany({ ...userMatch, isTrash: true }, { $set: { isTrash: false, trashedAt: null } }),
+      ]);
+
+      // 2. Validate all parent references in one pass
+      const allActiveFolders = await Folder.find({ ...userMatch, isTrash: { $ne: true } }).select('_id').lean();
+      const activeFolderSet = new Set(allActiveFolders.map((f) => String(f._id)));
+
+      const filesToCheck = await File.find({
+        ...userMatch,
+        $or: [{ folder: { $ne: null } }, { folderId: { $ne: null } }],
+      }).select('_id folder folderId').lean();
+
+      const orphanedFileIds = filesToCheck
+        .filter((f) => !activeFolderSet.has(String(f.folderId || f.folder)))
+        .map((f) => f._id);
+
+      if (orphanedFileIds.length > 0) {
+        await File.updateMany(
+          { _id: { $in: orphanedFileIds } },
+          { $set: { folder: null, folderId: null } }
+        );
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: 'All items restored from Bin',
+        restoredAll: true,
+      });
+    }
+
+    const validFileIds = toValidObjectIds(fileIds);
+    const validFolderIds = toValidObjectIds(folderIds);
+
+    if (validFileIds.length === 0 && validFolderIds.length === 0) {
+      return res.status(200).json({ success: true, restoredCount: 0 });
+    }
+
+    // If folder IDs provided, also resolve all descendant folders in trash
+    const allFolderObjectIds = [...validFolderIds];
+    for (const fId of validFolderIds) {
+      const descendants = await getDescendantFolderIds(fId, userMatch, true);
+      allFolderObjectIds.push(...descendants);
+    }
+    const uniqueFolderObjectIds = toValidObjectIds(allFolderObjectIds);
+
+    // 1. Restore folders
+    if (uniqueFolderObjectIds.length > 0) {
       await Folder.updateMany(
-        { _id: { $in: validFolderIds }, ...userMatch },
+        { _id: { $in: uniqueFolderObjectIds }, ...userMatch },
         { $set: { isTrash: false, trashedAt: null } }
       );
 
-      const childFiles = await File.find({
-        $or: [{ folder: { $in: validFolderIds } }, { folderId: { $in: validFolderIds } }],
-        ...userMatch,
-      });
+      const uniqueFolderStringIds = uniqueFolderObjectIds.map((id) => String(id));
 
-      for (const cf of childFiles) {
-        restoredBytes += (cf.size || 0);
-      }
-
+      // Restore child files inside those folders
       await File.updateMany(
         {
-          $or: [{ folder: { $in: validFolderIds } }, { folderId: { $in: validFolderIds } }],
-          ...userMatch,
+          $and: [
+            userMatch,
+            {
+              $or: [
+                { folder: { $in: uniqueFolderObjectIds } },
+                { folderId: { $in: uniqueFolderObjectIds } },
+                { folder: { $in: uniqueFolderStringIds } },
+                { folderId: { $in: uniqueFolderStringIds } },
+              ],
+            },
+          ],
         },
         { $set: { isTrash: false, trashedAt: null } }
       );
     }
 
-    // 3. Increment quota back
-    if (restoredBytes > 0) {
-      await User.findByIdAndUpdate(rawUserId, {
-        $inc: { storageUsed: Math.abs(restoredBytes) },
-      });
+    // 2. Restore individual files
+    if (validFileIds.length > 0) {
+      await File.updateMany(
+        { _id: { $in: validFileIds }, ...userMatch },
+        { $set: { isTrash: false, trashedAt: null } }
+      );
+    }
+
+    // 3. Safety reattachment check: if an item's parent folder is still in Bin or doesn't exist, reset to root
+    const allActiveFolders = await Folder.find({ ...userMatch, isTrash: { $ne: true } }).select('_id').lean();
+    const activeFolderSet = new Set(allActiveFolders.map((f) => String(f._id)));
+
+    if (validFileIds.length > 0) {
+      const restoredFiles = await File.find({ _id: { $in: validFileIds } }).select('_id folder folderId').lean();
+      const orphanedFileIds = restoredFiles
+        .filter((f) => {
+          const pId = String(f.folderId || f.folder || '');
+          return pId && !activeFolderSet.has(pId);
+        })
+        .map((f) => f._id);
+
+      if (orphanedFileIds.length > 0) {
+        await File.updateMany(
+          { _id: { $in: orphanedFileIds } },
+          { $set: { folder: null, folderId: null } }
+        );
+      }
+    }
+
+    if (uniqueFolderObjectIds.length > 0) {
+      const restoredFolders = await Folder.find({ _id: { $in: uniqueFolderObjectIds } }).select('_id parentId parentFolder').lean();
+      const orphanedFolderIds = restoredFolders
+        .filter((f) => {
+          const pId = String(f.parentId || f.parentFolder || '');
+          return pId && !activeFolderSet.has(pId);
+        })
+        .map((f) => f._id);
+
+      if (orphanedFolderIds.length > 0) {
+        await Folder.updateMany(
+          { _id: { $in: orphanedFolderIds } },
+          { $set: { parentId: null, parentFolder: null } }
+        );
+      }
     }
 
     return res.status(200).json({
       success: true,
-      restoredCount: validFileIds.length + validFolderIds.length,
-      restoredBytes,
+      message: 'Items restored from Bin',
+      restoredFiles: validFileIds.length,
+      restoredFolders: uniqueFolderObjectIds.length,
+      restoredCount: validFileIds.length + uniqueFolderObjectIds.length,
     });
   } catch (err) {
-    console.error('Restore error:', err);
-    return res.status(500).json({ error: 'Failed to restore items' });
+    console.error('Restore bin error:', err);
+    return res.status(500).json({ error: 'Failed to restore items from Bin' });
   }
 };
 
-router.post('/restore-batch', authMiddleware, handleBatchRestore);
-router.post('/batch-restore', authMiddleware, handleBatchRestore);
+/**
+ * DELETE /api/files/bin/permanent
+ * Permanently deletes items from Backblaze B2, drops MongoDB docs, and decrements quota
+ */
+const handleBinPermanentDelete = async (req, res) => {
+  try {
+    const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
+    const userMatch = { $or: [{ userId: rawUserId }, { user: rawUserId }] };
+    const { fileIds = [], folderIds = [], emptyAll = false } = req.body;
+
+    let filesToDelete = [];
+    let foldersToDelete = [];
+
+    if (emptyAll) {
+      // Empty entire Bin for user
+      [filesToDelete, foldersToDelete] = await Promise.all([
+        File.find({ ...userMatch, isTrash: true }).select('_id s3Key thumbnailKey size').lean(),
+        Folder.find({ ...userMatch, isTrash: true }).select('_id').lean(),
+      ]);
+    } else {
+      const validFileIds = toValidObjectIds(fileIds);
+      const validFolderIds = toValidObjectIds(folderIds);
+
+      if (validFileIds.length === 0 && validFolderIds.length === 0) {
+        return res.status(200).json({
+          success: true,
+          deletedFiles: 0,
+          deletedFolders: 0,
+          freedBytes: 0,
+        });
+      }
+
+      // Resolve all descendant folders
+      const allFolderObjectIds = [...validFolderIds];
+      for (const fId of validFolderIds) {
+        const descendants = await getDescendantFolderIds(fId, userMatch, true);
+        allFolderObjectIds.push(...descendants);
+      }
+      const uniqueFolderObjectIds = toValidObjectIds(allFolderObjectIds);
+      const uniqueFolderStringIds = uniqueFolderObjectIds.map((id) => String(id));
+
+      const fileConditions = [];
+      if (validFileIds.length > 0) {
+        fileConditions.push({ _id: { $in: validFileIds } });
+      }
+      if (uniqueFolderObjectIds.length > 0) {
+        fileConditions.push(
+          { folder: { $in: uniqueFolderObjectIds } },
+          { folderId: { $in: uniqueFolderObjectIds } },
+          { folder: { $in: uniqueFolderStringIds } },
+          { folderId: { $in: uniqueFolderStringIds } }
+        );
+      }
+
+      filesToDelete = await File.find({
+        $and: [userMatch, { isTrash: true }, { $or: fileConditions }],
+      }).select('_id s3Key thumbnailKey size').lean();
+
+      if (uniqueFolderObjectIds.length > 0) {
+        foldersToDelete = await Folder.find({
+          _id: { $in: uniqueFolderObjectIds },
+          ...userMatch,
+          isTrash: true,
+        }).select('_id').lean();
+      }
+    }
+
+    // 1. Collect all S3 / B2 keys to permanently erase
+    const keysToPurge = filesToDelete
+      .flatMap((f) => [f.s3Key, f.thumbnailKey])
+      .filter(Boolean);
+
+    if (keysToPurge.length > 0) {
+      try {
+        await permanentlyDeleteS3Keys(keysToPurge, rawUserId);
+      } catch (s3Err) {
+        console.warn('[Bin Permanent Delete S3 Warning]:', s3Err.message);
+      }
+    }
+
+    // 2. Sum freed bytes
+    const freedBytes = filesToDelete.reduce((sum, f) => sum + (f.size || 0), 0);
+
+    // 3. Delete records from MongoDB
+    const fileIdsToDelete = filesToDelete.map((f) => f._id);
+    const folderIdsToDelete = foldersToDelete.map((f) => f._id);
+
+    if (fileIdsToDelete.length > 0) {
+      await File.deleteMany({ _id: { $in: fileIdsToDelete } });
+    }
+    if (folderIdsToDelete.length > 0) {
+      await Folder.deleteMany({ _id: { $in: folderIdsToDelete } });
+    }
+
+    // 4. Decrement user.storageUsed
+    if (freedBytes > 0) {
+      const u = await User.findById(rawUserId);
+      if (u) {
+        u.storageUsed = Math.max(0, (u.storageUsed || 0) - freedBytes);
+        await u.save();
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Items permanently deleted',
+      deletedFiles: fileIdsToDelete.length,
+      deletedFolders: folderIdsToDelete.length,
+      deletedCount: fileIdsToDelete.length + folderIdsToDelete.length,
+      freedBytes,
+    });
+  } catch (err) {
+    console.error('Permanent delete error:', err);
+    return res.status(500).json({ error: 'Failed to permanently delete items' });
+  }
+};
+
+router.get('/bin', authMiddleware, handleGetBin);
+router.post('/bin/restore', authMiddleware, handleBinRestore);
+router.delete('/bin/permanent', authMiddleware, handleBinPermanentDelete);
+router.post('/restore-batch', authMiddleware, handleBinRestore);
+router.post('/batch-restore', authMiddleware, handleBinRestore);
 
 // -------------------------------------------------------------
 // 9. DYNAMIC LIVE STORAGE AGGREGATION
@@ -1158,12 +1953,11 @@ const getStorageStats = async (req, res) => {
       ],
     };
 
-    // Calculate real active storage
+    // Calculate real active storage (retains items in 30-Day Bin, excludes only purged & pending scans)
     const stats = await File.aggregate([
       {
         $match: {
-          isTrash: { $ne: true },
-          securityStatus: { $ne: 'threat_purged' },
+          securityStatus: { $nin: ['threat_purged', 'pending_scan'] },
           ...userMatch,
         },
       },
@@ -1178,7 +1972,14 @@ const getStorageStats = async (req, res) => {
     const actualStorageUsed = stats[0]?.actualUsedBytes || 0;
 
     // Synchronize user record in background
-    await User.findByIdAndUpdate(rawUserId, { storageUsed: actualStorageUsed });
+    const userDoc = await User.findById(rawUserId);
+    if (userDoc) {
+      userDoc.storageUsed = actualStorageUsed;
+      if (userDoc.subscription) {
+        userDoc.subscription.peakStorageBytes = Math.max(userDoc.subscription?.peakStorageBytes || 0, userDoc.storageUsed);
+      }
+      await userDoc.save();
+    }
 
     const user = await User.findById(rawUserId).select('storageLimit').lean();
     const storageLimit = user?.storageLimit || 5368709120; // 5 GB
@@ -1402,6 +2203,11 @@ router.put('/batch-move', authMiddleware, (req, res, next) => require('./folders
 
 module.exports = router;
 module.exports.handleBatchDelete = handleBatchDelete;
-module.exports.handleBatchRestore = handleBatchRestore;
+module.exports.handleBinRestore = handleBinRestore;
+module.exports.handleBatchRestore = handleBinRestore;
+module.exports.handleGetBin = handleGetBin;
+module.exports.handleBinPermanentDelete = handleBinPermanentDelete;
 module.exports.handleStorageStats = handleStorageStats;
 module.exports.getStorageStats = getStorageStats;
+module.exports.toValidObjectIds = toValidObjectIds;
+module.exports.getDescendantFolderIds = getDescendantFolderIds;

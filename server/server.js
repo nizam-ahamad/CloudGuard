@@ -18,10 +18,9 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const FormData = require('form-data');
 const crypto = require('crypto');
-const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand, ListObjectsV2Command, DeleteObjectsCommand } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand, ListObjectsV2Command, DeleteObjectsCommand, ListObjectVersionsCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { buildTenantQuery } = require('./utils/tenantQuery');
-const { applyCdnToUrl } = require('./utils/cdnHelper');
 const { permanentlyDeleteS3Keys } = require('./utils/s3Delete');
 const { apiLimiter } = require('./middleware/rateLimiter');
 const { sendActivationOtp, sendResetOtp, sendWelcomeEmail } = require('./utils/emailService');
@@ -89,6 +88,7 @@ const s3 = new S3Client({
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
   }
 });
+const s3Client = s3;
 
 // Use centralized Mongoose models from server/models/
 const File = require('./models/File');
@@ -102,9 +102,23 @@ const UserModel = User;
 // Automatic database recovery and quota reconciliation routine
 async function autoRecoverVaultData() {
   try {
-    console.log('[CloudGuard Recovery] Reconciling tenant storage quotas...');
+    console.log('[CloudGuard Recovery] Cleaning stale unfinalized upload tickets and reconciling tenant storage quotas...');
 
-    // Recalculate true active storage quotas for all users (ignoring trashed & purged files)
+    // Delete any stale unfinalized File documents older than 1 hour so cancelled/abandoned tickets never linger
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    const staleCleanup = await File.deleteMany({
+      securityStatus: 'pending_scan',
+      $or: [
+        { createdAt: { $lte: oneHourAgo } },
+        { uploadedAt: { $lte: oneHourAgo } },
+        { createdAt: { $exists: false }, uploadedAt: { $exists: false } },
+      ],
+    });
+    if (staleCleanup.deletedCount > 0) {
+      console.log(`[CloudGuard Recovery] Cleaned up ${staleCleanup.deletedCount} stale pending_scan files.`);
+    }
+
+    // Recalculate true active storage quotas for all users (strictly verified clean / unverified active files, including 30-Day Bin)
     const users = await User.find({}).select('_id email').lean();
     for (const u of users) {
       const stats = await File.aggregate([
@@ -116,8 +130,7 @@ async function autoRecoverVaultData() {
               { userId: String(u._id) },
               { user: String(u._id) },
             ],
-            isTrash: { $ne: true },
-            securityStatus: { $ne: 'threat_purged' },
+            securityStatus: { $nin: ['threat_purged', 'pending_scan'] },
           },
         },
         {
@@ -170,18 +183,587 @@ mongoose.connect(mongoURI, {
     } catch (indexErr) {
       console.warn('[CloudGuard Index Sync Warning]:', indexErr.message);
     }
+
+    // Run subscription expiry reconciliation and 30-day bin purge immediately upon successful DB connection
+    reconcileExpiredSubscriptions();
+    purgeExpiredBinItems();
   })
   .catch(err => {
     console.error("[DB Error]", err);
   });
 
+/**
+ * Paid-Subscriber Shield Helper
+ * Returns true if the user has an active paid subscription tier with a valid future expiration date.
+ */
+function isActivePaidSubscriber(user, now = new Date()) {
+  const isPaidTier = typeof user?.plan === 'string' && user.plan.startsWith('tier_');
+  const isStatusActive = user?.subscription?.status === 'active';
+  const expiresAt = user?.subscription?.expiresAt ? new Date(user.subscription.expiresAt) : null;
+  return isPaidTier && isStatusActive && expiresAt instanceof Date && !Number.isNaN(expiresAt.getTime()) && expiresAt > now;
+}
+
+/**
+ * Daily Subscription Expiry, Trial Lifecycle & Hard Cloud Purge Reconciliation Runner
+ * 1. Transitions expired trials (14-day window reached) to past_due with 7-day grace period.
+ * 2. Evaluates expired paid plans, executes scheduled downgrades with Quota Gate,
+ *    and sets 7-day past_due grace periods on over-quota accounts.
+ * 3. Day 7 Hard Cloud Purge: Irreversibly purges S3 and MongoDB files for accounts whose
+ *    grace period has expired, resetting them to the baseline 5 GB evaluation tier with 0 B overhead.
+ */
+async function reconcileExpiredSubscriptions() {
+  try {
+    const now = new Date();
+    const { PLAN_CATALOG } = require('./routes/payments');
+    const {
+      sendSubscriptionEmail,
+      generateQuotaGatePassEmail,
+      generateQuotaGateBlockedEmail,
+      sendAnnual7DayReminderEmail,
+      sendPrepaidExpiryWarningEmail,
+      send24HourPreExpiryEmail,
+      sendGracePeriodStartedEmail,
+      send24HourPurgeAlertEmail,
+      sendHardPurgeCompletedEmail
+    } = require('./utils/emailService');
+    const bucketName = process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME || 'cloudguard-vault-b2';
+    const adminEmails = (process.env.ADMIN_EMAILS || '')
+      .split(',')
+      .map((e) => e.trim().toLowerCase())
+      .filter(Boolean);
+
+    // -------------------------------------------------------------
+    // STEP 1: (T-7 Days — Annual Only)
+    // -------------------------------------------------------------
+    const t7AnnualUsers = await User.find({
+      'subscription.billingCycle': 'annual',
+      'subscription.status': { $in: ['active', 'cancelled'] },
+      'subscription.expiresAt': {
+        $gt: new Date(now.getTime() + 3 * 86400000),
+        $lte: new Date(now.getTime() + 7 * 86400000)
+      },
+      $or: [
+        { 'subscription.dunningStep': { $exists: false } },
+        { 'subscription.dunningStep': { $lt: 1 } }
+      ]
+    });
+
+    for (const user of t7AnnualUsers) {
+      if (!isActivePaidSubscriber(user, now)) continue;
+      await sendAnnual7DayReminderEmail(user);
+      user.subscription.dunningStep = 1;
+      await user.save();
+      console.log(`[Subscription Manager] Step 1: Dispatched T-7 annual reminder for ${user.email}`);
+    }
+
+    // -------------------------------------------------------------
+    // STEP 2: (T-3 Days — Yearly, Monthly & Trial)
+    // -------------------------------------------------------------
+    const t3Users = await User.find({
+      'subscription.status': { $in: ['active', 'cancelled'] },
+      $or: [
+        {
+          $or: [{ plan: 'trial' }, { 'subscription.planId': 'trial' }],
+          trialExpiresAt: {
+            $gt: new Date(now.getTime() + 24 * 3600 * 1000),
+            $lte: new Date(now.getTime() + 3 * 86400000)
+          }
+        },
+        {
+          'subscription.planId': { $nin: ['free', 'trial', null] },
+          'subscription.expiresAt': {
+            $gt: new Date(now.getTime() + 24 * 3600 * 1000),
+            $lte: new Date(now.getTime() + 3 * 86400000)
+          }
+        }
+      ],
+      $and: [
+        {
+          $or: [
+            { 'subscription.dunningStep': { $exists: false } },
+            { 'subscription.dunningStep': { $lt: 2 } }
+          ]
+        }
+      ]
+    });
+
+    for (const user of t3Users) {
+      if (isActivePaidSubscriber(user, now)) {
+        const subExp = user.subscription?.expiresAt ? new Date(user.subscription.expiresAt) : null;
+        if (subExp && subExp > new Date(now.getTime() + 3 * 86400000)) {
+          user.trialExpiresAt = null;
+          if (user.subscription) user.subscription.gracePeriodExpiresAt = null;
+          await user.save();
+          continue;
+        }
+      }
+      await sendPrepaidExpiryWarningEmail(user);
+      user.subscription.dunningStep = 2;
+      await user.save();
+      console.log(`[Subscription Manager] Step 2: Dispatched T-3 expiry warning for ${user.email}`);
+    }
+
+    // -------------------------------------------------------------
+    // STEP 3: (T-24 Hours Pre-Expiry — Yearly, Monthly & Trial)
+    // -------------------------------------------------------------
+    const t24hUsers = await User.find({
+      'subscription.status': { $in: ['active', 'cancelled'] },
+      $or: [
+        {
+          $or: [{ plan: 'trial' }, { 'subscription.planId': 'trial' }],
+          trialExpiresAt: {
+            $gt: now,
+            $lte: new Date(now.getTime() + 24 * 3600 * 1000)
+          }
+        },
+        {
+          'subscription.planId': { $nin: ['free', 'trial', null] },
+          'subscription.expiresAt': {
+            $gt: now,
+            $lte: new Date(now.getTime() + 24 * 3600 * 1000)
+          }
+        }
+      ],
+      $and: [
+        {
+          $or: [
+            { 'subscription.dunningStep': { $exists: false } },
+            { 'subscription.dunningStep': { $lt: 3 } }
+          ]
+        }
+      ]
+    });
+
+    for (const user of t24hUsers) {
+      if (isActivePaidSubscriber(user, now)) {
+        const subExp = user.subscription?.expiresAt ? new Date(user.subscription.expiresAt) : null;
+        if (subExp && subExp > new Date(now.getTime() + 24 * 3600 * 1000)) {
+          user.trialExpiresAt = null;
+          if (user.subscription) user.subscription.gracePeriodExpiresAt = null;
+          await user.save();
+          continue;
+        }
+      }
+      await send24HourPreExpiryEmail(user);
+      user.subscription.dunningStep = 3;
+      await user.save();
+      console.log(`[Subscription Manager] Step 3: Dispatched T-24h pre-expiry warning for ${user.email}`);
+    }
+
+    // -------------------------------------------------------------
+    // STEP 4: (Day 0 Expiry -> 7-Day Grace Transition)
+    // -------------------------------------------------------------
+    // 4a. Expired Trials
+    const expiredTrials = await User.find({
+      $or: [{ plan: 'trial' }, { 'subscription.planId': 'trial' }],
+      trialExpiresAt: { $lte: now },
+      'subscription.status': { $nin: ['past_due', 'expired'] }
+    });
+
+    for (const trialUser of expiredTrials) {
+      if (isActivePaidSubscriber(trialUser, now)) {
+        console.log(`[Subscription Manager] SHIELDED active paid subscriber ${trialUser.email} from trial expiry. Auto-healing stale timers.`);
+        trialUser.trialExpiresAt = null;
+        if (trialUser.subscription) {
+          trialUser.subscription.gracePeriodExpiresAt = null;
+          trialUser.subscription.dunningStep = 0;
+        }
+        await trialUser.save();
+        continue;
+      }
+      const graceEnd = new Date(now.getTime() + 7 * 86400000);
+      if (!trialUser.subscription) trialUser.subscription = {};
+      trialUser.subscription.status = 'past_due';
+      trialUser.subscription.gracePeriodExpiresAt = graceEnd;
+      trialUser.subscription.dunningStep = 4;
+      await trialUser.save();
+      console.log(`[Subscription Manager] Step 4: 14-day trial expired for ${trialUser.email}. Set to past_due with 7-day grace.`);
+      await sendGracePeriodStartedEmail(trialUser, graceEnd);
+    }
+
+    // 4b. Expired Paid Subscriptions (Quota Gate Evaluation)
+    const expiredUsers = await User.find({
+      'subscription.expiresAt': { $lte: now },
+      'subscription.status': { $in: ['active', 'cancelled'] },
+      'subscription.planId': { $nin: ['free', 'trial'] }
+    });
+
+    if (expiredUsers.length > 0) {
+      console.log(`[Subscription Manager] Reconciling ${expiredUsers.length} expired paid subscription(s)...`);
+      const FREE_QUOTA_BYTES = 5 * 1024 * 1024 * 1024; // 5 GB default
+
+      for (const user of expiredUsers) {
+        if (isActivePaidSubscriber(user, now)) {
+          console.log(`[Subscription Manager] SHIELDED active paid subscriber ${user.email} in expired paid users check. Auto-healing stale timers.`);
+          user.trialExpiresAt = null;
+          if (user.subscription) {
+            user.subscription.gracePeriodExpiresAt = null;
+            user.subscription.dunningStep = 0;
+          }
+          await user.save();
+          continue;
+        }
+
+        const scheduled = user.subscription?.scheduledDowngrade;
+        const targetPlanId = scheduled?.targetPlanId || 'free';
+        const targetCatalog = PLAN_CATALOG[targetPlanId];
+        const targetQuotaBytes = targetCatalog ? targetCatalog.storageBytes : FREE_QUOTA_BYTES;
+        const targetPlanName = targetCatalog ? targetCatalog.name : 'Free Vault (5 GB)';
+        const currentStorageUsed = user.storageUsed || 0;
+
+        // --- THE QUOTA GATE EVALUATION ---
+        if (currentStorageUsed <= targetQuotaBytes) {
+          // CASE A: Storage fits within target tier quota -> Execute downgrade cleanly (Scenario 5)
+          user.plan = targetPlanId;
+          user.storageLimit = targetQuotaBytes;
+          user.subscription.planId = targetPlanId;
+          user.subscription.status = targetPlanId === 'free' ? 'expired' : 'active';
+          user.subscription.billingCycle = scheduled?.targetBillingCycle || 'none';
+          user.subscription.scheduledDowngrade = { targetPlanId: null, targetBillingCycle: null, scheduledAt: null };
+          user.subscription.gracePeriodExpiresAt = null;
+          user.subscription.dunningStep = 0;
+
+          await user.save();
+          console.log(`[Subscription Manager] Downgrade cleanly executed for ${user.email} -> ${targetPlanName}`);
+
+          const clientUrl = process.env.CLIENT_URL || 'https://cloudguard.site';
+          const { subject, html } = generateQuotaGatePassEmail({
+            user,
+            targetPlanName,
+            storageUsedGB: currentStorageUsed / (1024 ** 3),
+            targetQuotaGB: targetQuotaBytes / (1024 ** 3),
+            clientUrl
+          });
+          sendSubscriptionEmail({ to: user.email, subject, html }).catch(e => {
+            console.error('[Quota Gate Pass Email Error]:', e.message);
+          });
+        } else {
+          // CASE B: Storage EXCEEDS target quota -> Downgrade blocked, activate write-lock + 7-day grace period
+          const graceEnd = new Date(now.getTime() + 7 * 86400000);
+          user.subscription.status = 'past_due';
+          user.subscription.gracePeriodExpiresAt = graceEnd;
+          user.subscription.dunningStep = 4;
+          await user.save();
+
+          console.warn(`[Subscription Manager] Step 4: Downgrade BLOCKED for ${user.email}. Storage ${currentStorageUsed} exceeds ${targetQuotaBytes}. Past due grace set.`);
+          await sendGracePeriodStartedEmail(user, graceEnd);
+        }
+      }
+    }
+
+    // -------------------------------------------------------------
+    // STEP 5: (Day 6 of Grace -> 24h Final Purge Alert)
+    // -------------------------------------------------------------
+    const day6Users = await User.find({
+      'subscription.status': 'past_due',
+      'subscription.gracePeriodExpiresAt': {
+        $gt: now,
+        $lte: new Date(now.getTime() + 24 * 3600 * 1000)
+      },
+      $or: [
+        { 'subscription.dunningStep': { $exists: false } },
+        { 'subscription.dunningStep': { $lt: 5 } }
+      ]
+    });
+
+    for (const dUser of day6Users) {
+      if (isActivePaidSubscriber(dUser, now)) {
+        console.log(`[Subscription Manager] SHIELDED active paid subscriber ${dUser.email} from Day 6 purge alert. Auto-healing stale timers.`);
+        dUser.trialExpiresAt = null;
+        if (dUser.subscription) {
+          dUser.subscription.status = 'active';
+          dUser.subscription.gracePeriodExpiresAt = null;
+          dUser.subscription.dunningStep = 0;
+        }
+        await dUser.save();
+        continue;
+      }
+      const baselineQuota = 5 * 1024 * 1024 * 1024;
+      const excessGB = Math.max(0, ((dUser.storageUsed || 0) - baselineQuota) / (1024 ** 3));
+      const purgeDate = dUser.subscription?.gracePeriodExpiresAt;
+      const deleteUrl = `${process.env.CLIENT_URL || 'https://cloudguard.site'}/pricing`;
+      await send24HourPurgeAlertEmail(dUser, excessGB, purgeDate, deleteUrl);
+      dUser.subscription.dunningStep = 5;
+      await dUser.save();
+      console.warn(`[Subscription Manager] Step 5: Dispatched 24-hr final purge alert for ${dUser.email}`);
+    }
+
+    // -------------------------------------------------------------
+    // VERSION-AWARE & PAGINATED DAY 7 B2 PURGE
+    // -------------------------------------------------------------
+    const delinquentUsers = await User.find({
+      'subscription.status': 'past_due',
+      'subscription.gracePeriodExpiresAt': { $lte: now }
+    });
+
+    if (delinquentUsers.length > 0) {
+      console.warn(`[Subscription Manager] Evaluating Day 7 Hard Cloud Purge on ${delinquentUsers.length} candidate account(s)...`);
+
+      for (const delinquentUser of delinquentUsers) {
+        // 1. Paid-Subscriber Shield
+        if (isActivePaidSubscriber(delinquentUser, now)) {
+          console.warn(`[Subscription Manager] CRITICAL SHIELD: Protected active paid subscriber ${delinquentUser.email} from Day 7 purge. Healing timers.`);
+          delinquentUser.trialExpiresAt = null;
+          if (delinquentUser.subscription) {
+            delinquentUser.subscription.status = 'active';
+            delinquentUser.subscription.gracePeriodExpiresAt = null;
+            delinquentUser.subscription.dunningStep = 0;
+          }
+          await delinquentUser.save();
+          continue;
+        }
+
+        const isPastDue = delinquentUser.subscription?.status === 'past_due';
+        const graceExp = delinquentUser.subscription?.gracePeriodExpiresAt ? new Date(delinquentUser.subscription.gracePeriodExpiresAt) : null;
+        const isGraceExpired = graceExp instanceof Date && !Number.isNaN(graceExp.getTime()) && graceExp <= now;
+        const isAdmin = adminEmails.includes(String(delinquentUser.email || '').trim().toLowerCase());
+
+        // REQUIRE ALL 4 CONDITIONS SIMULTANEOUSLY:
+        // 1. !isActivePaidSubscriber(delinquentUser, now)
+        // 2. user.subscription?.status === 'past_due'
+        // 3. user.subscription?.gracePeriodExpiresAt is valid non-null date <= now
+        // 4. User email is NOT in ADMIN_EMAILS
+        if (!isPastDue || !isGraceExpired || isAdmin) {
+          console.warn(`[Subscription Manager] Skipping Day 7 purge for ${delinquentUser.email} (pastDue: ${isPastDue}, graceExpired: ${isGraceExpired}, admin: ${isAdmin})`);
+          continue;
+        }
+
+        console.warn(`[Subscription Manager] Executing Day 7 Hard Cloud Purge on verified delinquent account: ${delinquentUser.email}`);
+        const uId = delinquentUser._id;
+        const prefixes = [`uploads/${uId}/`, `thumbnails/${uId}/`];
+
+        // Batch delete S3/B2 object versions under user prefixes
+        for (const prefix of prefixes) {
+          try {
+            let keyMarker = undefined;
+            let versionIdMarker = undefined;
+            let isTruncated = true;
+
+            while (isTruncated) {
+              const listVersionsCmd = new ListObjectVersionsCommand({
+                Bucket: bucketName,
+                Prefix: prefix,
+                KeyMarker: keyMarker,
+                VersionIdMarker: versionIdMarker,
+              });
+              const verRes = await s3.send(listVersionsCmd);
+              const objectsToDelete = [];
+
+              if (Array.isArray(verRes.Versions)) {
+                for (const v of verRes.Versions) {
+                  if (v.Key && v.Key.startsWith(prefix)) {
+                    objectsToDelete.push(v.VersionId ? { Key: v.Key, VersionId: v.VersionId } : { Key: v.Key });
+                  }
+                }
+              }
+
+              if (Array.isArray(verRes.DeleteMarkers)) {
+                for (const dm of verRes.DeleteMarkers) {
+                  if (dm.Key && dm.Key.startsWith(prefix)) {
+                    objectsToDelete.push(dm.VersionId ? { Key: dm.Key, VersionId: dm.VersionId } : { Key: dm.Key });
+                  }
+                }
+              }
+
+              // Batch delete in chunks of 1000 with strict prefix verification
+              for (let i = 0; i < objectsToDelete.length; i += 1000) {
+                const chunk = objectsToDelete.slice(i, i + 1000);
+                const safeChunk = chunk.filter((c) => c?.Key && c.Key.startsWith(prefix));
+                if (safeChunk.length > 0) {
+                  await s3.send(new DeleteObjectsCommand({
+                    Bucket: bucketName,
+                    Delete: { Objects: safeChunk, Quiet: true },
+                  }));
+                }
+              }
+
+              isTruncated = !!verRes.IsTruncated;
+              if (isTruncated) {
+                keyMarker = verRes.NextKeyMarker;
+                versionIdMarker = verRes.NextVersionIdMarker;
+              }
+            }
+          } catch (s3PurgeErr) {
+            console.error(`[Subscription Manager B2 Purge Error] for ${delinquentUser.email} (prefix: ${prefix}):`, s3PurgeErr.message);
+          }
+        }
+
+        // Delete MongoDB File and Folder records
+        await File.deleteMany({ $or: [{ userId: uId }, { userId: String(uId) }, { user: uId }] });
+        await Folder.deleteMany({ $or: [{ userId: uId }, { userId: String(uId) }, { user: uId }] });
+
+        // Reset User document state to baseline ₹0 storage
+        delinquentUser.plan = 'free';
+        delinquentUser.storageLimit = 5 * 1024 * 1024 * 1024; // 5 GB baseline
+        delinquentUser.storageUsed = 0;
+        delinquentUser.trialExpiresAt = null;
+        if (!delinquentUser.subscription) delinquentUser.subscription = {};
+        delinquentUser.subscription.planId = 'free';
+        delinquentUser.subscription.status = 'expired';
+        delinquentUser.subscription.gracePeriodExpiresAt = null;
+        delinquentUser.subscription.dunningStep = 0;
+        delinquentUser.subscription.scheduledDowngrade = { targetPlanId: null, targetBillingCycle: null, scheduledAt: null };
+
+        await delinquentUser.save();
+        console.log(`[Subscription Manager] Successfully purged vault for ${delinquentUser.email} to 0 B storage used.`);
+
+        // Final transactional notification email (Scenario 9)
+        const clientUrl = process.env.CLIENT_URL || 'https://cloudguard.site';
+        await sendHardPurgeCompletedEmail(delinquentUser, clientUrl).catch(e => {
+          console.error('[Hard Purge Notice Error]:', e.message);
+        });
+      }
+    }
+  } catch (err) {
+    console.error('[Subscription Manager Error]:', err.message);
+  }
+}
+
+// Check every 6 hours
+setInterval(reconcileExpiredSubscriptions, 6 * 60 * 60 * 1000);
+
+/**
+ * 30-Day Automated Bin Purge Runner
+ * Permanently deletes trashed files and folders whose trashedAt is older than 30 days.
+ * Removes versioned objects from Backblaze B2, deletes MongoDB records,
+ * and decrements affected users' storageUsed.
+ */
+async function purgeExpiredBinItems() {
+  try {
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const File = mongoose.models.File || require('./models/File');
+    const Folder = mongoose.models.Folder || require('./models/Folder');
+    const User = mongoose.models.User || require('./models/User');
+
+    // 1. Find all expired trashed files
+    const expiredFiles = await File.find({
+      isTrash: true,
+      trashedAt: { $lte: thirtyDaysAgo }
+    }).select('_id userId user size s3Key thumbnailKey').lean();
+
+    if (expiredFiles.length > 0) {
+      console.log(`[Bin Purge] Found ${expiredFiles.length} expired trashed file(s) older than 30 days.`);
+
+      // Group files by userId
+      const filesByUser = new Map();
+      for (const f of expiredFiles) {
+        const uId = String(f.userId || f.user);
+        if (!filesByUser.has(uId)) filesByUser.set(uId, []);
+        filesByUser.get(uId).push(f);
+      }
+
+      for (const [uId, uFiles] of filesByUser.entries()) {
+        try {
+          const keys = uFiles.flatMap(f => [f.s3Key, f.thumbnailKey]).filter(Boolean);
+          if (keys.length > 0) {
+            await permanentlyDeleteS3Keys(keys, uId);
+          }
+          const fileIds = uFiles.map(f => f._id);
+          await File.deleteMany({ _id: { $in: fileIds } });
+
+          const freedBytes = uFiles.reduce((sum, f) => sum + (f.size || 0), 0);
+          if (freedBytes > 0) {
+            const u = await User.findById(uId);
+            if (u) {
+              u.storageUsed = Math.max(0, (u.storageUsed || 0) - freedBytes);
+              await u.save();
+            }
+          }
+          console.log(`[Bin Purge] Purged ${uFiles.length} file(s) for user ${uId}, freed ${(freedBytes / (1024 * 1024)).toFixed(2)} MB`);
+        } catch (userPurgeErr) {
+          console.error(`[Bin Purge User Error] Failed to purge files for user ${uId}:`, userPurgeErr.message);
+        }
+      }
+    }
+
+    // 2. Find and delete all expired trashed folders
+    const expiredFolders = await Folder.find({
+      isTrash: true,
+      trashedAt: { $lte: thirtyDaysAgo }
+    }).select('_id').lean();
+
+    if (expiredFolders.length > 0) {
+      await Folder.deleteMany({ _id: { $in: expiredFolders.map(f => f._id) } });
+      console.log(`[Bin Purge] Removed ${expiredFolders.length} expired trashed folder(s) older than 30 days.`);
+    }
+  } catch (err) {
+    console.error('[Bin Purge Error]:', err.message);
+  }
+}
+
+// Run 30-Day Bin purge every 24 hours
+setInterval(purgeExpiredBinItems, 24 * 60 * 60 * 1000);
+
+/**
+ * Automated Abandoned Upload Reaper
+ * Purges orphaned S3 objects and MongoDB records for uploads that were
+ * initiated (pending_scan) but never finalized due to network drops or tab closures.
+ */
+async function sweepAbandonedUploads() {
+  try {
+    const File = mongoose.models.File || require('./models/File') || require('./models/User').db.model('File');
+    const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
+
+    // Buffer window: 2 hours to protect in-flight active uploads
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+
+    // Find upload tickets stuck in pending_scan older than 2 hours
+    const abandonedFiles = await File.find({
+      securityStatus: 'pending_scan',
+      createdAt: { $lte: twoHoursAgo }
+    }).select('_id s3Key thumbnailKey name').lean();
+
+    if (!abandonedFiles || abandonedFiles.length === 0) return;
+
+    console.log(`[Upload Reaper] Detected ${abandonedFiles.length} abandoned upload ticket(s) older than 2 hours. Purging...`);
+
+    // 1. Collect S3 keys to purge
+    const s3KeysToDelete = [];
+    abandonedFiles.forEach((file) => {
+      if (file.s3Key) s3KeysToDelete.push(file.s3Key);
+      if (file.thumbnailKey) s3KeysToDelete.push(file.thumbnailKey);
+    });
+
+    // 2. Batch-delete objects from S3
+    if (s3KeysToDelete.length > 0 && typeof s3Client !== 'undefined') {
+      await permanentlyDeleteS3Keys(s3Client, bucket, s3KeysToDelete).catch((err) => console.error('[Upload Reaper] S3 batch delete warning:', err.message));
+    }
+
+    // 3. Delete orphaned metadata tickets from MongoDB
+    const fileIds = abandonedFiles.map((f) => f._id);
+    const dbResult = await File.deleteMany({ _id: { $in: fileIds } });
+
+    console.log(`[Upload Reaper] Successfully purged ${s3KeysToDelete.length} S3 object(s) and ${dbResult.deletedCount} orphaned DB ticket(s).`);
+  } catch (err) {
+    console.warn('[Upload Reaper Error]:', err.message);
+  }
+}
+
+// Run initial sweep 1 minute after server boot, then recur every 6 hours
+setTimeout(sweepAbandonedUploads, 60 * 1000);
+setInterval(sweepAbandonedUploads, 6 * 60 * 60 * 1000);
+
 
 
 async function recalculateStorage(userId) {
-    try {
+  try {
+    const rawUserId = userId;
+    const userIdObj = mongoose.Types.ObjectId.isValid(rawUserId)
+      ? new mongoose.Types.ObjectId(rawUserId)
+      : rawUserId;
     const result = await FileModel.aggregate([
-      { $match: { $or: [{ userId: userId }, { userId: String(userId) }, { user: userId }], isTrash: false, securityStatus: { $ne: 'threat_purged' } } },
-      { $group: { _id: null, totalSize: { $sum: "$size" } } }
+      {
+        $match: {
+          $or: [
+            { userId: userIdObj },
+            { user: userIdObj },
+            { userId: String(rawUserId) },
+            { user: String(rawUserId) },
+          ],
+          securityStatus: { $nin: ['threat_purged', 'pending_scan'] },
+        },
+      },
+      { $group: { _id: null, totalSize: { $sum: "$size" } } },
     ]);
     const totalSize = result.length > 0 ? result[0].totalSize : 0;
     await User.findByIdAndUpdate(userId, { storageUsed: totalSize });
@@ -284,7 +866,10 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/files', require('./routes/files'));
 app.use('/api/folders', require('./routes/folders'));
 app.use('/api/photos', require('./routes/photos'));
+app.use('/api/payments', require('./routes/payments'));
 app.use('/api', require('./routes/photos'));
+app.use('/api/admin', require('./routes/admin'));
+app.use('/api/admin', (req, res) => res.status(404).json({ error: 'Not found' }));
 
 app.post('/api/auth/register', async (req, res) => {
   try {
@@ -648,12 +1233,11 @@ const getStorageStatsInServer = async (req, res) => {
       ],
     };
 
-    // Calculate real active storage
+    // Calculate real active storage (retains items in 30-Day Bin, excludes only purged & pending scans)
     const stats = await File.aggregate([
       {
         $match: {
-          isTrash: { $ne: true },
-          securityStatus: { $ne: 'threat_purged' },
+          securityStatus: { $nin: ['threat_purged', 'pending_scan'] },
           ...userMatch,
         },
       },
@@ -668,7 +1252,14 @@ const getStorageStatsInServer = async (req, res) => {
     const actualStorageUsed = stats[0]?.actualUsedBytes || 0;
 
     // Synchronize user record in background
-    await User.findByIdAndUpdate(rawUserId, { storageUsed: actualStorageUsed });
+    const userDoc = await User.findById(rawUserId);
+    if (userDoc) {
+      userDoc.storageUsed = actualStorageUsed;
+      if (userDoc.subscription) {
+        userDoc.subscription.peakStorageBytes = Math.max(userDoc.subscription?.peakStorageBytes || 0, userDoc.storageUsed);
+      }
+      await userDoc.save();
+    }
 
     const user = await User.findById(rawUserId).select('storageLimit').lean();
     const storageLimit = user?.storageLimit || 5368709120; // 5 GB
@@ -754,8 +1345,13 @@ app.post('/api/upload', verifyToken, async (req, res) => {
 
   // Check User Quota
   let currentStorageUsed = 0;
-    const result = await FileModel.aggregate([
-    { $match: { userId: userId, securityStatus: { $in: ['Safe', 'unscanned_too_large'] } } },
+  const result = await FileModel.aggregate([
+    {
+      $match: {
+        $or: [{ userId: userId }, { user: userId }, { userId: String(userId) }, { user: String(userId) }],
+        securityStatus: { $nin: ['threat_purged', 'pending_scan'] },
+      },
+    },
     { $group: { _id: null, totalSize: { $sum: "$size" } } }
   ]);
   if (result.length > 0) {
@@ -1010,9 +1606,8 @@ app.post('/api/upload', verifyToken, async (req, res) => {
             Key: targetKey
           });
           const signedUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
-          const cdnSignedUrl = applyCdnToUrl(signedUrl);
-          fileObj.s3Url = cdnSignedUrl;
-          fileObj.url = cdnSignedUrl;
+          fileObj.s3Url = signedUrl;
+          fileObj.url = signedUrl;
         } catch (err) {
           console.error('Error signing URL for uploaded media asset:', err.message);
         }
@@ -1628,8 +2223,7 @@ app.get('/api/files/photos', verifyToken, async (req, res) => {
                 Bucket: process.env.AWS_BUCKET_NAME,
                 Key: targetKey
               });
-              const signed = await getSignedUrl(s3, command, { expiresIn: 3600 });
-              presignedUrl = applyCdnToUrl(signed);
+              presignedUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
             } catch (err) {
               console.error('Error signing URL for media asset:', err.message);
             }
@@ -1979,7 +2573,7 @@ app.get('/api/files/:id/access', verifyToken, async (req, res) => {
     });
 
     const url = await getSignedUrl(s3, command, { expiresIn: 60 });
-    res.json({ url: applyCdnToUrl(url) });
+    res.json({ url });
   } catch (error) {
     console.error('Access URL generation error:', error);
     res.status(500).json({ error: 'Failed to generate access URL' });
@@ -2287,6 +2881,14 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server running on port ${PORT}`);
-});
+if (require.main === module) {
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on port ${PORT}`);
+  });
+}
+
+module.exports = {
+  app,
+  sweepAbandonedUploads,
+  purgeExpiredBinItems
+};

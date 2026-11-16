@@ -14,10 +14,14 @@ import {
   Check,
   X,
   Loader2,
+  Trash2,
 } from 'lucide-react';
 import { useToast } from '../context/ToastContext';
 import { useDownload } from '../context/DownloadContext';
 import CentralizedFloatingBar from '../components/FloatingBar';
+import DeleteConfirmModal from '../components/DeleteConfirmModal';
+import { API_BASE_URL } from '../config';
+import { getCachedAccessUrl, fetchAccessUrl, prefetchAccessUrl } from '../utils/accessUrlCache';
 
 // --------------------------------------------------------------------------
 // MODULE-LEVEL CACHES: Persist across tab switching to prevent network refetching
@@ -103,6 +107,9 @@ export default function PhotosView({ token: propToken }) {
   // Multi-select state
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [itemToDelete, setItemToDelete] = useState(null);
+  const [isDeletingItems, setIsDeletingItems] = useState(false);
+  const [isDownloadingItem, setIsDownloadingItem] = useState(false);
 
   // Layout view modes
   const [viewMode, setViewMode] = useState(() => {
@@ -127,7 +134,7 @@ export default function PhotosView({ token: propToken }) {
   const urlCacheRef = useRef(new Map()); // fileId -> accessUrl
   const activeLoadIdRef = useRef(null);
 
-  // Native CloudGuard Pill Toast
+  // Native CloudGuard Pill Toast (Theme-Aware & Responsive)
   const showPillToast = useCallback(({ message, actionText = null, onAction = null, duration = 6000 }) => {
     if (!toast?.custom) {
       toast?.success?.(message);
@@ -137,36 +144,53 @@ export default function PhotosView({ token: propToken }) {
       (t) => (
         <div
           className={`${
-            t.visible ? 'animate-enter' : 'animate-leave'
-          } pointer-events-auto flex items-center justify-between gap-3 bg-zinc-900/95 dark:bg-[#18181b]/95 text-zinc-100 px-4 py-2.5 rounded-full shadow-2xl border border-zinc-700/80 dark:border-zinc-800/90 backdrop-blur-md transition-all w-auto max-w-[92vw] sm:max-w-lg mx-auto z-[99999]`}
+            t.visible ? 'animate-in fade-in slide-in-from-bottom-3 duration-200' : 'animate-out fade-out slide-out-to-bottom-2 duration-150'
+          } pointer-events-auto flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-2xl shadow-xl border backdrop-blur-md transition-all select-none
+          w-full max-w-[calc(100vw-2rem)] sm:max-w-md mx-auto
+          bg-white/95 text-neutral-900 border-neutral-200/90 shadow-neutral-900/10
+          dark:bg-neutral-900/95 dark:text-neutral-100 dark:border-neutral-800/90 dark:shadow-black/50`}
         >
-          <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0 shadow-[0_0_8px_rgba(52,211,153,0.7)]" />
-          <span className="text-xs sm:text-sm font-medium leading-snug break-words line-clamp-2 sm:line-clamp-none flex-1">
-            {message}
-          </span>
-          {actionText && onAction && (
+          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+            <span className="relative flex h-2 w-2 shrink-0">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+            </span>
+            <p className="text-xs sm:text-sm font-medium truncate leading-tight">
+              <span className="font-semibold text-neutral-900 dark:text-white" title={typeof message === 'string' ? message : undefined}>
+                {message}
+              </span>
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {actionText && onAction && (
+              <>
+                <div className="h-4 w-[1px] bg-neutral-200 dark:bg-neutral-800" />
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (t.dismiss) t.dismiss();
+                    else if (toast.dismiss) toast.dismiss(t.id);
+                    onAction();
+                  }}
+                  className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 active:bg-emerald-500/25 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 hover:border-emerald-500/30 transition-all cursor-pointer whitespace-nowrap focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                >
+                  {actionText}
+                </button>
+              </>
+            )}
             <button
               type="button"
               onClick={() => {
                 if (t.dismiss) t.dismiss();
                 else if (toast.dismiss) toast.dismiss(t.id);
-                onAction();
               }}
-              className="text-xs sm:text-sm font-semibold text-emerald-400 hover:text-emerald-300 underline underline-offset-2 shrink-0 cursor-pointer transition-colors px-1 py-0.5"
+              className="p-1 rounded-md text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800/80 transition-colors cursor-pointer"
+              title="Dismiss"
+              aria-label="Dismiss notification"
             >
-              {actionText}
+              <X className="w-3.5 h-3.5 stroke-[2]"/>
             </button>
-          )}
-          <button
-            type="button"
-            onClick={() => {
-              if (t.dismiss) t.dismiss();
-              else if (toast.dismiss) toast.dismiss(t.id);
-            }}
-            className="text-zinc-400 hover:text-zinc-200 text-xs sm:text-sm shrink-0 leading-none cursor-pointer p-1"
-          >
-            ✕
-          </button>
+          </div>
         </div>
       ),
       { duration, position: 'bottom-center' }
@@ -175,12 +199,14 @@ export default function PhotosView({ token: propToken }) {
 
   const isMountedRef = useRef(false);
 
-  const fetchMedia = useCallback(async () => {
+  const fetchMedia = useCallback(async (forceReload = false) => {
     try {
-      setLoading(true);
-      const token = localStorage.getItem('token');
-      const res = await axios.get('/api/photos', {
-        headers: { Authorization: `Bearer ${token}` },
+      if (!globalPhotosCache || forceReload) {
+        setLoading(true);
+      }
+      const token = propToken || localStorage.getItem('token');
+      const res = await axios.get(`${API_BASE_URL}/api/photos`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
 
       const list = Array.isArray(res.data) ? res.data : (res.data?.photos || []);
@@ -197,6 +223,17 @@ export default function PhotosView({ token: propToken }) {
   // Execute fetch ONLY once on initial mount
   useEffect(() => {
     fetchMedia();
+  }, [fetchMedia]);
+
+  // Real-time listener: refresh photos seamlessly if an upload finishes while on Photos tab
+  useEffect(() => {
+    const handlePhotosUpdate = () => {
+      fetchMedia(false);
+    };
+    window.addEventListener('cloudguard:files-updated', handlePhotosUpdate);
+    return () => {
+      window.removeEventListener('cloudguard:files-updated', handlePhotosUpdate);
+    };
   }, [fetchMedia]);
 
   const handleViewModeChange = (mode) => {
@@ -307,8 +344,10 @@ export default function PhotosView({ token: propToken }) {
     const fileId = item._id;
 
     // Check cache first for 0ms instant display and 0 network requests
-    if (urlCacheRef.current.has(fileId)) {
-      setOriginalUrl(urlCacheRef.current.get(fileId));
+    const cachedUrl = getCachedAccessUrl(fileId) || urlCacheRef.current.get(fileId);
+    if (cachedUrl) {
+      urlCacheRef.current.set(fileId, cachedUrl);
+      setOriginalUrl(cachedUrl);
       setLoadingOriginal(false);
       return;
     }
@@ -324,11 +363,7 @@ export default function PhotosView({ token: propToken }) {
 
     try {
       const token = propToken || (typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null);
-      const res = await axios.get(`/api/files/${fileId}/access`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-
-      const accessUrl = res.data?.accessUrl || res.data?.url;
+      const accessUrl = await fetchAccessUrl(fileId, token);
       if (accessUrl) {
         urlCacheRef.current.set(fileId, accessUrl);
       }
@@ -392,90 +427,213 @@ export default function PhotosView({ token: propToken }) {
     startDownload(prepareDownloadPayload(downloadItem));
   }, [currentPreviewItem, fullMediaUrl, startDownload]);
 
-  const handleDownloadMedia = async (item) => {
-    if (!item) return;
+  const handleDownloadMedia = async (item, e) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    if (!item || isDownloadingItem) return;
+
+    setIsDownloadingItem(true);
+
+    const fileName = item.originalName || item.name || 'download';
+    let targetUrl = item.downloadUrl || item.accessUrl || item.url || fullMediaUrl;
+
+    if (!targetUrl && item._id) {
+      try {
+        const token = propToken || (typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null);
+        targetUrl = getCachedAccessUrl(item._id) || (await fetchAccessUrl(item._id, token));
+      } catch (err) {
+        console.warn('Failed to fetch access URL for download:', err);
+      }
+    }
+
     try {
-      const token = propToken || (typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null);
-      // Prefer dedicated download-url endpoint if available, fallback to accessUrl/url
-      let downloadHref = fullMediaUrl || item.downloadUrl || item.accessUrl || item.url;
-      if (!downloadHref && item._id) {
-        const res = await axios.get(`/api/files/${item._id}/access`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        });
-        downloadHref = res.data?.downloadUrl || res.data?.accessUrl || res.data?.url;
+      if (typeof startDownload === 'function') {
+        // DownloadContext handles queue and starting toast
+        await startDownload([{
+          _id: item._id,
+          id: item._id,
+          name: fileName,
+          url: targetUrl,
+          downloadUrl: targetUrl,
+          size: item.size || 0,
+        }]);
+        return; // Strict return: do NOT fall through
       }
 
-      if (!downloadHref) return;
-
-      // Trigger direct browser download
+      // Fallback ONLY if DownloadContext is unavailable
+      if (toast?.info) toast.info(`Downloading started: "${fileName}"`);
+      const res = await fetch(targetUrl);
+      if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+      const blob = await res.blob();
+      const blobUrl = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = downloadHref;
-      a.download = item.name || item.originalName || 'download';
+      a.href = blobUrl;
+      a.download = fileName;
       document.body.appendChild(a);
       a.click();
       a.remove();
+      window.URL.revokeObjectURL(blobUrl);
     } catch (err) {
-      console.error('Failed to download media item:', err);
-      if (item.url || item.accessUrl) {
-        window.open(item.url || item.accessUrl, '_blank');
-      }
+      console.error('Download failed:', err);
+      if (toast?.error) toast.error('Failed to download file');
+    } finally {
+      // Reset lock after short delay to prevent double-click bounce
+      setTimeout(() => setIsDownloadingItem(false), 1000);
     }
   };
 
-  // Undo Delete
+  // Undo Delete (Restore from Bin)
   const handleUndoDelete = async (itemsToRestore) => {
     try {
       const token = propToken || localStorage.getItem('token');
       const fileIds = itemsToRestore.map((i) => i._id);
 
       await axios.post(
-        '/api/files/restore-batch',
+        `${API_BASE_URL}/api/files/restore-batch`,
         { fileIds, folderIds: [] },
         { headers: token ? { Authorization: `Bearer ${token}` } : {} }
       );
 
-      showPillToast({ message: 'Deletion undone', duration: 3000 });
+      showPillToast({ message: 'Restored from Bin', duration: 3000 });
+      window.dispatchEvent(new CustomEvent('cloudguard:files-updated'));
+      window.dispatchEvent(new Event('cloudguard:files-updated'));
+      window.dispatchEvent(new CustomEvent('cloudguard:storage-updated'));
+      window.dispatchEvent(new Event('cloudguard:storage-updated'));
       fetchMedia(true);
     } catch (err) {
       console.error('Failed to undo delete:', err);
-      toast.error('Could not undo deletion');
+      toast.error('Could not undo move to Bin');
     }
   };
 
-  // Confirm Permanent Deletion
-  const handleConfirmPermanentDelete = async () => {
-    const itemsToDelete = mediaList.filter((m) => selectedIds.has(m._id));
-    setIsDeleteModalOpen(false);
-    deselectAll();
+  // Confirm Soft-Delete / Move to Bin
+  const handleConfirmMoveToBin = async () => {
+    const itemsToDelete = itemToDelete
+      ? [itemToDelete]
+      : mediaList.filter((m) => selectedIds.has(m._id));
+
+    if (itemsToDelete.length === 0) {
+      setIsDeleteModalOpen(false);
+      setItemToDelete(null);
+      return;
+    }
+
+    const fileIds = itemsToDelete.map((m) => m._id);
+    setIsDeletingItems(true);
 
     try {
       const token = propToken || localStorage.getItem('token');
-      const fileIds = itemsToDelete.map((m) => m._id);
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
       await axios.post(
-        '/api/files/delete-batch',
+        `${API_BASE_URL}/api/files/delete-batch`,
         { fileIds, folderIds: [] },
-        { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+        { headers }
       );
 
-      const updated = mediaList.filter((m) => !fileIds.includes(m._id));
+      const fileIdSet = new Set(fileIds.map(String));
+      const updated = mediaList.filter((m) => !fileIdSet.has(String(m._id)));
       globalPhotosCache = updated;
       setMediaList(updated);
 
-      const toastMessage =
-        itemsToDelete.length === 1
-          ? `Permanently deleted "${itemsToDelete[0].name}"`
-          : `Permanently deleted ${itemsToDelete.length} items`;
+      if (itemToDelete || (currentPreviewItem && fileIdSet.has(String(currentPreviewItem._id)))) {
+        closePreview();
+      }
 
-      showPillToast({
-        message: toastMessage,
-        actionText: 'Undo',
-        onAction: () => handleUndoDelete(itemsToDelete),
-      });
+      deselectAll();
+      setIsDeleteModalOpen(false);
+      setItemToDelete(null);
+
+      // Trigger events so BinView, App.jsx (My Files, Recent, Storage stats) refresh immediately
+      window.dispatchEvent(new CustomEvent('cloudguard:files-updated'));
+      window.dispatchEvent(new Event('cloudguard:files-updated'));
+      window.dispatchEvent(new CustomEvent('cloudguard:storage-updated'));
+      window.dispatchEvent(new Event('cloudguard:storage-updated'));
+
+      const itemsToRestore = [...itemsToDelete];
+      const getDeleteToastContent = (items) => {
+        if (!items || items.length === 0) return { action: 'Moved to Bin', target: 'item' };
+        if (items.length === 1) {
+          return {
+            action: 'Moved to Bin',
+            target: items[0].originalName || items[0].name || 'item',
+          };
+        }
+        return {
+          action: 'Moved to Bin',
+          target: `${items.length} items`,
+        };
+      };
+
+      const toastData = getDeleteToastContent(itemsToRestore);
+
+      toast.custom(
+        (t) => (
+          <div
+            className={`${
+              t.visible ? 'animate-in fade-in slide-in-from-bottom-3 duration-200' : 'animate-out fade-out slide-out-to-bottom-2 duration-150'
+            } pointer-events-auto flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-2xl shadow-xl border backdrop-blur-md transition-all select-none
+            w-full max-w-[calc(100vw-2rem)] sm:max-w-md mx-auto
+            bg-white/95 text-neutral-900 border-neutral-200/90 shadow-neutral-900/10
+            dark:bg-neutral-900/95 dark:text-neutral-100 dark:border-neutral-800/90 dark:shadow-black/50`}
+          >
+            <div className="flex items-center gap-2.5 min-w-0 flex-1">
+              <span className="relative flex h-2 w-2 shrink-0">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              </span>
+
+              <p className="text-xs sm:text-sm font-medium truncate leading-tight">
+                <span className="text-neutral-500 dark:text-neutral-400 font-normal mr-1">
+                  {toastData.action}
+                </span>
+                <span className="font-semibold text-neutral-900 dark:text-white" title={toastData.target}>
+                  "{toastData.target}"
+                </span>
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <div className="h-4 w-[1px] bg-neutral-200 dark:bg-neutral-800" />
+              <button
+                type="button"
+                onClick={() => {
+                  if (t.dismiss) t.dismiss();
+                  else if (toast.dismiss) toast.dismiss(t.id);
+                  handleUndoDelete(itemsToRestore);
+                }}
+                className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 active:bg-emerald-500/25 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 hover:border-emerald-500/30 transition-all cursor-pointer whitespace-nowrap focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+              >
+                Undo
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (t.dismiss) t.dismiss();
+                  else if (toast.dismiss) toast.dismiss(t.id);
+                }}
+                className="p-1 rounded-md text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800/80 transition-colors cursor-pointer"
+                title="Dismiss"
+                aria-label="Dismiss notification"
+              >
+                <X className="w-3.5 h-3.5 stroke-[2]"/>
+              </button>
+            </div>
+          </div>
+        ),
+        {
+          duration: 6000,
+          position: 'bottom-center',
+        }
+      );
     } catch (err) {
-      console.error('Delete error:', err);
-      toast.error('Failed to delete selected items');
+      console.error('Move to bin error:', err);
+      toast.error('Failed to move selected items to Bin');
       fetchMedia(true);
+    } finally {
+      setIsDeletingItems(false);
     }
   };
 
@@ -650,6 +808,8 @@ export default function PhotosView({ token: propToken }) {
                     <div
                       key={item._id}
                       onClick={() => openPreview(item, globalIndex)}
+                      onMouseEnter={() => prefetchAccessUrl(item._id, propToken)}
+                      onTouchStart={() => prefetchAccessUrl(item._id, propToken)}
                       className={`group relative aspect-square bg-white dark:bg-zinc-900 rounded-lg sm:rounded-xl overflow-hidden border transition-all shadow-sm active:scale-95 touch-manipulation cursor-pointer ${
                         isSelected
                           ? 'ring-2 ring-emerald-500 border-emerald-500 dark:border-emerald-500'
@@ -746,6 +906,8 @@ export default function PhotosView({ token: propToken }) {
                     <div
                       key={item._id}
                       onClick={() => openPreview(item, globalIndex)}
+                      onMouseEnter={() => prefetchAccessUrl(item._id, propToken)}
+                      onTouchStart={() => prefetchAccessUrl(item._id, propToken)}
                       className={`flex items-center justify-between p-3 cursor-pointer transition-colors ${
                         isSelected
                           ? 'bg-emerald-500/10 dark:bg-emerald-500/15'
@@ -840,46 +1002,44 @@ export default function PhotosView({ token: propToken }) {
           isAllSelected={selectedIds.size === mediaList.length}
           onToggleSelectAll={toggleSelectAll}
           onDownload={handleBatchDownload}
-          onDelete={() => setIsDeleteModalOpen(true)}
+          onDelete={() => {
+            setItemToDelete(null);
+            setIsDeleteModalOpen(true);
+          }}
           onClear={deselectAll}
           isDownloading={isDownloading}
         />
       )}
 
-      {/* Delete Confirmation Modal */}
-      {isDeleteModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-white dark:bg-[#18181b] border border-zinc-200 dark:border-zinc-800 rounded-2xl p-6 max-w-md w-full shadow-2xl transition-colors">
-            <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-              Permanently delete {selectedIds.size > 1 ? `${selectedIds.size} items` : 'item'}?
-            </h3>
-            <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-2">
-              Are you sure you want to permanently delete{' '}
-              <span className="font-semibold text-zinc-900 dark:text-zinc-200">
-                {selectedIds.size} {selectedIds.size === 1 ? 'item' : 'items'}
-              </span>
-              ? This action will immediately remove the media from your storage.
-            </p>
+      {/* Delete / Move to Bin Confirmation Modal */}
+      {(() => {
+        const targetCount = itemToDelete ? 1 : selectedIds.size;
+        const singleItem = itemToDelete || (selectedIds.size === 1 ? mediaList.find((m) => selectedIds.has(m._id)) : null);
+        const modalTitle = singleItem
+          ? `Move "${singleItem.originalName || singleItem.name || 'item'}" to Bin?`
+          : `Move ${targetCount} Items to Bin?`;
+        const modalDesc = targetCount > 1
+          ? `Are you sure you want to move these ${targetCount} items to the Bin? Items in the bin are kept for 30 days before being permanently deleted.`
+          : 'Are you sure you want to move this file to the Bin? Items in the bin are kept for 30 days before being permanently deleted.';
 
-            <div className="flex flex-col-reverse sm:flex-row items-center justify-end gap-2.5 sm:gap-3 mt-6">
-              <button
-                type="button"
-                onClick={() => setIsDeleteModalOpen(false)}
-                className="w-full sm:w-auto px-4 py-2 text-sm font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-xl transition-colors cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmPermanentDelete}
-                className="w-full sm:w-auto px-4 py-2 text-sm font-medium bg-red-600 hover:bg-red-500 text-white rounded-xl shadow-lg shadow-red-600/25 transition-all cursor-pointer"
-              >
-                Permanently delete
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+        return (
+          <DeleteConfirmModal
+            isOpen={isDeleteModalOpen}
+            onClose={() => {
+              if (!isDeletingItems) {
+                setIsDeleteModalOpen(false);
+                setItemToDelete(null);
+              }
+            }}
+            onConfirm={handleConfirmMoveToBin}
+            title={modalTitle}
+            description={modalDesc}
+            confirmText="Move to Bin"
+            count={targetCount}
+            isDeleting={isDeletingItems}
+          />
+        );
+      })()}
 
       {/* Full Lightbox Carousel (Active <video> tag mounts ONLY here) */}
       {currentPreviewItem && (
@@ -902,18 +1062,31 @@ export default function PhotosView({ token: propToken }) {
             </div>
 
             <div className="flex items-center gap-2">
-              {/* Download Button (Left of Cross) */}
+              {/* Move to Bin Button (Left of Download) */}
               <button
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  handleDownloadMedia(currentPreviewItem);
+                  setItemToDelete(currentPreviewItem);
+                  setIsDeleteModalOpen(true);
                 }}
+                title="Move to Bin"
+                aria-label="Move to Bin"
+                className="p-2 rounded-full bg-neutral-800/80 hover:bg-red-600/80 active:scale-95 text-neutral-200 hover:text-white backdrop-blur-md border border-neutral-700/50 transition-all cursor-pointer shrink-0"
+              >
+                <Trash2 className="w-4 h-4 sm:w-4.5 sm:h-4.5"/>
+              </button>
+
+              {/* Download Button (Left of Cross) */}
+              <button
+                type="button"
+                disabled={isDownloadingItem}
+                onClick={(e) => handleDownloadMedia(currentPreviewItem, e)}
                 title="Download media"
                 aria-label="Download media"
-                className="p-2 rounded-full bg-neutral-800/80 hover:bg-neutral-700 active:scale-95 text-neutral-200 hover:text-white backdrop-blur-md border border-neutral-700/50 transition-all cursor-pointer shrink-0"
+                className="p-2 rounded-full bg-neutral-800/80 hover:bg-neutral-700 active:scale-95 disabled:opacity-50 text-neutral-200 hover:text-white backdrop-blur-md border border-neutral-700/50 transition-all cursor-pointer shrink-0"
               >
-                <Download className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
+                <Download className="w-4 h-4 sm:w-4.5 sm:h-4.5"/>
               </button>
 
               {/* Existing Cross (✕) Close Button */}
@@ -966,6 +1139,7 @@ export default function PhotosView({ token: propToken }) {
                   controls
                   autoPlay
                   playsInline
+                  preload="auto"
                   className="max-h-[80vh] w-auto max-w-full rounded-lg shadow-2xl bg-black"
                 />
               ) : (

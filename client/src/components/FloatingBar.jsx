@@ -15,21 +15,21 @@ export default function CentralizedFloatingBar({
   if (selectedCount <= 0) return null;
 
   return (
-    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 sm:gap-3 px-3.5 sm:px-4 py-2 rounded-full bg-neutral-900/95 dark:bg-neutral-800/95 backdrop-blur-md border border-neutral-700/60 shadow-2xl text-white select-none max-w-[95vw] whitespace-nowrap animate-enter">
+    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 sm:gap-3 px-3.5 sm:px-4 py-2 rounded-full bg-white/95 text-neutral-900 border border-neutral-200 shadow-xl dark:bg-neutral-900/95 dark:border-neutral-700/60 dark:text-white dark:shadow-2xl backdrop-blur-md select-none max-w-[95vw] whitespace-nowrap animate-enter">
       {/* 1. Counter */}
-      <span className="text-xs text-neutral-300 font-medium pl-1 whitespace-nowrap">
+      <span className="text-xs text-neutral-600 dark:text-neutral-300 font-medium pl-1 whitespace-nowrap">
         {selectedCount} <span className="hidden sm:inline">selected</span>
       </span>
 
       {/* Vertical Divider */}
-      <div className="h-4 w-[1px] bg-neutral-700 shrink-0" />
+      <div className="h-4 w-[1px] bg-neutral-200 dark:bg-neutral-700 shrink-0" />
 
       {/* 2. Unified Select All - Pure text button with no background */}
       {onToggleSelectAll && (
         <button
           type="button"
           onClick={onToggleSelectAll}
-          className="bg-transparent text-zinc-300 hover:text-white hover:bg-zinc-800/50 text-xs font-medium px-2 py-1 rounded-md transition-colors cursor-pointer whitespace-nowrap"
+          className="bg-transparent text-neutral-700 hover:text-neutral-900 hover:bg-neutral-100 dark:text-zinc-300 dark:hover:text-white dark:hover:bg-zinc-800/50 text-xs font-medium px-2 py-1 rounded-md transition-colors cursor-pointer whitespace-nowrap"
         >
           {isAllSelected ? (
             <>
@@ -50,7 +50,7 @@ export default function CentralizedFloatingBar({
         <button
           type="button"
           onClick={onMove}
-          className="bg-transparent text-zinc-300 hover:text-white hover:bg-zinc-800/50 flex items-center gap-1.5 text-xs font-medium px-2.5 sm:px-3 py-1.5 rounded-md transition-colors cursor-pointer text-white shrink-0"
+          className="bg-transparent text-neutral-700 hover:text-neutral-900 hover:bg-neutral-100 dark:text-zinc-300 dark:hover:text-white dark:hover:bg-zinc-800/50 flex items-center gap-1.5 text-xs font-medium px-2.5 sm:px-3 py-1.5 rounded-md transition-colors cursor-pointer shrink-0"
           title="Move"
         >
           <FolderInput className="w-3.5 h-3.5" />
@@ -64,10 +64,10 @@ export default function CentralizedFloatingBar({
           type="button"
           onClick={onDownload}
           disabled={isDownloading}
-          className="bg-transparent text-zinc-300 hover:text-white hover:bg-zinc-800/50 flex items-center gap-1.5 text-xs font-medium px-2.5 sm:px-3 py-1.5 rounded-md transition-colors cursor-pointer disabled:opacity-50 shrink-0 whitespace-nowrap"
+          className="bg-transparent text-neutral-700 hover:text-neutral-900 hover:bg-neutral-100 dark:text-zinc-300 dark:hover:text-white dark:hover:bg-zinc-800/50 flex items-center gap-1.5 text-xs font-medium px-2.5 sm:px-3 py-1.5 rounded-md transition-colors cursor-pointer disabled:opacity-50 shrink-0 whitespace-nowrap"
           title={isDownloading ? 'Downloading...' : 'Download'}
         >
-          <Download className={`w-3.5 h-3.5 ${isDownloading ? 'animate-bounce text-blue-400' : ''}`} />
+          <Download className={`w-3.5 h-3.5 ${isDownloading ? 'animate-bounce text-blue-500 dark:text-blue-400' : ''}`} />
           <span className="hidden sm:inline">{isDownloading ? 'Downloading...' : 'Download'}</span>
         </button>
       )}
@@ -90,7 +90,7 @@ export default function CentralizedFloatingBar({
         <button
           type="button"
           onClick={onClear}
-          className="p-1 rounded-full hover:bg-white/10 text-neutral-400 hover:text-white transition-colors cursor-pointer ml-0.5 shrink-0"
+          className="p-1 rounded-full hover:bg-neutral-100 dark:hover:bg-white/10 text-neutral-400 hover:text-neutral-700 dark:hover:text-white transition-colors cursor-pointer ml-0.5 shrink-0"
           title="Clear selection"
         >
           <X className="w-4 h-4" />

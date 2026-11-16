@@ -165,23 +165,23 @@ export default function FolderDetailsModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
       <div 
-        className="bg-[#121212] border border-neutral-800 rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden flex flex-col animate-fade-in"
+        className="bg-white dark:bg-[#121212] border border-neutral-200 dark:border-neutral-800 rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden flex flex-col animate-fade-in text-neutral-900 dark:text-white"
         role="dialog"
         aria-modal="true"
         aria-labelledby="folder-details-title"
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-800">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-200 dark:border-neutral-800">
           <div className="flex items-center gap-2.5 min-w-0 pr-2">
-            <Folder size={18} className="text-amber-400 flex-shrink-0" />
-            <h3 id="folder-details-title" className="font-semibold text-white text-base truncate">
+            <Folder size={18} className="text-amber-500 dark:text-amber-400 flex-shrink-0" />
+            <h3 id="folder-details-title" className="font-semibold text-neutral-900 dark:text-white text-base truncate">
               Folder Details
             </h3>
           </div>
           <button 
             type="button"
             onClick={onClose}
-            className="p-1 rounded text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
+            className="p-1 rounded text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 dark:hover:text-white dark:hover:bg-neutral-800 transition-colors"
             aria-label="Close"
           >
             <X size={18} />
@@ -192,21 +192,21 @@ export default function FolderDetailsModal({
         <div className="p-5 space-y-4 text-sm">
           {/* Folder Name */}
           <div>
-            <span className="text-xs font-mono uppercase tracking-wider text-neutral-500 block mb-1">
+            <span className="text-xs font-mono uppercase tracking-wider text-neutral-500 dark:text-neutral-400 block mb-1">
               Name
             </span>
-            <p className="text-white font-medium break-all flex items-center gap-2">
+            <p className="text-neutral-900 dark:text-white font-medium break-all flex items-center gap-2">
               <span>{folder.name}</span>
             </p>
           </div>
 
           {/* Created At */}
           <div>
-            <span className="text-xs font-mono uppercase tracking-wider text-neutral-500 block mb-1">
+            <span className="text-xs font-mono uppercase tracking-wider text-neutral-500 dark:text-neutral-400 block mb-1">
               Created At
             </span>
-            <p className="text-neutral-300 flex items-center gap-2">
-              <Calendar size={14} className="text-neutral-500" />
+            <p className="text-neutral-700 dark:text-neutral-300 flex items-center gap-2">
+              <Calendar size={14} className="text-neutral-400 dark:text-neutral-500" />
               <span>
                 {new Date(folder.createdAt || Date.now()).toLocaleDateString('en-US', {
                   month: 'short',
@@ -219,24 +219,24 @@ export default function FolderDetailsModal({
 
           {/* Stats Section: Contains & Size */}
           {isLoading && !apiStats && scopedLocalFiles.length === 0 ? (
-            <div className="py-4 flex items-center justify-center gap-2.5 text-neutral-400 bg-neutral-900/40 rounded-xl border border-neutral-800/80">
-              <Loader2 size={16} className="animate-spin text-white" />
+            <div className="py-4 flex items-center justify-center gap-2.5 text-neutral-500 dark:text-neutral-400 bg-neutral-50 dark:bg-neutral-900/40 rounded-xl border border-neutral-200 dark:border-neutral-800/80">
+              <Loader2 size={16} className="animate-spin text-neutral-900 dark:text-white" />
               <span className="text-xs font-mono">Calculating stats...</span>
             </div>
           ) : error && !apiStats && scopedLocalFiles.length === 0 ? (
-            <div className="py-3 px-3 text-xs text-red-400 bg-red-950/30 border border-red-900/50 rounded-xl">
+            <div className="py-3 px-3 text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/50 rounded-xl">
               {error}
             </div>
           ) : (
             <>
               {/* Contains */}
               <div>
-                <p className="text-xs uppercase tracking-wider text-zinc-500 font-semibold mb-1">
+                <p className="text-xs uppercase tracking-wider text-neutral-500 dark:text-zinc-500 font-semibold mb-1">
                   Contains
                 </p>
-                <div className="text-neutral-200 font-medium flex items-center gap-2">
+                <div className="text-neutral-800 dark:text-neutral-200 font-medium flex items-center gap-2">
                   <Layers size={14} className="text-neutral-400 flex-shrink-0" />
-                  <p className="text-sm font-medium text-zinc-200">
+                  <p className="text-sm font-medium text-neutral-800 dark:text-zinc-200">
                     {formatFolderContents(finalCount, subfolderCount)}
                   </p>
                 </div>
@@ -244,12 +244,12 @@ export default function FolderDetailsModal({
 
               {/* Size */}
               <div>
-                <p className="text-xs uppercase tracking-wider text-zinc-500 font-semibold mb-1">
+                <p className="text-xs uppercase tracking-wider text-neutral-500 dark:text-zinc-500 font-semibold mb-1">
                   Size
                 </p>
-                <div className="text-neutral-200 font-medium flex items-center gap-2">
+                <div className="text-neutral-800 dark:text-neutral-200 font-medium flex items-center gap-2">
                   <HardDrive size={14} className="text-neutral-400 flex-shrink-0" />
-                  <p className="text-sm font-medium text-zinc-200">
+                  <p className="text-sm font-medium text-neutral-800 dark:text-zinc-200">
                     {formatBytes(finalBytes)}
                   </p>
                 </div>
@@ -259,11 +259,11 @@ export default function FolderDetailsModal({
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end px-5 py-3.5 bg-neutral-900/80 border-t border-neutral-800">
+        <div className="flex items-center justify-end px-5 py-3.5 bg-neutral-50 dark:bg-neutral-900/80 border-t border-neutral-200 dark:border-neutral-800">
           <button 
             type="button"
             onClick={onClose}
-            className="px-4 py-2 text-sm font-semibold bg-white text-black hover:bg-neutral-200 rounded transition-colors duration-200 cursor-pointer"
+            className="px-4 py-2 text-sm font-semibold bg-neutral-900 text-white hover:bg-neutral-800 dark:bg-white dark:text-black dark:hover:bg-neutral-200 rounded-xl transition-colors duration-200 cursor-pointer"
           >
             Close
           </button>

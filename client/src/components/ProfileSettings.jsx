@@ -1,23 +1,119 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import axios from 'axios';
-import { Loader2 } from 'lucide-react';
+import { Loader2, AlertTriangle, X, Smartphone, Check, Download, ExternalLink } from 'lucide-react';
+import toast, { Toaster } from 'react-hot-toast';
 import PasswordInput from '../PasswordInput';
 import { API_BASE_URL } from '../config';
 import { useToast } from '../context/ToastContext';
+import { usePWAInstall } from '../hooks/usePWAInstall';
+
+const api = axios.create({
+  baseURL: `${API_BASE_URL}/api`,
+});
+
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+function PWAInstallCard() {
+  const { isInstalled, isIOS, triggerInstall, isInstallable } = usePWAInstall();
+  const [showIOSGuide, setShowIOSGuide] = useState(false);
+  const [showDesktopGuide, setShowDesktopGuide] = useState(false);
+
+  const handleInstallClick = async () => {
+    const res = await triggerInstall();
+    if (res?.method === 'already_installed') {
+      toast.success('CloudGuard is already installed on this device.');
+    } else if (res?.method === 'native') {
+      if (res.success) {
+        toast.success('CloudGuard app installed successfully!');
+      }
+    } else if (res?.method === 'ios') {
+      setShowIOSGuide(true);
+      setShowDesktopGuide(false);
+      toast('Tap the Share button in Safari, then select "Add to Home Screen".', {
+        icon: '📱',
+      });
+    } else if (res?.method === 'unsupported' || res?.method === 'dismissed') {
+      setShowDesktopGuide(true);
+      setShowIOSGuide(false);
+      toast('To install CloudGuard, click the install icon in your browser address bar or menu.', {
+        icon: 'ℹ️',
+        duration: 5000,
+      });
+    }
+  };
+
+  return (
+    <div className="p-4 sm:p-5 rounded-2xl border transition-colors bg-neutral-900/60 dark:bg-neutral-900/60 border-neutral-800/80 dark:border-neutral-800/80 mt-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        {/* Left: Icon & Text Cluster */}
+        <div className="flex items-start gap-3.5">
+          <div className="w-10 h-10 rounded-xl bg-blue-500/10 text-blue-500 dark:text-blue-400 flex items-center justify-center shrink-0 mt-0.5 sm:mt-0 border border-blue-500/20">
+            <Smartphone className="w-5 h-5 stroke-[2]"/>
+          </div>
+          <div className="min-w-0 flex-1">
+            <h4 className="text-sm font-semibold text-neutral-100 dark:text-white tracking-tight">
+              Install CloudGuard App
+            </h4>
+            <p className="text-xs text-neutral-400 dark:text-neutral-400 mt-1 leading-relaxed">
+              Add CloudGuard to your home screen or desktop for 1-tap full-screen access.
+            </p>
+          </div>
+        </div>
+
+        {/* Right / Bottom Action: Full-width on mobile, auto-width on desktop */}
+        <div className="w-full sm:w-auto shrink-0 pt-1 sm:pt-0">
+          {isInstalled ? (
+            <div className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-3.5 py-2.5 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs font-semibold select-none">
+              <Check className="w-4 h-4 stroke-[2.5]"/>
+              <span>Installed</span>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={handleInstallClick}
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 active:bg-blue-700 shadow-sm shadow-blue-600/20 transition-all cursor-pointer whitespace-nowrap active:scale-[0.99]"
+            >
+              <Download className="w-4 h-4"/>
+              <span>Install on Device</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* iOS Safari Instructions Helper */}
+      {showIOSGuide && (
+        <div className="mt-3.5 pt-3 border-t border-neutral-800 text-xs text-neutral-300 flex items-start gap-2 animate-in fade-in">
+          <span className="text-blue-400 font-bold shrink-0">iOS:</span>
+          <span>
+            Tap the <span className="font-semibold underline text-white">Share</span> button in Safari, then scroll down and tap <span className="font-semibold underline text-white">"Add to Home Screen"</span>.
+          </span>
+        </div>
+      )}
+
+      {/* Desktop / Browser Instructions Helper */}
+      {showDesktopGuide && (
+        <div className="mt-3.5 pt-3 border-t border-neutral-800 text-xs text-neutral-300 flex items-start gap-2 animate-in fade-in">
+          <span className="text-blue-400 font-bold shrink-0">Browser:</span>
+          <span>
+            Click the <span className="font-semibold underline text-white">Install App</span> icon (<span className="text-white font-mono">⊕</span> or computer icon) in your browser's address bar, or open your browser menu and choose <span className="font-semibold underline text-white">"Install CloudGuard"</span>.
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function ProfileSettings({ user, setUser, addToast, onClose }) {
-  const toastContext = useToast?.();
-  const toast = {
-    success: (msg) => {
-      if (toastContext?.success) toastContext.success(msg);
-      else if (typeof addToast === 'function') addToast('success', msg);
-    },
-    error: (msg) => {
-      if (toastContext?.error) toastContext.error(msg);
-      else if (typeof addToast === 'function') addToast('error', msg);
-    },
-  };
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [isCancellingSub, setIsCancellingSub] = useState(false);
+  const [isResumingSub, setIsResumingSub] = useState(false);
 
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -31,6 +127,124 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [isFinalModalOpen, setIsFinalModalOpen] = useState(false);
+
+  // Subscription state hooks
+  const [subData, setSubData] = useState(null);
+  const [billingHistory, setBillingHistory] = useState([]);
+
+  const activePaidPlanId = subData?.subscription?.planId || subData?.plan;
+  const isPaidActiveSub =
+    subData?.subscription?.status === 'active' &&
+    ['tier_50gb', 'tier_100gb', 'tier_200gb'].includes(activePaidPlanId);
+  const formattedPaidExpiry = subData?.subscription?.expiresAt
+    ? new Date(subData.subscription.expiresAt).toLocaleDateString('en-IN', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+      })
+    : null;
+
+  useEffect(() => {
+    api.get('/payments/subscription-status')
+      .then((res) => {
+        if (res.data?.success) {
+          setSubData(res.data);
+        }
+      })
+      .catch((err) => console.error('Failed to load subscription status:', err));
+  }, []);
+
+  useEffect(() => {
+    api.get('/payments/history')
+      .then(res => {
+        if (res.data?.success) setBillingHistory(res.data.history);
+      })
+      .catch(console.error);
+  }, [subData]);
+
+  const handleResumeSub = async () => {
+    setIsResumingSub(true);
+    try {
+      const res = await api.post('/payments/reactivate-subscription');
+      if (res.data.success) {
+        setSubData((prev) => ({
+          ...prev,
+          subscription: {
+            ...prev.subscription,
+            status: 'active',
+          },
+        }));
+        toast.success('Subscription reactivated! Your vault will continue uninterrupted.', {
+          duration: 5000,
+          style: {
+            background: '#18181b',
+            color: '#fff',
+            border: '1px solid #27272a',
+            fontSize: '13px'
+          }
+        });
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to reactivate subscription');
+    } finally {
+      setIsResumingSub(false);
+    }
+  };
+
+  const handleConfirmCancel = async () => {
+    setIsCancellingSub(true);
+    try {
+      const res = await api.post('/payments/cancel-subscription');
+      if (res.data.success) {
+        setSubData((prev) => ({
+          ...prev,
+          subscription: {
+            ...prev.subscription,
+            status: 'cancelled',
+          },
+        }));
+        setShowCancelModal(false);
+        toast.success('Subscription cancelled. Full access remains active until the end of your billing cycle.', {
+          duration: 5000,
+          style: {
+            background: '#18181b',
+            color: '#fff',
+            border: '1px solid #27272a',
+            fontSize: '13px'
+          }
+        });
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to cancel subscription');
+    } finally {
+      setIsCancellingSub(false);
+    }
+  };
+
+  const [isCancellingDowngrade, setIsCancellingDowngrade] = useState(false);
+
+  const handleCancelScheduledDowngrade = async () => {
+    setIsCancellingDowngrade(true);
+    try {
+      const res = await api.post('/payments/cancel-scheduled-downgrade');
+      if (res.data.success) {
+        toast.success(res.data.message, {
+          style: { background: '#18181b', color: '#fff', border: '1px solid #27272a' }
+        });
+        setSubData((prev) => ({
+          ...prev,
+          subscription: {
+            ...prev.subscription,
+            scheduledDowngrade: { targetPlanId: null, targetBillingCycle: null, scheduledAt: null }
+          }
+        }));
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to cancel scheduled downgrade');
+    } finally {
+      setIsCancellingDowngrade(false);
+    }
+  };
 
   // Ensure state clears on mount
   useEffect(() => {
@@ -276,6 +490,227 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
         </form>
       </div>
 
+      {/* Subscription & Vault Plan Card */}
+      <div className="bg-white dark:bg-[#141414] border border-neutral-200 dark:border-[#262626] rounded-xl p-6 transition-colors shadow-sm dark:shadow-none">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div className="flex-1 min-w-0 pr-4">
+            <div className="flex items-center gap-2">
+              <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-100">
+                Subscription & Vault Plan
+              </h3>
+              {subData?.subscription?.status === 'expired' && (
+                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 font-semibold">
+                  EXPIRED
+                </span>
+              )}
+              {subData?.subscription?.status === 'past_due' && (
+                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20 font-semibold">
+                  GRACE PERIOD • WRITE-LOCKED
+                </span>
+              )}
+              {subData?.subscription?.status === 'active' && subData.subscription.planId !== 'free' && (
+                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 font-semibold">
+                  Active
+                </span>
+              )}
+              {subData?.subscription?.status === 'cancelled' && (
+                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 font-semibold">
+                  Cancelled
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
+              {subData?.subscription?.status === 'expired' ? (
+                'Your previous subscription has ended and vault uploads are locked. Choose a plan to restore storage and upload access.'
+              ) : subData?.subscription?.status === 'past_due' ? (
+                'Uploads are temporarily locked. Renew or free up space before your grace period ends to prevent permanent file deletion.'
+              ) : (
+                <>
+                  Current Tier: <strong className="text-neutral-800 dark:text-neutral-200 capitalize">
+                    {subData?.subscription?.planId ? subData.subscription.planId.replace('_', ' ') : 'Free Trial (5 GB)'}
+                  </strong>
+                  {subData?.subscription?.expiresAt && subData.subscription.planId !== 'free' ? (
+                    <>
+                      {' '}• Billing Cycle: <span className="capitalize font-semibold text-neutral-800 dark:text-neutral-200">{subData.subscription.billingCycle || 'Monthly'}</span>
+                      <br />
+                      {subData.subscription.status === 'cancelled'
+                        ? `Access remains active until: ${new Date(subData.subscription.expiresAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })} (No further billing)`
+                        : `Next renewal: ${new Date(subData.subscription.expiresAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`}
+                    </>
+                  ) : (
+                    ' • Standard 5 GB secure zero-trust storage. Upgrade to increase capacity.'
+                  )}
+                </>
+              )}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-3 shrink-0">
+            {subData?.subscription?.status === 'expired' ? (
+              <a
+                href="/pricing"
+                className="text-xs font-semibold px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white transition-colors shrink-0 whitespace-nowrap"
+              >
+                Choose a Plan
+              </a>
+            ) : subData?.subscription?.status === 'past_due' ? (
+              <a
+                href="/pricing"
+                className="text-xs font-semibold px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white transition-colors shadow-sm shrink-0 whitespace-nowrap"
+              >
+                Restore Access
+              </a>
+            ) : (!subData?.subscription || subData.subscription.planId === 'free') ? (
+              <a
+                href="/pricing"
+                className="text-xs font-semibold px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white transition-colors shrink-0 whitespace-nowrap"
+              >
+                Upgrade Storage
+              </a>
+            ) : subData.subscription.status === 'cancelled' ? (
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={handleResumeSub}
+                  disabled={isResumingSub}
+                  className="text-xs font-semibold px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition-colors cursor-pointer disabled:opacity-50 shrink-0 whitespace-nowrap"
+                >
+                  {isResumingSub ? 'Resuming...' : 'Resume Subscription'}
+                </button>
+                <a
+                  href="/pricing"
+                  className="text-xs font-medium px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors shrink-0 whitespace-nowrap"
+                >
+                  Change Plan
+                </a>
+              </div>
+            ) : subData.subscription.status === 'active' ? (
+              <div className="flex items-center gap-2 shrink-0">
+                <a
+                  href="/pricing"
+                  className="text-xs font-medium px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors shrink-0 whitespace-nowrap"
+                >
+                  Change Plan
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setShowCancelModal(true)}
+                  className="text-xs font-medium text-red-600 dark:text-red-400 hover:text-red-700 px-3 py-1.5 rounded-lg border border-red-200 dark:border-red-900/40 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors cursor-pointer shrink-0 whitespace-nowrap"
+                >
+                  Cancel Subscription
+                </button>
+              </div>
+            ) : (
+              <span className="text-xs text-amber-500 font-medium shrink-0 whitespace-nowrap">
+                Cancellation scheduled
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Scheduled Downgrade Notice Card */}
+        {subData?.subscription?.scheduledDowngrade?.targetPlanId && (
+          <div className="mt-4 p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 animate-in fade-in">
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center shrink-0 mt-0.5">
+                <AlertTriangle className="w-4 h-4"/>
+              </div>
+              <div>
+                <h4 className="text-xs font-semibold text-amber-500 dark:text-amber-400">
+                  Downgrade Scheduled
+                </h4>
+                <p className="text-xs text-neutral-600 dark:text-neutral-300 mt-0.5">
+                  Your vault is set to transition to the{' '}
+                  <strong>
+                    {subData.subscription.scheduledDowngrade.targetPlanId === 'tier_50gb' ? '50 GB' : '100 GB'}
+                  </strong>{' '}
+                  plan on{' '}
+                  <strong>
+                    {subData.subscription.expiresAt
+                      ? new Date(subData.subscription.expiresAt).toLocaleDateString('en-IN', {
+                          day: 'numeric',
+                          month: 'short',
+                          year: 'numeric'
+                        })
+                      : 'cycle end'}
+                  </strong>
+                  . You retain your current capacity until then.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              disabled={isCancellingDowngrade}
+              onClick={handleCancelScheduledDowngrade}
+              className="self-start sm:self-auto px-3 py-1.5 text-xs font-semibold rounded-lg bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 hover:bg-neutral-800 dark:hover:bg-neutral-100 transition-colors cursor-pointer shrink-0 disabled:opacity-50"
+            >
+              {isCancellingDowngrade ? 'Cancelling...' : 'Cancel Downgrade'}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Billing History & Official Invoices */}
+      <div className="p-6 rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#141414] shadow-sm mb-6">
+        <h3 className="text-sm font-semibold uppercase tracking-wider text-neutral-900 dark:text-white mb-1">
+          Billing History & Invoices
+        </h3>
+        <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-4">
+          Download official Bills of Supply and receipts for your subscription payments.
+        </p>
+
+        {billingHistory.length === 0 ? (
+          <div className="py-6 text-center text-xs text-neutral-400 dark:text-neutral-500 border border-dashed border-neutral-200 dark:border-neutral-800 rounded-xl">
+            No past billing records found.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="border-b border-neutral-200 dark:border-neutral-800 text-neutral-400">
+                  <th className="py-2.5 font-medium">Invoice #</th>
+                  <th className="py-2.5 font-medium">Plan</th>
+                  <th className="py-2.5 font-medium">Date</th>
+                  <th className="py-2.5 font-medium">Amount</th>
+                  <th className="py-2.5 font-medium text-right">Invoice</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-neutral-100 dark:divide-neutral-800/60 text-neutral-700 dark:text-neutral-300">
+                {billingHistory.map((item) => (
+                  <tr key={item._id}>
+                    <td className="py-3 font-mono font-medium text-neutral-900 dark:text-white">
+                      {item.invoiceNumber}
+                    </td>
+                    <td className="py-3">
+                      {item.planName} ({item.billingCycle})
+                    </td>
+                    <td className="py-3 text-neutral-500">
+                      {new Date(item.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                    </td>
+                    <td className="py-3 font-semibold text-neutral-900 dark:text-white">
+                      ₹{item.amount}
+                    </td>
+                    <td className="py-3 text-right">
+                      <a
+                        href={`/api/payments/invoice/${item.orderId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-200 dark:hover:bg-neutral-700 transition-colors"
+                      >
+                        View / PDF
+                      </a>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Install App Card */}
+      <PWAInstallCard />
+
       {/* Legal & Policies Card */}
       <div className="bg-white dark:bg-[#141414] border border-neutral-200 dark:border-[#262626] rounded-xl p-6 transition-colors shadow-sm dark:shadow-none">
         <div className="mb-4">
@@ -383,6 +818,20 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
           Permanently erases your account, files, thumbnails, and cloud vault data from Backblaze B2 object storage and MongoDB. This action cannot be undone.
         </p>
 
+        {isPaidActiveSub && (
+          <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3.5 text-xs text-amber-800 dark:text-amber-200 leading-relaxed">
+            <span className="font-semibold">Active Paid Subscription Warning:</span> You currently have an active{' '}
+            <span className="font-semibold">
+              {activePaidPlanId === 'tier_200gb'
+                ? 'Ultra Vault (200 GB)'
+                : activePaidPlanId === 'tier_100gb'
+                  ? 'Pro Vault (100 GB)'
+                  : 'Essential Vault (50 GB)'}
+            </span>{' '}
+            plan{formattedPaidExpiry ? ` valid until ${formattedPaidExpiry}` : ''}. Permanently deleting your account will immediately forfeit your remaining prepaid subscription period without an automatic refund.
+          </div>
+        )}
+
         <div className="mt-5 space-y-4 max-w-lg">
           {/* Password Field: Required for password accounts; protected against browser autofill */}
           {!isOAuthUser && (
@@ -392,22 +841,22 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
               </label>
               <div className="relative">
                 <input
-                  type={showDeletePassword ? 'text' : 'password'}
-                  name="cloudguard-account-purge-verify"
+                  type="text"
+                  style={{ WebkitTextSecurity: showDeletePassword ? 'none' : 'disc' }}
+                  name="danger-zone-confirm-secret"
                   id="danger-zone-verify-pass"
                   value={deletePassword}
                   onChange={(e) => setDeletePassword(e.target.value)}
                   placeholder="Enter your password to verify ownership"
-                  autoComplete="new-password"
+                  autoComplete="off"
                   autoCorrect="off"
                   autoCapitalize="off"
-                  spellCheck="false"
+                  spellCheck={false}
                   data-lpignore="true"
                   data-1p-ignore="true"
+                  data-form-type="other"
                   readOnly
-                  onFocus={(e) => {
-                    e.target.readOnly = false;
-                  }}
+                  onFocus={(e) => e.currentTarget.removeAttribute('readOnly')}
                   className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-white dark:bg-[#121212] border border-neutral-300 dark:border-neutral-700 text-sm text-neutral-900 dark:text-white placeholder-neutral-400 dark:placeholder-zinc-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500/30 transition-colors shadow-sm"
                 />
                 <button
@@ -488,6 +937,20 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
                 <p>• All uploaded vault files stored in Backblaze B2</p>
                 <p>• All generated preview thumbnails & folders</p>
               </div>
+
+              {isPaidActiveSub && (
+                <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200 leading-relaxed">
+                  <span className="font-semibold">Active Paid Subscription Warning:</span> You currently have an active{' '}
+                  <span className="font-semibold">
+                    {activePaidPlanId === 'tier_200gb'
+                      ? 'Ultra Vault (200 GB)'
+                      : activePaidPlanId === 'tier_100gb'
+                        ? 'Pro Vault (100 GB)'
+                        : 'Essential Vault (50 GB)'}
+                  </span>{' '}
+                  plan{formattedPaidExpiry ? ` valid until ${formattedPaidExpiry}` : ''}. Permanently deleting your account will immediately forfeit your remaining prepaid subscription period without an automatic refund.
+                </div>
+              )}
               <p className="text-red-500 font-medium text-xs pt-1">
                 This action CANNOT be undone.
               </p>
@@ -525,6 +988,97 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
           </div>
         </div>
       )}
+
+      {/* Cancel Subscription Confirmation Modal */}
+      {showCancelModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
+          <div 
+            className="relative w-full max-w-md rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#141414] p-6 shadow-2xl transition-all"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => !isCancellingSub && setShowCancelModal(false)}
+              className="absolute top-4 right-4 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 transition-colors"
+            >
+              <X className="w-4 h-4"/>
+            </button>
+
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-500 shrink-0">
+                <AlertTriangle className="w-5 h-5"/>
+              </div>
+              <div>
+                <h3 className="text-base font-semibold text-neutral-900 dark:text-white">
+                  Cancel Subscription?
+                </h3>
+                <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                  Confirm your plan cancellation
+                </p>
+              </div>
+            </div>
+
+            <div className="my-4 p-3.5 rounded-xl bg-neutral-50 dark:bg-neutral-900/60 border border-neutral-200/60 dark:border-neutral-800 text-xs text-neutral-600 dark:text-neutral-300 space-y-2">
+              <p>
+                • You will <strong>not</strong> be charged again.
+              </p>
+              <p>
+                • You retain full access to your <strong>{Math.round((subData?.storageLimit || 0) / (1024 * 1024 * 1024))} GB</strong> vault until <strong>{subData?.subscription?.expiresAt ? new Date(subData.subscription.expiresAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : 'the end of your cycle'}</strong>.
+              </p>
+              <p>
+                • None of your existing files will be deleted.
+              </p>
+              {subData?.subscription?.billingCycle === 'annual' && (
+                <p>
+                  • <strong>Refund Policy:</strong> {((subData?.subscription?.peakStorageBytes || subData?.peakStorageBytes || 0) <= 2 * 1024 * 1024 * 1024 && subData?.refundEligible) ? (
+                    'Your annual subscription is within the 7-day evaluation window (peak storage under 2 GB). Contact support@cloudguard.site to request a refund review.'
+                  ) : (
+                    'Annual subscriptions are eligible for refund review only within the first 7 days if peak storage has never exceeded 2 GB.'
+                  )}
+                </p>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                disabled={isCancellingSub}
+                onClick={() => setShowCancelModal(false)}
+                className="px-4 py-2 rounded-xl text-xs font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
+              >
+                Keep Subscription
+              </button>
+              <button
+                type="button"
+                disabled={isCancellingSub}
+                onClick={handleConfirmCancel}
+                className="px-4 py-2 rounded-xl text-xs font-semibold bg-red-600 hover:bg-red-500 text-white shadow-md shadow-red-600/20 transition-all cursor-pointer disabled:opacity-50"
+              >
+                {isCancellingSub ? 'Cancelling...' : 'Yes, Cancel Plan'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      <Toaster 
+        position="bottom-right" 
+        reverseOrder={false} 
+        toastOptions={{
+          className: '!bg-white/95 !text-slate-900 !border !border-slate-200 !shadow-xl dark:!bg-slate-900/95 dark:!text-slate-100 dark:!border-slate-700/80 dark:!shadow-2xl !backdrop-blur-md !rounded-xl !text-xs sm:!text-sm',
+          success: {
+            iconTheme: {
+              primary: '#10b981',
+              secondary: '#fff',
+            },
+          },
+          error: {
+            iconTheme: {
+              primary: '#f43f5e',
+              secondary: '#fff',
+            },
+          },
+        }}
+      />
     </div>
   );
 }

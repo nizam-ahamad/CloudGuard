@@ -27,8 +27,7 @@ async function resync() {
       {
         $match: {
           $or: [{ userId: user._id }, { user: user._id }],
-          isTrash: { $ne: true },
-          securityStatus: { $ne: 'threat_purged' },
+          securityStatus: { $nin: ['threat_purged', 'pending_scan'] },
         },
       },
       {
