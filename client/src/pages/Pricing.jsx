@@ -165,7 +165,13 @@ export default function Pricing() {
   const token = localStorage.getItem('token') || sessionStorage.getItem('token');
   const ctaLink = token ? '/dashboard' : '/login';
 
-  const loadCashfree = async (mode = 'production') => {
+  const defaultCashfreeMode = (
+    import.meta.env.VITE_CASHFREE_ENV ||
+    import.meta.env.VITE_CASHFREE_MODE ||
+    (import.meta.env.PROD ? 'production' : 'sandbox')
+  ).toLowerCase() === 'production' ? 'production' : 'sandbox';
+
+  const loadCashfree = async (mode = defaultCashfreeMode) => {
     if (typeof window.Cashfree === 'function') {
       return window.Cashfree({ mode });
     }
@@ -449,7 +455,8 @@ export default function Pricing() {
       const { paymentSessionId, orderId, cashfreeEnv } = res.data;
       if (!paymentSessionId) throw new Error('Payment session initialization failed');
 
-      const mode = cashfreeEnv === 'production' ? 'production' : 'sandbox';
+      const rawMode = cashfreeEnv || import.meta.env.VITE_CASHFREE_ENV || import.meta.env.VITE_CASHFREE_MODE || (import.meta.env.PROD ? 'production' : 'sandbox');
+      const mode = String(rawMode).toLowerCase().trim() === 'production' ? 'production' : 'sandbox';
       const cashfree = await loadCashfree(mode);
       const checkoutOptions = {
         paymentSessionId,
