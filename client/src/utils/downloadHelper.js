@@ -34,37 +34,45 @@ export async function getFreshDownloadUrl(file) {
   }
   if (!file) return '';
 
-  if (file._id) {
+  const fileId = file._id || file.id;
+  if (fileId) {
     const token = localStorage.getItem('token') || sessionStorage.getItem('token');
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
     try {
-      const res = await fetch(`${API_BASE_URL}/api/files/${file._id}/download-url`, { headers });
+      const res = await fetch(`${API_BASE_URL}/api/files/${fileId}/download-url`, { headers });
       if (res.ok) {
         const data = await res.json();
         if (data.downloadUrl) return data.downloadUrl;
+        if (data.url) return data.url;
       }
     } catch (err) {
-      console.warn(`Could not fetch fresh download URL for ${file.name || file._id}:`, err);
+      console.warn(`Could not fetch fresh download URL for ${file.name || fileId}:`, err);
     }
 
     try {
-      const res2 = await fetch(`${API_BASE_URL}/api/files/${file._id}/download`, { headers });
+      const res2 = await fetch(`${API_BASE_URL}/api/files/${fileId}/download`, { headers });
       if (res2.ok) {
         const data2 = await res2.json();
         if (data2.downloadUrl) return data2.downloadUrl;
+        if (data2.url) return data2.url;
       }
     } catch (e) {}
 
     try {
-      const res3 = await fetch(`${API_BASE_URL}/api/files/${file._id}/access?download=true`, { headers });
+      const res3 = await fetch(`${API_BASE_URL}/api/files/${fileId}/access?download=true`, { headers });
       if (res3.ok) {
         const data3 = await res3.json();
         if (data3.url) return data3.url;
+        if (data3.downloadUrl) return data3.downloadUrl;
       }
     } catch (e) {}
   }
 
-  return file.s3Url || file.url || '';
+  if (file.s3Url || file.url || file.downloadUrl) {
+    return file.s3Url || file.url || file.downloadUrl;
+  }
+
+  throw new Error(`Unable to generate download link for "${file.name || 'file'}". Please try again.`);
 }
 
 // Backwards compatibility aliases
@@ -92,6 +100,8 @@ export function triggerDirectDownload(url, fileName) {
 
 /**
  * Single File Download with threshold protection
+ * Triggers direct browser download via presigned attachment URL.
+ * Bypasses in-memory XHR/Blob buffers and storage CORS limitations.
  */
 export async function downloadSingleFileWithProgress(file, onProgress, registerAbort) {
   const rawUrl = await getFreshDownloadUrl(file);
@@ -100,81 +110,25 @@ export async function downloadSingleFileWithProgress(file, onProgress, registerA
     throw new Error('Could not resolve file download URL');
   }
   const fileSize = file.size || 0;
-  const fileName = file.name || 'download';
+  const fileName = file.name || file.originalName || 'download';
 
-  // If file is >= 1 GB, bypass in-memory XHR buffering completely
-  if (fileSize >= 1 * 1024 * 1024 * 1024) {
-    if (onProgress) {
-      onProgress({
-        percent: 100,
-        speed: '',
-        text: `Streaming ${formatDownloadBytes(fileSize)} directly to disk...`,
-      });
-    }
-    triggerDirectDownload(targetUrl, fileName);
-    await new Promise((r) => setTimeout(r, 1200));
-    return { mode: 'stream', count: 1 };
+  if (typeof registerAbort === 'function') {
+    registerAbort(() => {});
   }
 
-  // Files < 1 GB can be streamed with live XHR tracking
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open('GET', targetUrl, true);
-    xhr.responseType = 'blob';
+  if (onProgress) {
+    onProgress({
+      percent: 100,
+      speed: '',
+      text: fileSize > 0 
+        ? `Streaming ${fileName} (${formatDownloadBytes(fileSize)}) directly to disk...`
+        : `Streaming ${fileName} directly to disk...`,
+    });
+  }
 
-    if (registerAbort) {
-      registerAbort(() => {
-        xhr.abort();
-        reject(new Error('DOWNLOAD_CANCELLED'));
-      });
-    }
-
-    let lastLoaded = 0;
-    let lastTime = Date.now();
-    let speedText = '';
-
-    xhr.onprogress = (event) => {
-      const total = event.lengthComputable && event.total > 0 ? event.total : fileSize;
-      const loaded = event.loaded;
-      const percent = total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : 0;
-
-      const now = Date.now();
-      const timeDiff = (now - lastTime) / 1000;
-      if (timeDiff >= 0.5) {
-        const bytesDiff = loaded - lastLoaded;
-        speedText = `${formatDownloadBytes(bytesDiff / timeDiff)}/s`;
-        lastLoaded = loaded;
-        lastTime = now;
-      }
-
-      if (onProgress) {
-        onProgress({
-          loaded,
-          total,
-          percent,
-          speed: speedText,
-          text: total > 0 
-            ? `${formatDownloadBytes(loaded)} / ${formatDownloadBytes(total)} (${percent}%)`
-            : `${formatDownloadBytes(loaded)} downloaded`,
-        });
-      }
-    };
-
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        saveAs(xhr.response, fileName);
-        resolve({ mode: 'blob', count: 1 });
-      } else {
-        reject(new Error(`HTTP ${xhr.status}`));
-      }
-    };
-
-    xhr.onerror = () => reject(new Error('Network error during download'));
-    xhr.onabort = () => reject(new Error('DOWNLOAD_CANCELLED'));
-    xhr.ontimeout = () => reject(new Error('Download timed out'));
-
-    xhr.send();
-  });
+  triggerDirectDownload(targetUrl, fileName);
+  await new Promise((r) => setTimeout(r, 600));
+  return { mode: 'stream', count: 1 };
 }
 
 /**
@@ -330,7 +284,8 @@ export async function downloadBatchZipWithProgress(
       xhr.onerror = () => {
         currentXhr = null;
         if (isAborted) return reject(new Error('DOWNLOAD_CANCELLED'));
-        console.warn(`Network error on ${fileName}`);
+        console.warn(`Network or CORS restriction on ${fileName}; queuing for direct download fallback.`);
+        triggerDirectDownload(targetUrl, fileName);
         resolve();
       };
 
@@ -347,26 +302,45 @@ export async function downloadBatchZipWithProgress(
     throw new Error('DOWNLOAD_CANCELLED');
   }
 
-  if (onProgress) {
-    onProgress({ percent: 98, speed: '', text: 'Compressing ZIP...' });
-  }
+  const zipFileCount = Object.keys(zip.files).length;
+  if (zipFileCount > 0) {
+    if (onProgress) {
+      onProgress({ percent: 98, speed: '', text: 'Compressing ZIP...' });
+    }
 
-  const zipBlob = await zip.generateAsync(
-    { type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 1 } },
-    (meta) => {
-      if (isAborted) return;
-      if (onProgress) {
-        onProgress({ percent: Math.round(meta.percent), speed: '', text: `Zipping ${Math.round(meta.percent)}%` });
+    const zipBlob = await zip.generateAsync(
+      { type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 1 } },
+      (meta) => {
+        if (isAborted) return;
+        if (onProgress) {
+          onProgress({ percent: Math.round(meta.percent), speed: '', text: `Zipping ${Math.round(meta.percent)}%` });
+        }
+      }
+    );
+
+    if (isAborted) {
+      throw new Error('DOWNLOAD_CANCELLED');
+    }
+
+    saveAs(zipBlob, `CloudGuard_Batch_${Date.now()}.zip`);
+    return { mode: 'zip', count: zipFileCount };
+  } else {
+    // If CORS or network restrictions prevented in-memory ZIP creation, fallback to sequential direct download
+    if (typeof onNotice === 'function') {
+      onNotice('Archive creation bypassed due to storage policy; downloading files directly...');
+    }
+    for (let i = 0; i < selectedFiles.length; i++) {
+      if (isAborted) break;
+      const file = selectedFiles[i];
+      const rawUrl = await getFreshDownloadUrl(file);
+      const url = resolveFetchUrl(rawUrl);
+      triggerDirectDownload(url, file.name);
+      if (i < selectedFiles.length - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 900));
       }
     }
-  );
-
-  if (isAborted) {
-    throw new Error('DOWNLOAD_CANCELLED');
+    return { mode: 'stream', count: selectedFiles.length };
   }
-
-  saveAs(zipBlob, `CloudGuard_Batch_${Date.now()}.zip`);
-  return { mode: 'zip', count: selectedFiles.length };
 }
 
 // Backwards compatibility aliases

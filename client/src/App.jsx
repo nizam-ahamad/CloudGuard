@@ -580,7 +580,7 @@ function App() {
     } catch (err) {
       if (err.message !== 'DOWNLOAD_CANCELLED') {
         console.error('Download failed:', err);
-        toast.error('Download failed. Check your network connection.');
+        toast.error(err.message || 'Download failed. Check your network connection.');
       }
     } finally {
       setIsDownloading(false);
@@ -1706,10 +1706,13 @@ function App() {
 
   const handlePreview = async (file) => {
     if (file.isFolder) {
-      setCurrentDirectory(file.diskName);
+      setCurrentDirectory(file.diskName || file.name);
       return;
     }
-    if (!file.diskName || (file.status !== 'Safe' && file.status !== 'unscanned_too_large')) return;
+    if (file.isMalicious || file.status === 'Malicious' || file.status === 'malware' || file.securityStatus === 'threat_purged') {
+      addToast('error', 'Cannot preview infected file');
+      return;
+    }
     
     try {
       setPreviewText('Loading...');
@@ -1735,7 +1738,11 @@ function App() {
   };
 
   const handleDownload = async (file) => {
-    if (file.isFolder || !file.diskName || (file.status !== 'Safe' && file.status !== 'unscanned_too_large')) return;
+    if (!file || file.isFolder) return;
+    if (file.isMalicious || file.status === 'Malicious' || file.status === 'malware' || file.securityStatus === 'threat_purged') {
+      toast.error('Cannot download infected file');
+      return;
+    }
     try {
       const isLarge = (file.size || 0) >= 1 * 1024 * 1024 * 1024;
       const res = await triggerDownload(file);
@@ -1746,7 +1753,7 @@ function App() {
       }
     } catch (err) {
       if (err.message !== 'DOWNLOAD_CANCELLED') {
-        toast.error('Download failed. Check your network connection.');
+        toast.error(err.message || 'Download failed. Check your network connection.');
       }
     }
   };
@@ -2822,10 +2829,10 @@ function App() {
                     filteredFiles.map((file, index) => (
                     <ErrorBoundary key={file?._id || file?.id || Math.random()}>
                     <tr 
-                      onClick={() => file.isFolder ? setCurrentDirectory(file.diskName) : handlePreview(file)}
+                      onClick={() => file.isFolder ? setCurrentDirectory(file.diskName || file.name) : handlePreview(file)}
                       className={`flex flex-wrap md:table-row items-center py-3 px-4 md:p-0 hover:bg-surface-bright dark:hover:bg-zinc-800/70 dark:text-zinc-300 transition-colors group md:h-14 ${
                         selectedFileIds.includes(String(file._id)) ? 'bg-neutral-100 dark:bg-zinc-800/60' : ''
-                      } ${file.isFolder || (file.diskName && (file.status === 'Safe' || file.status === 'unscanned_too_large')) ? 'cursor-pointer' : ''}`}
+                      } ${file.isFolder || (!file.isMalicious && file.status !== 'Malicious' && file.status !== 'malware' && file.securityStatus !== 'threat_purged') ? 'cursor-pointer' : ''}`}
                     >
                       <td className="w-12 text-center p-0 align-middle" onClick={(e) => e.stopPropagation()}>
                         {!file.isFolder && (
@@ -2905,8 +2912,8 @@ function App() {
                                 <span className="material-symbols-outlined text-[18px]">visibility</span> Preview
                               </button>
                             )}
-                            {!file.isFolder && file.diskName && (file.status === 'Safe' || file.status === 'unscanned_too_large') && (
-                              <button onClick={(e) => { e.stopPropagation(); setActiveMenuId(null); triggerDownload(file); }} className="w-full text-left px-4 py-2.5 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-neutral-700 transition-colors flex items-center gap-3">
+                            {!file.isFolder && !file.isMalicious && file.status !== 'Malicious' && file.status !== 'malware' && file.securityStatus !== 'threat_purged' && (
+                              <button onClick={(e) => { e.stopPropagation(); setActiveMenuId(null); handleDownload(file); }} className="w-full text-left px-4 py-2.5 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-neutral-700 transition-colors flex items-center gap-3">
                                 <span className="material-symbols-outlined text-[18px]">download</span> Download
                               </button>
                             )}

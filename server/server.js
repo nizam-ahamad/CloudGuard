@@ -1989,17 +1989,15 @@ app.get('/api/files/:id/access', verifyToken, async (req, res) => {
 // Dedicated Attachment Download Route
 app.get('/api/files/:id/download', verifyToken, async (req, res) => {
   try {
-    let query = {
-      _id: req.params.id,
-      $or: [
-        { userId: req.user._id },
-        { userId: String(req.user._id) },
-        { user: req.user._id }
-      ]
-    };
-    if (req.user.isAdmin) {
-      query = { _id: req.params.id };
+    const rawUserId = req.user?._id || req.user?.id;
+    if (!rawUserId && !req.user?.isAdmin) {
+      return res.status(401).json({ success: false, message: 'Unauthorized: User identity missing' });
     }
+
+    const query = req.user?.isAdmin
+      ? { _id: req.params.id }
+      : buildTenantQuery(rawUserId, { _id: req.params.id });
+
     const file = await FileModel.findOne(query);
     if (!file) {
       return res.status(404).json({ success: false, message: 'File not found' });
@@ -2020,18 +2018,28 @@ app.get('/api/files/:id/download', verifyToken, async (req, res) => {
     }
 
     const fileName = file.originalName || file.name || 'download';
-    const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME;
+    const safeAsciiName = fileName.replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '');
+    const encodedName = encodeURIComponent(fileName).replace(/['()]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase()).replace(/\*/g, '%2A');
+    const contentDisposition = `attachment; filename="${safeAsciiName || 'download'}"; filename*=UTF-8''${encodedName}`;
+
+    const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME || process.env.B2_BUCKET_NAME || 'cloudguard-vault-mumbai-2026';
 
     const command = new GetObjectCommand({
       Bucket: bucket,
       Key: targetKey,
-      ResponseContentDisposition: `attachment; filename="${encodeURIComponent(fileName)}"; filename*=UTF-8''${encodeURIComponent(fileName)}`
+      ResponseContentDisposition: contentDisposition
     });
 
-    // Valid for 5 minutes (300 seconds)
-    const downloadUrl = await getSignedUrl(s3, command, { expiresIn: 300 });
+    // Valid for 1 hour (3600 seconds)
+    const downloadUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
 
-    res.json({ success: true, downloadUrl: applyCdnToUrl(downloadUrl) });
+    res.json({
+      success: true,
+      downloadUrl: applyCdnToUrl(downloadUrl),
+      url: applyCdnToUrl(downloadUrl),
+      name: fileName,
+      size: file.size || 0
+    });
   } catch (err) {
     console.error('Error generating download url:', err);
     res.status(500).json({ success: false, message: 'Download failed' });
@@ -2041,17 +2049,15 @@ app.get('/api/files/:id/download', verifyToken, async (req, res) => {
 // GET /api/files/:id/download-url - Generates fresh on-demand S3 presigned download URL valid for 1 hour
 app.get('/api/files/:id/download-url', verifyToken, async (req, res) => {
   try {
-    let query = {
-      _id: req.params.id,
-      $or: [
-        { userId: req.user._id },
-        { userId: String(req.user._id) },
-        { user: req.user._id }
-      ]
-    };
-    if (req.user.isAdmin) {
-      query = { _id: req.params.id };
+    const rawUserId = req.user?._id || req.user?.id;
+    if (!rawUserId && !req.user?.isAdmin) {
+      return res.status(401).json({ error: 'Unauthorized: User identity missing' });
     }
+
+    const query = req.user?.isAdmin
+      ? { _id: req.params.id }
+      : buildTenantQuery(rawUserId, { _id: req.params.id });
+
     const file = await FileModel.findOne(query);
     if (!file) {
       return res.status(404).json({ error: 'File not found' });
@@ -2072,17 +2078,27 @@ app.get('/api/files/:id/download-url', verifyToken, async (req, res) => {
     }
 
     const fileName = file.originalName || file.name || 'download';
-    const bucket = process.env.AWS_S3_BUCKET_NAME || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET;
+    const safeAsciiName = fileName.replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '');
+    const encodedName = encodeURIComponent(fileName).replace(/['()]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase()).replace(/\*/g, '%2A');
+    const contentDisposition = `attachment; filename="${safeAsciiName || 'download'}"; filename*=UTF-8''${encodedName}`;
+
+    const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME || process.env.B2_BUCKET_NAME || 'cloudguard-vault-mumbai-2026';
 
     // Generate fresh presigned URL valid for 1 hour (3600 seconds) with Content-Disposition: attachment
     const command = new GetObjectCommand({
       Bucket: bucket,
       Key: targetKey,
-      ResponseContentDisposition: `attachment; filename="${encodeURIComponent(fileName)}"; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+      ResponseContentDisposition: contentDisposition,
     });
 
     const downloadUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
-    return res.json({ downloadUrl: applyCdnToUrl(downloadUrl), name: fileName, size: file.size || 0 });
+    return res.json({
+      success: true,
+      downloadUrl: applyCdnToUrl(downloadUrl),
+      url: applyCdnToUrl(downloadUrl),
+      name: fileName,
+      size: file.size || 0
+    });
   } catch (err) {
     console.error('Failed to generate presigned download URL:', err);
     return res.status(500).json({ error: 'Failed to generate download link' });
