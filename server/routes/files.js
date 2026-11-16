@@ -2011,20 +2011,21 @@ router.get('/storage-stats', authMiddleware, getStorageStats);
 router.get('/photos', authMiddleware, (req, res, next) => require('./photos').handleGetPhotos(req, res, next));
 
 /**
- * GET /api/files/:id/download-url
+ * GET /api/files/:id/download-url and GET /api/files/:id/download
  * Generates fresh on-demand S3 presigned download URL with ResponseContentDisposition attachment
  */
-router.get('/:id/download-url', authMiddleware, async (req, res) => {
+const handleGetDownloadUrl = async (req, res) => {
   try {
-    const userId = req.user?._id || req.user?.id;
-    const file = await File.findOne({
-      _id: req.params.id,
-      $or: [
-        { userId: userId },
-        { userId: String(userId) },
-        { user: userId }
-      ]
-    });
+    const rawUserId = req.user?._id || req.user?.id;
+    if (!rawUserId && !req.user?.isAdmin) {
+      return res.status(401).json({ error: 'Unauthorized: User identity missing' });
+    }
+
+    const query = req.user?.isAdmin
+      ? { _id: req.params.id }
+      : buildTenantQuery(rawUserId, { _id: req.params.id });
+
+    const file = await File.findOne(query);
     if (!file) return res.status(404).json({ error: 'File not found' });
 
     let targetKey = file.s3Key || file.key;
@@ -2038,21 +2039,34 @@ router.get('/:id/download-url', authMiddleware, async (req, res) => {
     if (!targetKey) return res.status(400).json({ error: 'S3 Key missing' });
 
     const fileName = file.originalName || file.name || 'download';
-    const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
+    const safeAsciiName = fileName.replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '');
+    const encodedName = encodeURIComponent(fileName).replace(/['()]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase()).replace(/\*/g, '%2A');
+    const contentDisposition = `attachment; filename="${safeAsciiName || 'download'}"; filename*=UTF-8''${encodedName}`;
+
+    const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME || process.env.B2_BUCKET_NAME || 'cloudguard-vault-mumbai-2026';
 
     const command = new GetObjectCommand({
       Bucket: bucket,
       Key: targetKey,
-      ResponseContentDisposition: `attachment; filename="${encodeURIComponent(fileName)}"; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+      ResponseContentDisposition: contentDisposition,
     });
 
     const downloadUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
-    return res.json({ downloadUrl: applyCdnToUrl(downloadUrl), name: fileName, size: file.size || 0 });
+    return res.json({
+      success: true,
+      downloadUrl: applyCdnToUrl(downloadUrl),
+      url: applyCdnToUrl(downloadUrl),
+      name: fileName,
+      size: file.size || 0
+    });
   } catch (err) {
     console.error('Failed to generate presigned download URL:', err);
     return res.status(500).json({ error: 'Failed to generate download link' });
   }
-});
+};
+
+router.get('/:id/download-url', authMiddleware, handleGetDownloadUrl);
+router.get('/:id/download', authMiddleware, handleGetDownloadUrl);
 
 // -------------------------------------------------------------
 // 7. SECURE FILE MOVE ROUTE (PUT & PATCH /:id/move)
