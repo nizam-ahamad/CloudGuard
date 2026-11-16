@@ -14,10 +14,13 @@ import {
   Check,
   X,
   Loader2,
+  Trash2,
 } from 'lucide-react';
 import { useToast } from '../context/ToastContext';
 import { useDownload } from '../context/DownloadContext';
 import CentralizedFloatingBar from '../components/FloatingBar';
+import DeleteConfirmModal from '../components/DeleteConfirmModal';
+import { API_BASE_URL } from '../config';
 import { getCachedAccessUrl, fetchAccessUrl, prefetchAccessUrl } from '../utils/accessUrlCache';
 
 // --------------------------------------------------------------------------
@@ -104,6 +107,8 @@ export default function PhotosView({ token: propToken }) {
   // Multi-select state
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [itemToDelete, setItemToDelete] = useState(null);
+  const [isDeletingItems, setIsDeletingItems] = useState(false);
   const [isDownloadingItem, setIsDownloadingItem] = useState(false);
 
   // Layout view modes
@@ -199,9 +204,9 @@ export default function PhotosView({ token: propToken }) {
       if (!globalPhotosCache || forceReload) {
         setLoading(true);
       }
-      const token = localStorage.getItem('token');
-      const res = await axios.get('/api/photos', {
-        headers: { Authorization: `Bearer ${token}` },
+      const token = propToken || localStorage.getItem('token');
+      const res = await axios.get(`${API_BASE_URL}/api/photos`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
 
       const list = Array.isArray(res.data) ? res.data : (res.data?.photos || []);
@@ -479,57 +484,85 @@ export default function PhotosView({ token: propToken }) {
     }
   };
 
-  // Undo Delete
+  // Undo Delete (Restore from Bin)
   const handleUndoDelete = async (itemsToRestore) => {
     try {
       const token = propToken || localStorage.getItem('token');
       const fileIds = itemsToRestore.map((i) => i._id);
 
       await axios.post(
-        '/api/files/restore-batch',
+        `${API_BASE_URL}/api/files/restore-batch`,
         { fileIds, folderIds: [] },
         { headers: token ? { Authorization: `Bearer ${token}` } : {} }
       );
 
-      showPillToast({ message: 'Deletion undone', duration: 3000 });
+      showPillToast({ message: 'Restored from Bin', duration: 3000 });
+      window.dispatchEvent(new CustomEvent('cloudguard:files-updated'));
+      window.dispatchEvent(new Event('cloudguard:files-updated'));
+      window.dispatchEvent(new CustomEvent('cloudguard:storage-updated'));
+      window.dispatchEvent(new Event('cloudguard:storage-updated'));
       fetchMedia(true);
     } catch (err) {
       console.error('Failed to undo delete:', err);
-      toast.error('Could not undo deletion');
+      toast.error('Could not undo move to Bin');
     }
   };
 
-  // Confirm Permanent Deletion
-  const handleConfirmPermanentDelete = async () => {
-    const itemsToDelete = mediaList.filter((m) => selectedIds.has(m._id));
-    setIsDeleteModalOpen(false);
-    deselectAll();
+  // Confirm Soft-Delete / Move to Bin
+  const handleConfirmMoveToBin = async () => {
+    const itemsToDelete = itemToDelete
+      ? [itemToDelete]
+      : mediaList.filter((m) => selectedIds.has(m._id));
+
+    if (itemsToDelete.length === 0) {
+      setIsDeleteModalOpen(false);
+      setItemToDelete(null);
+      return;
+    }
+
+    const fileIds = itemsToDelete.map((m) => m._id);
+    setIsDeletingItems(true);
 
     try {
       const token = propToken || localStorage.getItem('token');
-      const fileIds = itemsToDelete.map((m) => m._id);
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
       await axios.post(
-        '/api/files/delete-batch',
+        `${API_BASE_URL}/api/files/delete-batch`,
         { fileIds, folderIds: [] },
-        { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+        { headers }
       );
 
-      const updated = mediaList.filter((m) => !fileIds.includes(m._id));
+      const fileIdSet = new Set(fileIds.map(String));
+      const updated = mediaList.filter((m) => !fileIdSet.has(String(m._id)));
       globalPhotosCache = updated;
       setMediaList(updated);
 
+      if (itemToDelete || (currentPreviewItem && fileIdSet.has(String(currentPreviewItem._id)))) {
+        closePreview();
+      }
+
+      deselectAll();
+      setIsDeleteModalOpen(false);
+      setItemToDelete(null);
+
+      // Trigger events so BinView, App.jsx (My Files, Recent, Storage stats) refresh immediately
+      window.dispatchEvent(new CustomEvent('cloudguard:files-updated'));
+      window.dispatchEvent(new Event('cloudguard:files-updated'));
+      window.dispatchEvent(new CustomEvent('cloudguard:storage-updated'));
+      window.dispatchEvent(new Event('cloudguard:storage-updated'));
+
       const itemsToRestore = [...itemsToDelete];
       const getDeleteToastContent = (items) => {
-        if (!items || items.length === 0) return { action: 'Deleted', target: 'item' };
+        if (!items || items.length === 0) return { action: 'Moved to Bin', target: 'item' };
         if (items.length === 1) {
           return {
-            action: 'Deleted',
-            target: items[0].name || 'item',
+            action: 'Moved to Bin',
+            target: items[0].originalName || items[0].name || 'item',
           };
         }
         return {
-          action: 'Deleted',
+          action: 'Moved to Bin',
           target: `${items.length} items`,
         };
       };
@@ -596,9 +629,11 @@ export default function PhotosView({ token: propToken }) {
         }
       );
     } catch (err) {
-      console.error('Delete error:', err);
-      toast.error('Failed to delete selected items');
+      console.error('Move to bin error:', err);
+      toast.error('Failed to move selected items to Bin');
       fetchMedia(true);
+    } finally {
+      setIsDeletingItems(false);
     }
   };
 
@@ -967,51 +1002,42 @@ export default function PhotosView({ token: propToken }) {
           isAllSelected={selectedIds.size === mediaList.length}
           onToggleSelectAll={toggleSelectAll}
           onDownload={handleBatchDownload}
-          onDelete={() => setIsDeleteModalOpen(true)}
+          onDelete={() => {
+            setItemToDelete(null);
+            setIsDeleteModalOpen(true);
+          }}
           onClear={deselectAll}
           isDownloading={isDownloading}
         />
       )}
 
-      {/* Delete Confirmation Modal */}
-      {isDeleteModalOpen && (() => {
-        const singleItem = selectedIds.size === 1 ? mediaList.find((m) => selectedIds.has(m._id)) : null;
-        const modalTitle = singleItem ? `Delete "${singleItem.name}"?` : `Permanently delete ${selectedIds.size} items?`;
-        const modalDesc = selectedIds.size > 1
-          ? `Are you sure you want to permanently delete these ${selectedIds.size} items? This action cannot be undone and will immediately free up your storage.`
-          : 'Are you sure you want to permanently delete this file? This action cannot be undone and will immediately free up your storage.';
+      {/* Delete / Move to Bin Confirmation Modal */}
+      {(() => {
+        const targetCount = itemToDelete ? 1 : selectedIds.size;
+        const singleItem = itemToDelete || (selectedIds.size === 1 ? mediaList.find((m) => selectedIds.has(m._id)) : null);
+        const modalTitle = singleItem
+          ? `Move "${singleItem.originalName || singleItem.name || 'item'}" to Bin?`
+          : `Move ${targetCount} Items to Bin?`;
+        const modalDesc = targetCount > 1
+          ? `Are you sure you want to move these ${targetCount} items to the Bin? Items in the bin are kept for 30 days before being permanently deleted.`
+          : 'Are you sure you want to move this file to the Bin? Items in the bin are kept for 30 days before being permanently deleted.';
 
         return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-            <div className="bg-white dark:bg-[#18181b] border border-zinc-200 dark:border-zinc-800 rounded-2xl p-6 max-w-md w-full shadow-2xl transition-colors">
-              <h3 
-                className="text-base font-semibold text-zinc-900 dark:text-zinc-100 truncate max-w-sm"
-                title={modalTitle}
-              >
-                {modalTitle}
-              </h3>
-              <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400 mt-2">
-                {modalDesc}
-              </p>
-
-              <div className="flex flex-col-reverse sm:flex-row items-center justify-end gap-2.5 sm:gap-3 mt-6">
-                <button
-                  type="button"
-                  onClick={() => setIsDeleteModalOpen(false)}
-                  className="w-full sm:w-auto px-4 py-2 text-sm font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-xl transition-colors cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={handleConfirmPermanentDelete}
-                  className="w-full sm:w-auto px-4 py-2 text-sm font-medium bg-red-600 hover:bg-red-500 text-white rounded-xl shadow-lg shadow-red-600/25 transition-all cursor-pointer"
-                >
-                  Permanently delete
-                </button>
-              </div>
-            </div>
-          </div>
+          <DeleteConfirmModal
+            isOpen={isDeleteModalOpen}
+            onClose={() => {
+              if (!isDeletingItems) {
+                setIsDeleteModalOpen(false);
+                setItemToDelete(null);
+              }
+            }}
+            onConfirm={handleConfirmMoveToBin}
+            title={modalTitle}
+            description={modalDesc}
+            confirmText="Move to Bin"
+            count={targetCount}
+            isDeleting={isDeletingItems}
+          />
         );
       })()}
 
@@ -1036,6 +1062,21 @@ export default function PhotosView({ token: propToken }) {
             </div>
 
             <div className="flex items-center gap-2">
+              {/* Move to Bin Button (Left of Download) */}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setItemToDelete(currentPreviewItem);
+                  setIsDeleteModalOpen(true);
+                }}
+                title="Move to Bin"
+                aria-label="Move to Bin"
+                className="p-2 rounded-full bg-neutral-800/80 hover:bg-red-600/80 active:scale-95 text-neutral-200 hover:text-white backdrop-blur-md border border-neutral-700/50 transition-all cursor-pointer shrink-0"
+              >
+                <Trash2 className="w-4 h-4 sm:w-4.5 sm:h-4.5"/>
+              </button>
+
               {/* Download Button (Left of Cross) */}
               <button
                 type="button"
