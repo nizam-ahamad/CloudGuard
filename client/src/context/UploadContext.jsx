@@ -57,6 +57,63 @@ export function generateThumbnailWithTimeout(file) {
   ]).catch(() => null);
 }
 
+// Await network restoration and tab foregrounding for seamless background resilience
+export function waitForOnlineAndVisible(abortSignal) {
+  if (
+    (typeof navigator === 'undefined' || navigator.onLine !== false) &&
+    (typeof document === 'undefined' || document.visibilityState !== 'hidden')
+  ) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve, reject) => {
+    let cleanup = null;
+
+    const checkState = () => {
+      const isOnline = typeof navigator === 'undefined' || navigator.onLine !== false;
+      const isVisible = typeof document === 'undefined' || document.visibilityState !== 'hidden';
+      if (isOnline && isVisible) {
+        if (cleanup) cleanup();
+        resolve();
+      }
+    };
+
+    const abortHandler = () => {
+      if (cleanup) cleanup();
+      reject(new Error('Upload cancelled while paused'));
+    };
+
+    if (abortSignal) {
+      if (abortSignal.aborted) {
+        return reject(new Error('Upload cancelled while paused'));
+      }
+      abortSignal.addEventListener('abort', abortHandler, { once: true });
+    }
+
+    const onlineHandler = () => checkState();
+    const visibilityHandler = () => checkState();
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('online', onlineHandler);
+    }
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', visibilityHandler);
+    }
+
+    cleanup = () => {
+      if (abortSignal) {
+        abortSignal.removeEventListener('abort', abortHandler);
+      }
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('online', onlineHandler);
+      }
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', visibilityHandler);
+      }
+    };
+  });
+}
+
 // Compute queue-level metrics with clamped bytes to guarantee non-negative remainingBytes
 function computeQueueMetrics(items) {
   if (!items || !items.length) {
@@ -138,6 +195,7 @@ export function UploadProvider({ children }) {
   const eventDebounceTimerRef = useRef(null);
   const cancelledTicketsRef = useRef(new Set());
   const cancelledIdsRef = useRef(new Set());
+  const wakeLockRef = useRef(null);
   const toastCtx = useToast();
 
   const notifyBackendCancel = useCallback((ticket) => {
@@ -208,6 +266,76 @@ export function UploadProvider({ children }) {
       }
     };
   }, []);
+
+  const releaseWakeLock = useCallback(async () => {
+    if (wakeLockRef.current) {
+      try {
+        await wakeLockRef.current.release();
+      } catch {}
+      wakeLockRef.current = null;
+    }
+  }, []);
+
+  const acquireWakeLock = useCallback(async () => {
+    if (typeof navigator === 'undefined' || !('wakeLock' in navigator)) return;
+    if (wakeLockRef.current && !wakeLockRef.current.released) return;
+
+    // Only request when active transfers exist and total queue size >= 50 MB
+    const metrics = computeQueueMetrics(queueRef.current || []);
+    if (metrics.activeCount === 0 && metrics.queuedCount === 0) return;
+    if (metrics.totalBytes < 50 * 1024 * 1024) return;
+
+    try {
+      wakeLockRef.current = await navigator.wakeLock.request('screen');
+      wakeLockRef.current.addEventListener('release', () => {
+        wakeLockRef.current = null;
+      });
+    } catch {
+      wakeLockRef.current = null;
+    }
+  }, []);
+
+  // Screen Wake Lock visibility-change re-acquisition and lifecycle cleanup
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        const metrics = computeQueueMetrics(queueRef.current || []);
+        if ((metrics.activeCount > 0 || metrics.queuedCount > 0) && metrics.totalBytes >= 50 * 1024 * 1024) {
+          acquireWakeLock();
+        }
+      }
+    };
+
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    }
+    return () => {
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
+      releaseWakeLock();
+    };
+  }, [acquireWakeLock, releaseWakeLock]);
+
+  // Accidental Tab-Close / Reload Guard while uploads are actively transferring
+  useEffect(() => {
+    const hasActive = queue.some((i) =>
+      ['uploading', 'hashing', 'finalizing'].includes(i.status)
+    );
+
+    if (!hasActive) return;
+
+    const handleBeforeUnload = (e) => {
+      e.preventDefault();
+      e.returnValue = '';
+      return '';
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [queue]);
 
   const startFolderPrep = useCallback(({ folderName, createdCount = 0, totalFolders = 0, totalFiles = 0, abortController = null }) => {
     setFolderPrep({
@@ -327,6 +455,7 @@ export function UploadProvider({ children }) {
     );
 
     if (!hasActiveTransfers) {
+      releaseWakeLock();
       setEtaSeconds(null);
       setGlobalSpeed('');
       batchStartTimeRef.current = 0;
@@ -335,6 +464,8 @@ export function UploadProvider({ children }) {
       speedSamplesRef.current = [];
       return;
     }
+
+    acquireWakeLock();
 
     if (batchStartTimeRef.current === 0) {
       batchStartTimeRef.current = Date.now();
@@ -349,6 +480,7 @@ export function UploadProvider({ children }) {
 
       const metrics = computeQueueMetrics(queueRef.current || []);
       if (metrics.activeCount === 0 && metrics.queuedCount === 0) {
+        releaseWakeLock();
         setEtaSeconds(null);
         setGlobalSpeed('');
         batchStartTimeRef.current = 0;
@@ -442,9 +574,9 @@ export function UploadProvider({ children }) {
       );
     }
 
-    // Materialize mobile files <= 25 MB immediately on selection in sequential batches of 3
+    // Materialize iOS files <= 25 MB immediately on selection in sequential batches of 3
     // Once materialized as an in-memory Blob/File, iOS Safari cannot revoke temporary Photo Library handles
-    if (isMobileDevice) {
+    if (isIOS) {
       const mobileItemsToMaterialize = newItems.filter(
         (it) => it.status === 'queued' && it.file && it.size > 0 && it.size <= 25 * 1024 * 1024
       );
@@ -652,7 +784,7 @@ export function UploadProvider({ children }) {
       const totalUploadedBytes = Math.min(file.size, completedBytes + inFlightTotal);
       const percent = file.size > 0 ? Math.min(99, Math.round((totalUploadedBytes / file.size) * 100)) : 0;
       const now = Date.now();
-      if (now - lastProgressTime >= 200 || percent >= 99 || (lastProgressTime === 0 && totalUploadedBytes > 0)) {
+      if (now - lastProgressTime >= 250 || percent >= 99 || (lastProgressTime === 0 && totalUploadedBytes > 0)) {
         lastProgressTime = now;
         updateItem(id, {
           progress: percent,
@@ -674,7 +806,12 @@ export function UploadProvider({ children }) {
       const end = Math.min(start + effectivePartSize, file.size);
       const partBytes = end - start;
 
+      let currentPartMeta = partMeta;
+      let targetUrl = currentPartMeta?.uploadUrl || currentPartMeta?.signedUrl;
       let attempt = 0;
+      let backgroundResumeCycles = 0;
+      const MAX_BACKGROUND_RESUMES = 10;
+
       while (attempt < MAX_PART_RETRIES) {
         if (isAborted || abortController.signal.aborted) throw new Error('Multipart upload aborted');
         try {
@@ -695,7 +832,6 @@ export function UploadProvider({ children }) {
             bodyToSend = chunkBuf;
           }
 
-          let targetUrl = partMeta?.uploadUrl || partMeta?.signedUrl;
           if (!targetUrl) {
             const signRes = await axios.post(
               `${API_BASE_URL || ''}/api/files/multipart/sign-part`,
@@ -703,6 +839,7 @@ export function UploadProvider({ children }) {
               { headers, signal: abortController.signal }
             );
             targetUrl = signRes.data?.uploadUrl || signRes.data?.signedUrl;
+            currentPartMeta.uploadUrl = targetUrl;
           }
 
           inFlightBytesRef.current[partNumber] = 0;
@@ -790,6 +927,50 @@ export function UploadProvider({ children }) {
           }
 
           const status = err.status || err.response?.status;
+
+          // 1. Expired Presigned URL Fallback (HTTP 403)
+          if (status === 403) {
+            console.warn(`[Multipart Part ${partNumber}] Presigned URL expired (HTTP 403). Refreshing signed URL...`);
+            try {
+              const signRes = await axios.post(
+                `${API_BASE_URL || ''}/api/files/multipart/sign-part`,
+                { s3Key, uploadId, partNumber },
+                { headers, signal: abortController.signal }
+              );
+              const refreshedUrl = signRes.data?.uploadUrl || signRes.data?.signedUrl;
+              if (refreshedUrl) {
+                targetUrl = refreshedUrl;
+                currentPartMeta.uploadUrl = refreshedUrl;
+                continue;
+              }
+            } catch (refreshErr) {
+              console.error(`[Multipart Part ${partNumber}] Failed to refresh presigned URL:`, refreshErr);
+            }
+          }
+
+          // 2. Background Pause / Network Auto-Resume
+          const isSuspendedOrOffline =
+            (typeof document !== 'undefined' && document.visibilityState === 'hidden') ||
+            (typeof navigator !== 'undefined' && navigator.onLine === false) ||
+            err.code === 'ERR_NETWORK_IO_SUSPENDED' ||
+            err.code === 'ERR_INTERNET_DISCONNECTED' ||
+            err.message?.includes('ERR_NETWORK_IO_SUSPENDED') ||
+            err.message?.includes('ERR_INTERNET_DISCONNECTED');
+
+          if (isSuspendedOrOffline && backgroundResumeCycles < MAX_BACKGROUND_RESUMES) {
+            backgroundResumeCycles += 1;
+            updateItem(id, { statusLabel: 'Paused (in background) — auto-resuming...' });
+            try {
+              await waitForOnlineAndVisible(abortController.signal);
+            } catch (waitErr) {
+              throw waitErr;
+            }
+            updateItem(id, { statusLabel: null });
+            await new Promise((r) => setTimeout(r, 300));
+            continue;
+          }
+
+          // 3. Regular Transient Network Retry
           const isTransient =
             !status ||
             err.code === 'ECONNABORTED' ||
@@ -865,12 +1046,18 @@ export function UploadProvider({ children }) {
     id,
     ticket,
     uploadFile,
+    folderId,
+    headers,
     controller,
     updateItem,
     trackByteSpeedTick,
   }) => {
     let attempt = 0;
+    let backgroundResumeCycles = 0;
     const MAX_SINGLE_RETRIES = 3;
+    const MAX_BACKGROUND_RESUMES = 10;
+    let currentPresignedUrl = ticket?.presignedUrl || ticket?.signedUrl;
+
     while (attempt < MAX_SINGLE_RETRIES) {
       if (controller.signal.aborted || batchCancelledRef.current) {
         throw new Error('Upload cancelled');
@@ -906,7 +1093,7 @@ export function UploadProvider({ children }) {
         }, 45000);
 
         let lastSingleProgressTime = 0;
-        await s3Axios.put(ticket.presignedUrl, uploadFile, {
+        await s3Axios.put(currentPresignedUrl, uploadFile, {
           signal: singleAbort.signal,
           headers: { 'Content-Type': uploadFile.type || 'application/octet-stream' },
           transformRequest: [(data, reqHeaders) => {
@@ -925,7 +1112,7 @@ export function UploadProvider({ children }) {
                 Math.round((progressEvent.loaded / progressEvent.total) * 100)
               );
               const now = Date.now();
-              if (now - lastSingleProgressTime >= 200 || percent >= 99 || (lastSingleProgressTime === 0 && progressEvent.loaded > 0)) {
+              if (now - lastSingleProgressTime >= 250 || percent >= 99 || (lastSingleProgressTime === 0 && progressEvent.loaded > 0)) {
                 lastSingleProgressTime = now;
                 updateItem(id, {
                   progress: percent,
@@ -958,6 +1145,63 @@ export function UploadProvider({ children }) {
           throw putErr;
         }
 
+        const status = putErr.status || putErr.response?.status;
+
+        // 1. Expired Presigned URL Fallback (HTTP 403)
+        if (status === 403) {
+          console.warn(`[Single PUT ${id}] Presigned URL expired (HTTP 403). Refreshing URL...`);
+          try {
+            const authHdr = headers || (localStorage.getItem('token') ? { Authorization: `Bearer ${localStorage.getItem('token')}` } : {});
+            const refreshRes = await axios.post(
+              `${API_BASE_URL || ''}/api/files/presigned-url`,
+              {
+                fileName: uploadFile.name,
+                fileSize: uploadFile.size,
+                mimeType: uploadFile.type || 'application/octet-stream',
+                folderId: folderId || null,
+              },
+              { headers: authHdr, signal: controller.signal }
+            );
+            if (refreshRes.data?.presignedUrl) {
+              currentPresignedUrl = refreshRes.data.presignedUrl;
+              ticket.presignedUrl = refreshRes.data.presignedUrl;
+              if (refreshRes.data.fileId) ticket.fileId = refreshRes.data.fileId;
+              if (refreshRes.data.s3Key) ticket.s3Key = refreshRes.data.s3Key;
+              activeTicketsRef.current.set(id, {
+                fileId: ticket.fileId,
+                s3Key: ticket.s3Key,
+                uploadId: null,
+              });
+              continue;
+            }
+          } catch (refreshErr) {
+            console.error(`[Single PUT ${id}] Failed to refresh presigned URL:`, refreshErr);
+          }
+        }
+
+        // 2. Background Pause / Network Auto-Resume
+        const isSuspendedOrOffline =
+          (typeof document !== 'undefined' && document.visibilityState === 'hidden') ||
+          (typeof navigator !== 'undefined' && navigator.onLine === false) ||
+          putErr.code === 'ERR_NETWORK_IO_SUSPENDED' ||
+          putErr.code === 'ERR_INTERNET_DISCONNECTED' ||
+          putErr.message?.includes('ERR_NETWORK_IO_SUSPENDED') ||
+          putErr.message?.includes('ERR_INTERNET_DISCONNECTED');
+
+        if (isSuspendedOrOffline && backgroundResumeCycles < MAX_BACKGROUND_RESUMES) {
+          backgroundResumeCycles += 1;
+          updateItem(id, { statusLabel: 'Paused (in background) — auto-resuming...' });
+          try {
+            await waitForOnlineAndVisible(controller.signal);
+          } catch (waitErr) {
+            throw waitErr;
+          }
+          updateItem(id, { statusLabel: null });
+          await new Promise((r) => setTimeout(r, 300));
+          continue;
+        }
+
+        // 3. Regular Transient Network Retry
         const isNetworkOrTimeout =
           !putErr.response ||
           putErr.code === 'ECONNABORTED' ||
@@ -1184,10 +1428,15 @@ export function UploadProvider({ children }) {
           id,
           ticket,
           uploadFile,
+          folderId,
+          headers,
           controller,
           updateItem,
           trackByteSpeedTick,
         });
+
+        fileId = ticket.fileId;
+        s3Key = ticket.s3Key;
 
         sha256 = await Promise.race([
           hashPromise,
@@ -1404,10 +1653,11 @@ export function UploadProvider({ children }) {
     // Reset ETA tracking and speed
     setEtaSeconds(null);
     setGlobalSpeed('');
+    releaseWakeLock();
 
     // 4. Show a single clean toast: 'Upload cancelled'
     toast.info('Upload cancelled', { id: 'cancel-all', duration: 3000 });
-  }, [notifyCancelBackend, toast]);
+  }, [notifyCancelBackend, toast, releaseWakeLock]);
 
   const clearFinished = () => {
     setQueue((prev) =>
