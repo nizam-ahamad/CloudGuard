@@ -260,14 +260,16 @@ export function SidebarUpgradeCard({ user, isCollapsed = false, hideIfMaxTier = 
 
       {/* Label and Arrow: Smoothly fade in/out with zero horizontal jumping */}
       <div
-        className={`flex items-center justify-between flex-1 pr-3 min-w-0 transition-opacity duration-200 ${
+        className={`flex items-center flex-1 min-w-0 transition-opacity duration-200 ${
           isCollapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'
         }`}
       >
-        <span className="text-xs font-medium text-stone-800 dark:text-stone-200 truncate whitespace-nowrap">
+        <span className="flex-1 text-center text-xs font-medium text-stone-800 dark:text-stone-200 truncate whitespace-nowrap">
           {label}
         </span>
-        <ArrowRight className="w-3.5 h-3.5 shrink-0 text-stone-400 group-hover:text-stone-700 dark:text-stone-500 dark:group-hover:text-stone-300 transition-transform duration-200 group-hover:translate-x-0.5 ml-2" />
+        <div className="w-12 flex items-center justify-end pr-3 shrink-0">
+          <ArrowRight className="w-3.5 h-3.5 shrink-0 text-stone-400 group-hover:text-stone-700 dark:text-stone-500 dark:group-hover:text-stone-300 transition-transform duration-200 group-hover:translate-x-0.5" />
+        </div>
       </div>
 
       {/* Floating Tooltip in Collapsed Mode (Matches Bin, Monitor, Settings) */}
