@@ -837,6 +837,22 @@ router.get('/history', auth, async (req, res) => {
 });
 
 /**
+ * Helper to sanitize non-ASCII glyphs for PDFKit standard Helvetica (WinAnsi encoding)
+ */
+function sanitizePdfText(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/[—–]/g, '-')
+    .replace(/Δ/g, 'Delta')
+    .replace(/₹/g, 'INR ')
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/[^\x00-\x7F]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
  * GET /api/payments/invoice/:orderId
  * Generates an official, print-ready Bill of Supply (Invoice) as a binary vector PDF
  */
@@ -848,7 +864,7 @@ router.get('/invoice/:orderId', async (req, res) => {
 
     const invoiceDate = new Date(payment.createdAt).toLocaleDateString('en-IN', {
       day: 'numeric',
-      month: 'long',
+      month: 'short',
       year: 'numeric'
     });
     const periodStart = payment.periodStart
@@ -857,11 +873,23 @@ router.get('/invoice/:orderId', async (req, res) => {
     const periodEnd = payment.periodEnd
       ? new Date(payment.periodEnd).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
       : 'N/A';
+    const periodText = sanitizePdfText(`${periodStart} - ${periodEnd}`);
 
-    const customerName = payment.customerDetails?.name || payment.userId?.name || 'Subscriber';
-    const customerEmail = payment.customerDetails?.email || payment.userId?.email || 'N/A';
-    const planName = payment.planName || 'CloudGuard Storage';
-    const storageGB = payment.storageGB ? `${payment.storageGB} GB` : 'Standard';
+    const customerName = sanitizePdfText(payment.customerDetails?.name || payment.userId?.name || 'Subscriber');
+    const customerEmail = sanitizePdfText(payment.customerDetails?.email || payment.userId?.email || 'N/A');
+
+    // Plan name formatting, sanitization, and deduplication
+    let cleanPlanTitle = sanitizePdfText(payment.planName || 'CloudGuard Storage');
+    const storageSuffix = payment.storageGB ? `${payment.storageGB} GB` : '';
+    if (storageSuffix) {
+      const hasStorage = new RegExp(`\\b${payment.storageGB}\\s*GB\\b`, 'i').test(cleanPlanTitle);
+      if (!hasStorage) {
+        cleanPlanTitle = `${cleanPlanTitle} (${storageSuffix})`;
+      }
+    }
+    // Strip duplicate (XX GB) suffix if repeated
+    cleanPlanTitle = cleanPlanTitle.replace(/(\(\s*\d+\s*GB\s*\))\s*\1+/gi, '$1').trim();
+
     const amountVal = typeof payment.amount === 'number' ? payment.amount : Number(payment.amount || 0);
     const amountFormatted = amountVal.toFixed(2);
 
@@ -870,12 +898,12 @@ router.get('/invoice/:orderId', async (req, res) => {
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"`);
 
-    const doc = new PDFDocument({ size: 'A4', margin: 40 });
+    const doc = new PDFDocument({ size: 'A4', margin: 45 });
     doc.pipe(res);
 
-    const leftMargin = 40;
-    const rightMargin = 555;
-    const pageWidth = rightMargin - leftMargin;
+    const leftMargin = 45;
+    const rightMargin = 550;
+    const pageWidth = rightMargin - leftMargin; // 505pt
 
     // --- HEADER ---
     doc.fontSize(22).font('Helvetica-Bold').fillColor('#0f172a').text('CloudGuard', leftMargin, 40);
@@ -886,9 +914,9 @@ router.get('/invoice/:orderId', async (req, res) => {
     doc.fontSize(8.5).font('Helvetica-Bold').fillColor('#0369a1').text('BILL OF SUPPLY / OFFICIAL RECEIPT', leftMargin + 8, badgeY + 4.5);
 
     // Invoice Details Top Right
-    doc.fontSize(9.5).font('Helvetica-Bold').fillColor('#0f172a').text(`Invoice No: ${payment.invoiceNumber || 'N/A'}`, leftMargin, 40, { align: 'right', width: pageWidth });
+    doc.fontSize(9.5).font('Helvetica-Bold').fillColor('#0f172a').text(`Invoice No: ${sanitizePdfText(payment.invoiceNumber) || 'N/A'}`, leftMargin, 40, { align: 'right', width: pageWidth });
     doc.fontSize(9).font('Helvetica').fillColor('#334155').text(`Date: ${invoiceDate}`, leftMargin, 55, { align: 'right', width: pageWidth });
-    doc.fontSize(8.5).font('Helvetica').fillColor('#64748b').text(`Order ID: ${payment.orderId}`, leftMargin, 70, { align: 'right', width: pageWidth });
+    doc.fontSize(8.5).font('Helvetica').fillColor('#64748b').text(`Order ID: ${sanitizePdfText(payment.orderId)}`, leftMargin, 70, { align: 'right', width: pageWidth });
 
     // Header Divider
     const dividerY = 100;
@@ -897,7 +925,7 @@ router.get('/invoice/:orderId', async (req, res) => {
     // --- TWO-COLUMN DETAILS ---
     const detailsY = 115;
 
-    // Left Column: Supplier
+    // Left Column: Supplier (x = 45, width = 245)
     doc.fontSize(9).font('Helvetica-Bold').fillColor('#64748b').text('SOLD BY (SUPPLIER)', leftMargin, detailsY);
     let currY = detailsY + 14;
 
@@ -906,11 +934,11 @@ router.get('/invoice/:orderId', async (req, res) => {
     currY += 13;
 
     doc.fontSize(9).font('Helvetica').fillColor('#334155');
-    doc.text('House No. 120, Main Market, Ward No. 2', leftMargin, currY);
+    doc.text('House No. 120, Main Market, Ward No. 2', leftMargin, currY, { width: 245 });
     currY += 12;
-    doc.text('Shaktifarm, Udham Singh Nagar', leftMargin, currY);
+    doc.text('Shaktifarm, Udham Singh Nagar', leftMargin, currY, { width: 245 });
     currY += 12;
-    doc.text('Uttarakhand - 263151, India', leftMargin, currY);
+    doc.text('Uttarakhand - 263151, India', leftMargin, currY, { width: 245 });
     currY += 12;
     doc.font('Helvetica-Bold').text('Udyam Reg: ', leftMargin, currY, { continued: true });
     doc.font('Helvetica').text('UDYAM-UK-12-0107479');
@@ -918,18 +946,18 @@ router.get('/invoice/:orderId', async (req, res) => {
     doc.font('Helvetica-Bold').text('GSTIN: ', leftMargin, currY, { continued: true });
     doc.font('Helvetica').text('Exempted (Under Threshold)');
 
-    // Right Column: Customer
+    // Right Column: Customer (x = 310, width = 240)
     const rightColX = 310;
     doc.fontSize(9).font('Helvetica-Bold').fillColor('#64748b').text('BILLED TO (CUSTOMER)', rightColX, detailsY);
     let rCurrY = detailsY + 14;
 
-    doc.fontSize(10).font('Helvetica-Bold').fillColor('#0f172a').text(customerName, rightColX, rCurrY);
+    doc.fontSize(10).font('Helvetica-Bold').fillColor('#0f172a').text(customerName, rightColX, rCurrY, { width: 240 });
     rCurrY += 14;
 
     doc.fontSize(9).font('Helvetica').fillColor('#334155');
-    doc.text(`Email: ${customerEmail}`, rightColX, rCurrY);
+    doc.text(`Email: ${customerEmail}`, rightColX, rCurrY, { width: 240 });
     rCurrY += 13;
-    doc.text('Country: India', rightColX, rCurrY);
+    doc.text('Country: India', rightColX, rCurrY, { width: 240 });
     rCurrY += 13;
 
     doc.font('Helvetica-Bold').text('Status: ', rightColX, rCurrY, { continued: true });
@@ -939,52 +967,73 @@ router.get('/invoice/:orderId', async (req, res) => {
     const tableTop = 230;
     const tableHeaderH = 22;
 
-    // Header background fill
+    // Header background fill (x = 45 to 550, width = 505)
     doc.rect(leftMargin, tableTop, pageWidth, tableHeaderH).fillColor('#f1f5f9').fill();
     doc.moveTo(leftMargin, tableTop + tableHeaderH).lineTo(rightMargin, tableTop + tableHeaderH).lineWidth(1).strokeColor('#cbd5e1').stroke();
 
-    // Table header texts
+    // Column Headers
     doc.fontSize(8.5).font('Helvetica-Bold').fillColor('#334155');
-    doc.text('Description', leftMargin + 8, tableTop + 6);
-    doc.text('SAC Code', leftMargin + 240, tableTop + 6);
-    doc.text('Billing Period', leftMargin + 310, tableTop + 6);
-    doc.text('Amount (INR)', leftMargin, tableTop + 6, { align: 'right', width: pageWidth - 8 });
+    doc.text('Description', 50, tableTop + 6, { width: 235, align: 'left' });
+    doc.text('SAC Code', 292, tableTop + 6, { width: 60, align: 'center' });
+    doc.text('Billing Period', 358, tableTop + 6, { width: 105, align: 'center' });
+    doc.text('Amount (INR)', 468, tableTop + 6, { width: 77, align: 'right' });
 
-    // Row contents
+    // Measure row content height
     const rowY = tableTop + tableHeaderH + 10;
-    doc.fontSize(9.5).font('Helvetica-Bold').fillColor('#0f172a').text(`${planName} (${storageGB})`, leftMargin + 8, rowY);
-    doc.fontSize(8).font('Helvetica').fillColor('#64748b').text('Cloud storage quota and automated AI malware threat inspection', leftMargin + 8, rowY + 13);
+    doc.font('Helvetica-Bold').fontSize(9.5);
+    const titleHeight = doc.heightOfString(cleanPlanTitle, { width: 235 });
 
-    doc.fontSize(9).font('Helvetica').fillColor('#334155').text('998315', leftMargin + 240, rowY);
-    doc.fontSize(8.5).font('Helvetica').fillColor('#334155').text(`${periodStart} - ${periodEnd}`, leftMargin + 310, rowY);
-    doc.fontSize(9.5).font('Helvetica-Bold').fillColor('#0f172a').text(`INR ${amountFormatted}`, leftMargin, rowY, { align: 'right', width: pageWidth - 8 });
+    const subtitleText = 'Cloud storage quota and automated AI malware threat inspection';
+    doc.font('Helvetica').fontSize(8);
+    const subtitleHeight = doc.heightOfString(subtitleText, { width: 235 });
 
-    // Bottom border of item row
-    const rowBottom = rowY + 32;
+    const descTotalHeight = titleHeight + 2 + subtitleHeight;
+
+    doc.font('Helvetica').fontSize(8.5);
+    const periodHeight = doc.heightOfString(periodText, { width: 105 });
+
+    const rowHeight = Math.max(descTotalHeight, periodHeight, 24);
+
+    // Render Table Row
+    // Column 1: Description (x = 50, width = 235, align: 'left')
+    doc.font('Helvetica-Bold').fontSize(9.5).fillColor('#0f172a').text(cleanPlanTitle, 50, rowY, { width: 235, align: 'left' });
+    doc.font('Helvetica').fontSize(8).fillColor('#64748b').text(subtitleText, 50, rowY + titleHeight + 2, { width: 235, align: 'left' });
+
+    // Column 2: SAC Code (x = 292, width = 60, align: 'center')
+    doc.font('Helvetica').fontSize(9).fillColor('#334155').text('998315', 292, rowY, { width: 60, align: 'center' });
+
+    // Column 3: Billing Period (x = 358, width = 105, align: 'center')
+    doc.font('Helvetica').fontSize(8.5).fillColor('#334155').text(periodText, 358, rowY, { width: 105, align: 'center' });
+
+    // Column 4: Amount (x = 468, width = 77, align: 'right')
+    doc.font('Helvetica-Bold').fontSize(9.5).fillColor('#0f172a').text(`INR ${amountFormatted}`, 468, rowY, { width: 77, align: 'right' });
+
+    // Bottom border of item row dynamically below tallest cell + 12
+    const rowBottom = rowY + rowHeight + 12;
     doc.moveTo(leftMargin, rowBottom).lineTo(rightMargin, rowBottom).lineWidth(0.5).strokeColor('#e2e8f0').stroke();
 
     // --- TOTALS SECTION ---
     let totalY = rowBottom + 12;
-    const totalsWidth = 200;
-    const totalsX = rightMargin - totalsWidth;
+    const totalsX = 330;
+    const totalsWidth = 215; // 330 + 215 = 545
 
     doc.fontSize(9).font('Helvetica').fillColor('#64748b').text('Subtotal:', totalsX, totalY);
-    doc.font('Helvetica').fillColor('#0f172a').text(`INR ${amountFormatted}`, totalsX, totalY, { align: 'right', width: totalsWidth - 8 });
+    doc.font('Helvetica').fillColor('#0f172a').text(`INR ${amountFormatted}`, totalsX, totalY, { align: 'right', width: totalsWidth });
     totalY += 16;
 
     doc.fontSize(9).font('Helvetica').fillColor('#64748b').text('Taxes (GST Exempt):', totalsX, totalY);
-    doc.font('Helvetica').fillColor('#0f172a').text('INR 0.00', totalsX, totalY, { align: 'right', width: totalsWidth - 8 });
+    doc.font('Helvetica').fillColor('#0f172a').text('INR 0.00', totalsX, totalY, { align: 'right', width: totalsWidth });
     totalY += 16;
 
-    doc.moveTo(totalsX, totalY).lineTo(rightMargin, totalY).lineWidth(1.5).strokeColor('#0f172a').stroke();
+    doc.moveTo(totalsX, totalY).lineTo(545, totalY).lineWidth(1.5).strokeColor('#0f172a').stroke();
     totalY += 8;
 
     doc.fontSize(10.5).font('Helvetica-Bold').fillColor('#0f172a').text('Total Paid:', totalsX, totalY);
-    doc.fontSize(10.5).font('Helvetica-Bold').fillColor('#0f172a').text(`INR ${amountFormatted}`, totalsX, totalY, { align: 'right', width: totalsWidth - 8 });
+    doc.fontSize(10.5).font('Helvetica-Bold').fillColor('#0f172a').text(`INR ${amountFormatted}`, totalsX, totalY, { align: 'right', width: totalsWidth });
     totalY += 28;
 
     // --- FOOTER / TERMS & NOTES ---
-    const footerY = 420;
+    const footerY = Math.max(totalY + 16, 420);
     doc.moveTo(leftMargin, footerY).lineTo(rightMargin, footerY).lineWidth(0.75).strokeColor('#e2e8f0').stroke();
 
     doc.fontSize(8.5).font('Helvetica-Bold').fillColor('#475569').text('Terms & Notes:', leftMargin, footerY + 12);
