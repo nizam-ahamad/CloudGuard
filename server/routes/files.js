@@ -828,10 +828,12 @@ router.post('/multipart/init', authMiddleware, async (req, res) => {
     }
 
     return res.status(200).json({
+      success: true,
       fileId: newFile._id,
       s3Key,
       uploadId: UploadId,
       partSize,
+      chunkSize: partSize,
       totalParts,
       partUrls,
     });

@@ -137,6 +137,7 @@ export function UploadProvider({ children }) {
   const lastEventDispatchRef = useRef(0);
   const eventDebounceTimerRef = useRef(null);
   const cancelledTicketsRef = useRef(new Set());
+  const cancelledIdsRef = useRef(new Set());
   const toastCtx = useToast();
 
   const notifyBackendCancel = useCallback((ticket) => {
@@ -562,14 +563,24 @@ export function UploadProvider({ children }) {
       }
     }
 
-    if (batchCancelledRef.current || abortController.signal.aborted || isAborted) {
+    if (batchCancelledRef.current || cancelledIdsRef.current.has(id) || abortController.signal.aborted || isAborted) {
       throw new Error('Upload cancelled');
     }
 
-    let initRes, thumbnail;
-    try {
-      [initRes, thumbnail] = await Promise.all([
-        axios.post(
+    updateItem(id, { status: 'uploading', progress: 5, uploadedBytes: 0, statusLabel: 'Starting upload...' });
+
+    let initRes = null;
+    let thumbnail = null;
+    const thumbPromise = generateThumbnailWithTimeout(file);
+
+    let initAttempt = 0;
+    const MAX_INIT_RETRIES = 2; // initial + 2 retries
+    while (initAttempt <= MAX_INIT_RETRIES) {
+      if (batchCancelledRef.current || cancelledIdsRef.current.has(id) || abortController.signal.aborted || isAborted) {
+        throw new Error('Upload cancelled');
+      }
+      try {
+        initRes = await axios.post(
           `${API_BASE_URL || ''}/api/files/multipart/init`,
           {
             fileName: file.name,
@@ -577,42 +588,61 @@ export function UploadProvider({ children }) {
             mimeType: file.type || 'application/octet-stream',
             folderId: folderId || null,
           },
-          { headers, signal: abortController.signal }
-        ),
-        generateThumbnailWithTimeout(file),
-      ]);
-    } catch (initErr) {
-      if (
-        batchCancelledRef.current ||
-        axios.isCancel(initErr) ||
-        initErr?.name === 'CanceledError' ||
-        initErr?.name === 'AbortError' ||
-        initErr?.code === 'ERR_CANCELED' ||
-        abortController.signal.aborted
-      ) {
-        throw initErr;
+          {
+            headers,
+            signal: abortController.signal,
+            timeout: 15000, // 15s timeout prevents mobile packet drops from freezing at 5%
+          }
+        );
+        break;
+      } catch (initErr) {
+        if (
+          batchCancelledRef.current ||
+          cancelledIdsRef.current.has(id) ||
+          axios.isCancel(initErr) ||
+          initErr?.name === 'CanceledError' ||
+          initErr?.name === 'AbortError' ||
+          initErr?.code === 'ERR_CANCELED' ||
+          abortController.signal.aborted
+        ) {
+          throw initErr;
+        }
+        if (initErr.response?.status === 403) {
+          const quotaError = new Error('Storage quota exceeded');
+          quotaError.isQuota = true;
+          quotaError.errorData = initErr.response?.data;
+          throw quotaError;
+        }
+        initAttempt += 1;
+        const isNetworkOrTimeout =
+          !initErr.response ||
+          initErr.code === 'ECONNABORTED' ||
+          initErr.message?.includes('timeout') ||
+          initErr.response?.status >= 500;
+        if (initAttempt > MAX_INIT_RETRIES || !isNetworkOrTimeout) {
+          throw new Error(initErr.response?.data?.error || initErr.message || 'Failed to initialize multipart upload');
+        }
+        console.warn(`[Multipart Init Retry] Attempt ${initAttempt} failed, retrying in 1s...`);
+        await new Promise((r) => setTimeout(r, 1000));
       }
-      if (initErr.response?.status === 403) {
-        const quotaError = new Error('Storage quota exceeded');
-        quotaError.isQuota = true;
-        quotaError.errorData = initErr.response?.data;
-        throw quotaError;
-      }
-      throw new Error(initErr.response?.data?.error || 'Failed to initialize multipart upload');
     }
 
-    const { fileId, s3Key, uploadId, partSize, partUrls } = initRes.data;
+    thumbnail = await Promise.race([
+      thumbPromise,
+      new Promise((resolve) => setTimeout(() => resolve(null), 500)),
+    ]).catch(() => null);
+
+    const { fileId, s3Key, uploadId, partSize, chunkSize, partUrls } = initRes.data;
+    const effectivePartSize = partSize || chunkSize || (file.size >= 250 * 1024 * 1024 ? 25 * 1024 * 1024 : 10 * 1024 * 1024);
     activeTicketsRef.current.set(id, { fileId, s3Key, uploadId });
 
     // If batch was cancelled while multipart/init was in-flight, immediately abort the B2 session
-    if (batchCancelledRef.current || abortController.signal.aborted || isAborted) {
+    if (batchCancelledRef.current || cancelledIdsRef.current.has(id) || abortController.signal.aborted || isAborted) {
       isAborted = true;
       abortController.abort();
       notifyBackendCancel({ fileId, s3Key, uploadId });
       throw new Error('Upload cancelled');
     }
-
-    updateItem(id, { status: 'uploading', progress: 5, uploadedBytes: 0 });
 
     let completedPartsBytes = 0;
     const inFlightBytesRef = { current: {} };
@@ -626,16 +656,16 @@ export function UploadProvider({ children }) {
       const totalUploadedBytes = Math.min(file.size, completedPartsBytes + inFlightTotal);
       const percent = Math.min(95, Math.max(5, Math.round(5 + (totalUploadedBytes / file.size) * 90)));
       const now = Date.now();
-      if (now - lastProgressTime >= 250 || percent >= 95) {
+      if (now - lastProgressTime >= 250 || percent >= 95 || (lastProgressTime === 0 && totalUploadedBytes > 0)) {
         lastProgressTime = now;
-        updateItem(id, { progress: percent, uploadedBytes: totalUploadedBytes });
+        updateItem(id, { progress: percent, uploadedBytes: totalUploadedBytes, statusLabel: null });
         trackByteSpeedTick();
       }
     };
 
     const uploadSinglePartWithRetry = async (partMeta, index) => {
-      const start = index * partSize;
-      const end = Math.min(start + partSize, file.size);
+      const start = index * effectivePartSize;
+      const end = Math.min(start + effectivePartSize, file.size);
       const partBytes = end - start;
 
       let attempt = 0;
@@ -690,7 +720,7 @@ export function UploadProvider({ children }) {
             abortController.signal.addEventListener('abort', abortHandler, { once: true });
 
             xhr.upload.onprogress = (e) => {
-              if (isAborted || abortController.signal.aborted) return;
+              if (isAborted || abortController.signal.aborted || batchCancelledRef.current || cancelledIdsRef.current.has(id)) return;
               if (e.lengthComputable) {
                 inFlightBytesRef.current[index] = e.loaded;
                 syncAggregateProgress();
@@ -999,14 +1029,18 @@ export function UploadProvider({ children }) {
             signal: controller.signal,
           }));
         } catch (mpErr) {
-          if (
+          const isCancelled =
             batchCancelledRef.current ||
+            cancelledIdsRef.current.has(id) ||
             controller.signal.aborted ||
             axios.isCancel(mpErr) ||
             mpErr?.name === 'CanceledError' ||
             mpErr?.name === 'AbortError' ||
-            mpErr?.code === 'ERR_CANCELED'
-          ) {
+            mpErr?.code === 'ERR_CANCELED' ||
+            mpErr?.message?.includes('aborted') ||
+            mpErr?.message?.includes('cancelled');
+
+          if (isCancelled) {
             return;
           }
           if (mpErr.isQuota) {
@@ -1208,14 +1242,18 @@ export function UploadProvider({ children }) {
       activeTicketsRef.current.delete(id);
       dispatchThrottledUpdates(folderId, false);
     } catch (err) {
-      if (
+      const isCancelled =
         batchCancelledRef.current ||
+        cancelledIdsRef.current.has(id) ||
         controller.signal.aborted ||
         axios.isCancel(err) ||
         err?.name === 'CanceledError' ||
         err?.name === 'AbortError' ||
-        err?.code === 'ERR_CANCELED'
-      ) {
+        err?.code === 'ERR_CANCELED' ||
+        err?.message?.includes('aborted') ||
+        err?.message?.includes('cancelled');
+
+      if (isCancelled) {
         const ticket = activeTicketsRef.current.get(id);
         if (ticket) {
           notifyCancelBackend(ticket);
@@ -1234,7 +1272,7 @@ export function UploadProvider({ children }) {
         progress: 100,
         error: isWriteLock ? (errorData?.error || 'Uploads locked: subscription expired or past due.') : (err.response?.data?.error || err.message || 'Upload failed'),
       });
-      if (!batchCancelledRef.current && !controller.signal.aborted) {
+      if (!batchCancelledRef.current && !controller.signal.aborted && !cancelledIdsRef.current.has(id)) {
         if (isWriteLock) {
           toast.error(errorData?.error || 'Your subscription has expired. Select a plan on the Pricing page to resume uploading.', { id: `write-lock-${id}` });
         } else {
@@ -1295,6 +1333,7 @@ export function UploadProvider({ children }) {
   };
 
   const removeQueueItem = (id) => {
+    cancelledIdsRef.current.add(id);
     inFlightIdsRef.current.delete(id);
     const ticket = activeTicketsRef.current.get(id);
     if (ticket) {
@@ -1312,11 +1351,15 @@ export function UploadProvider({ children }) {
     }
     processingIdsRef.current.delete(id);
     setQueue((prev) => prev.filter((item) => item.id !== id));
+    toast.info('Upload cancelled', { id: `cancel-${id}`, duration: 3000 });
   };
 
   const cancelAllUploads = useCallback(() => {
     // Synchronously set cancellation flag and clear queue immediately so queued files never start
     batchCancelledRef.current = true;
+    (queueRef.current || []).forEach((item) => {
+      cancelledIdsRef.current.add(item.id);
+    });
     batchTotalRef.current = 0;
     batchStartTimeRef.current = 0;
     currentBatchCompletedRef.current = 0;
@@ -1355,15 +1398,9 @@ export function UploadProvider({ children }) {
     setEtaSeconds(null);
     setGlobalSpeed('');
 
-    // 4. Show a single toast: toast('All pending uploads cancelled')
-    if (typeof toastCtx === 'function') {
-      toastCtx('All pending uploads cancelled');
-    } else if (toastCtx?.info) {
-      toastCtx.info('All pending uploads cancelled');
-    } else if (toastCtx?.success) {
-      toastCtx.success('All pending uploads cancelled');
-    }
-  }, [notifyCancelBackend, toastCtx]);
+    // 4. Show a single clean toast: 'Upload cancelled'
+    toast.info('Upload cancelled', { id: 'cancel-all', duration: 3000 });
+  }, [notifyCancelBackend, toast]);
 
   const clearFinished = () => {
     setQueue((prev) =>
@@ -1769,7 +1806,10 @@ export const HeaderUploadButton = () => {
                       {/* Live Uploaded Size vs Total Size */}
                       <span className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-0.5 tabular-nums">
                         {item.status === 'uploading' &&
-                          `${formatBytes(item.uploadedBytes || 0)} of ${formatBytes(item.file?.size || item.size)}`}
+                          (item.statusLabel ||
+                            (item.uploadedBytes > 0
+                              ? `${formatBytes(item.uploadedBytes || 0)} of ${formatBytes(item.file?.size || item.size)}`
+                              : `${formatBytes(item.file?.size || item.size)} • Starting upload...`))}
                         {item.status === 'hashing' && `${formatBytes(item.file?.size || item.size)} • Preparing`}
                         {item.status === 'finalizing' && `${formatBytes(item.file?.size || item.size)} • Inspecting security`}
                         {item.status === 'queued' && `${formatBytes(item.file?.size || item.size)} • Queued`}

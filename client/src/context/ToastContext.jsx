@@ -88,9 +88,9 @@ export const ToastProvider = ({ children }) => {
           return (
             <div
               key={t.id}
-              className="pointer-events-auto w-full sm:w-auto flex items-center justify-between gap-3 px-4 py-2.5 rounded-full text-xs sm:text-sm font-medium border transition-all duration-300 ease-out transform translate-y-0 opacity-100 scale-100 animate-in fade-in slide-in-from-bottom-2 backdrop-blur-md bg-white/95 text-slate-900 border-slate-200 shadow-xl dark:bg-slate-900/95 dark:text-slate-100 dark:border-slate-700/80 dark:shadow-2xl dark:shadow-black/40"
+              className="pointer-events-auto w-full sm:w-auto max-w-[calc(100vw-2rem)] flex items-center justify-between gap-3 px-4 py-2.5 rounded-2xl sm:rounded-full text-xs sm:text-sm font-medium border transition-all duration-300 ease-out transform translate-y-0 opacity-100 scale-100 animate-in fade-in slide-in-from-bottom-2 backdrop-blur-md bg-white/95 text-slate-900 border-slate-200 shadow-xl dark:bg-slate-900/95 dark:text-slate-100 dark:border-slate-700/80 dark:shadow-2xl dark:shadow-black/40 break-words overflow-hidden"
             >
-              <div className="flex items-center gap-2.5 min-w-0">
+              <div className="flex items-center gap-2.5 min-w-0 flex-1 overflow-hidden">
                 {/* Status Dot */}
                 {t.type === 'success' && (
                   <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0 shadow-[0_0_6px_rgba(52,211,153,0.6)]" />
@@ -106,7 +106,7 @@ export const ToastProvider = ({ children }) => {
                 )}
 
                 {/* Message */}
-                <span className="text-left whitespace-normal break-words leading-snug">
+                <span className="text-left whitespace-normal break-words break-all line-clamp-2 leading-snug overflow-hidden flex-1">
                   {t.message}
                 </span>
               </div>
@@ -114,7 +114,7 @@ export const ToastProvider = ({ children }) => {
               {/* Dismiss Button */}
               <button
                 onClick={() => removeToast(t.id)}
-                className="text-slate-400 hover:text-slate-600 dark:text-zinc-500 dark:hover:text-zinc-300 text-xs sm:text-sm ml-1 transition-colors leading-none cursor-pointer p-0.5"
+                className="text-slate-400 hover:text-slate-600 dark:text-zinc-500 dark:hover:text-zinc-300 text-xs sm:text-sm ml-1 transition-colors leading-none cursor-pointer p-0.5 shrink-0"
                 title="Dismiss"
               >
                 ✕
