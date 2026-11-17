@@ -1,8 +1,9 @@
 import React from 'react';
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { Settings, Folder, Clock, Image } from 'lucide-react';
+import { SidebarUpgradeCard } from './TrialBanner';
 
-export default function Sidebar({ isCollapsed = false, onClose, setShowSettings, setActiveTab, setCurrentFolder }) {
+export default function Sidebar({ user, isCollapsed = false, onClose, setShowSettings, setActiveTab, setCurrentFolder }) {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -176,6 +177,9 @@ export default function Sidebar({ isCollapsed = false, onClose, setShowSettings,
           )}
         </button>
       </nav>
+
+      {/* Persistent Sidebar Upgrade Card for Free/Trial users */}
+      <SidebarUpgradeCard user={user} isCollapsed={isCollapsed} />
 
       {/* Bottom Settings Button in Sidebar */}
       <div className="mt-auto pt-4 border-t border-slate-200 dark:border-zinc-800">

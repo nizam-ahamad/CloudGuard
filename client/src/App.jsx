@@ -25,6 +25,7 @@ import AdminMonitor from './pages/AdminMonitor';
 import PhotosView, { invalidatePhotosCache } from './pages/PhotosView';
 import SubscriptionAlertBanner from './components/SubscriptionAlertBanner';
 import StorageQuotaBanner from './components/StorageQuotaBanner';
+import { TrialBanner, SidebarUpgradeCard } from './components/TrialBanner';
 import { computeSHA256 } from './pages/Dashboard';
 import { generateMediaThumbnail } from './utils/thumbnailHelper';
 import { 
@@ -2855,6 +2856,9 @@ function App() {
           </button>
         </div>
 
+        {/* Persistent Sidebar Upgrade Card (Free/Trial accounts only) */}
+        <SidebarUpgradeCard user={user} isCollapsed={isCollapsed} />
+
         {/* Footer Navigation */}
         <div className="flex flex-col gap-2 mt-auto border-t border-slate-200 dark:border-zinc-800 pt-4 mx-4">
           {isAdmin && (
@@ -3076,6 +3080,7 @@ function App() {
         onClick={() => { setShowProfileMenu(false); setIsSidebarOpen(false); setActiveMenuId(null); setActiveFolderMenuId(null); }} 
         className={`pt-24 pb-28 px-margin-mobile md:px-margin-desktop max-w-container-max mx-auto w-full min-h-screen bg-white dark:bg-[#131314] transition-all duration-300 ease-in-out ${isCollapsed ? 'md:ml-20' : 'md:ml-64'}`}
       >
+        <TrialBanner user={user} />
         <SubscriptionAlertBanner />
         <StorageQuotaBanner
           storageUsed={storageStats?.storageUsed || storageStats?.usedBytes || storageStats?.used || 0}
