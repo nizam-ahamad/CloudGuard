@@ -384,7 +384,7 @@ export function UploadProvider({ children }) {
     });
   };
 
-  const enqueueFiles = useCallback((files, defaultFolderId = null) => {
+  const enqueueFiles = useCallback(async (files, defaultFolderId = null) => {
     if (!files || files.length === 0) return;
     batchCancelledRef.current = false;
 
@@ -434,20 +434,50 @@ export function UploadProvider({ children }) {
       );
     }
 
+    // Materialize mobile files <= 25 MB immediately on selection in sequential batches of 3
+    // Once materialized as an in-memory Blob/File, iOS Safari cannot revoke temporary Photo Library handles
+    if (isMobileDevice) {
+      const mobileItemsToMaterialize = newItems.filter(
+        (it) => it.status === 'queued' && it.file && it.size > 0 && it.size <= 25 * 1024 * 1024
+      );
+      for (let i = 0; i < mobileItemsToMaterialize.length; i += 3) {
+        const batch = mobileItemsToMaterialize.slice(i, i + 3);
+        await Promise.all(
+          batch.map(async (queueItem) => {
+            try {
+              const original = queueItem.file;
+              const buf = await original.arrayBuffer();
+              if (buf && buf.byteLength > 0) {
+                let safeBlob;
+                try {
+                  safeBlob = new File([buf], queueItem.name, { type: original.type });
+                } catch {
+                  safeBlob = new Blob([buf], { type: original.type });
+                  safeBlob.name = queueItem.name;
+                }
+                safeBlob._materialized = true;
+                queueItem.file = safeBlob;
+              }
+            } catch (matErr) {
+              console.warn('[Photo Library Materialization Warning]:', matErr.message);
+            }
+          })
+        );
+      }
+    }
+
     setQueue((prev) => [...prev, ...newItems]);
     setIsOpen(true);
   }, []);
 
-  // Worker loop enforcing MAX_CONCURRENT_UPLOADS (2 streams)
+  // Worker loop enforcing mobile concurrency: max 2 (and 1 when uploading files > 25 MB)
   useEffect(() => {
     if (batchCancelledRef.current) return;
 
-    const activeCount = Math.max(
-      queue.filter((item) =>
-        ['hashing', 'uploading', 'finalizing'].includes(item.status)
-      ).length,
-      inFlightIdsRef.current.size
+    const activeItems = queue.filter((item) =>
+      ['hashing', 'uploading', 'finalizing'].includes(item.status)
     );
+    const activeCount = Math.max(activeItems.length, inFlightIdsRef.current.size);
 
     const queuedItems = queue.filter(
       (item) =>
@@ -462,9 +492,28 @@ export function UploadProvider({ children }) {
       return;
     }
 
-    const slotsAvailable = Math.max(0, MAX_CONCURRENT_UPLOADS - activeCount);
+    // Cap MAX_CONCURRENT_UPLOADS = 2 on mobile (and 1 when uploading files > 25 MB)
+    const hasActiveLargeFile = activeItems.some(
+      (item) => (item.file?.size || item.size || 0) > 25 * 1024 * 1024
+    );
+
+    const effectiveMaxConcurrent = isMobileDevice
+      ? (hasActiveLargeFile ? 1 : 2)
+      : 4;
+
+    const slotsAvailable = Math.max(0, effectiveMaxConcurrent - activeCount);
     if (slotsAvailable > 0 && queuedItems.length > 0) {
-      const itemsToStart = queuedItems.slice(0, slotsAvailable);
+      const itemsToStart = [];
+      for (const item of queuedItems) {
+        if (itemsToStart.length >= slotsAvailable) break;
+        const itemSize = item.file?.size || item.size || 0;
+        if (isMobileDevice && itemSize > 25 * 1024 * 1024 && (activeCount + itemsToStart.length) > 0) {
+          // If candidate is a large file on mobile, wait until all active streams finish
+          break;
+        }
+        itemsToStart.push(item);
+      }
+
       itemsToStart.forEach((item) => {
         inFlightIdsRef.current.add(item.id);
         processQueueItem(item);
@@ -553,19 +602,24 @@ export function UploadProvider({ children }) {
       throw new Error('Upload cancelled');
     }
 
-    updateItem(id, { status: 'uploading', progress: 10 });
+    updateItem(id, { status: 'uploading', progress: 10, uploadedBytes: 0 });
 
-    const partProgressMap = new Array(partUrls.length).fill(0);
+    let completedPartsBytes = 0;
+    const inFlightBytesMap = {};
     const completedParts = new Array(partUrls.length);
     let nextPartIdx = 0;
 
     let lastProgressTime = 0;
     const syncAggregateProgress = () => {
       if (isAborted) return;
-      const totalLoaded = partProgressMap.reduce((sum, b) => sum + b, 0);
+      let inFlightTotal = 0;
+      for (const k in inFlightBytesMap) {
+        inFlightTotal += inFlightBytesMap[k] || 0;
+      }
+      const totalLoaded = Math.min(file.size, completedPartsBytes + inFlightTotal);
       const percent = Math.min(95, Math.max(10, Math.round((totalLoaded * 100) / file.size)));
       const now = Date.now();
-      if (now - lastProgressTime >= 150 || percent >= 95) {
+      if (now - lastProgressTime >= 200 || percent >= 95) {
         lastProgressTime = now;
         updateItem(id, { progress: percent, uploadedBytes: totalLoaded });
         trackByteSpeedTick();
@@ -586,8 +640,14 @@ export function UploadProvider({ children }) {
             throw new Error('File chunk is empty (0 bytes) or could not be read from device');
           }
 
-          partProgressMap[index] = 0;
-          const putRes = await s3Axios.put(partMeta.signedUrl, chunkBlob, {
+          // Verify chunk byte length before uploading so 0-byte parts are never sent to storage (preventing EntityTooSmall)
+          const chunkBuf = await chunkBlob.arrayBuffer();
+          if (chunkBuf.byteLength === 0) {
+            throw new Error('iOS revoked file access — please retry this file');
+          }
+
+          inFlightBytesMap[index] = 0;
+          const putRes = await s3Axios.put(partMeta.signedUrl, chunkBuf, {
             signal: abortController.signal,
             timeout: 60000, // 60s timeout per chunk prevents mobile 5G socket hang
             headers: { 'Content-Type': 'application/octet-stream' },
@@ -602,7 +662,7 @@ export function UploadProvider({ children }) {
             ],
             onUploadProgress: (progressEvent) => {
               if (isAborted || abortController.signal.aborted) return;
-              partProgressMap[index] = progressEvent.loaded || 0;
+              inFlightBytesMap[index] = progressEvent.loaded || 0;
               syncAggregateProgress();
             },
           });
@@ -612,11 +672,15 @@ export function UploadProvider({ children }) {
             throw new Error('Bucket CORS missing ExposeHeaders: ["ETag"]');
           }
 
-          partProgressMap[index] = chunkBlob.size;
-          syncAggregateProgress();
+          completedPartsBytes += chunkBuf.byteLength;
+          delete inFlightBytesMap[index];
           completedParts[index] = { PartNumber: partMeta.partNumber, ETag: eTag };
+          syncAggregateProgress();
           return;
         } catch (err) {
+          delete inFlightBytesMap[index];
+          syncAggregateProgress();
+
           if (
             isAborted ||
             abortController.signal.aborted ||
@@ -662,17 +726,15 @@ export function UploadProvider({ children }) {
     };
 
     try {
-      // 2. Stream chunks with workers (concurrency capped to 3) + compute header SHA-256 concurrently
+      // 2. Continuous worker pool (maintains 3 chunks continuously in flight without wave batching gaps)
       const runWorkers = async () => {
-        const workers = Array.from(
-          { length: Math.min(MULTIPART_PART_CONCURRENCY, partUrls.length) },
-          async () => {
-            while (!isAborted && nextPartIdx < partUrls.length) {
-              const currentIdx = nextPartIdx++;
-              await uploadSinglePartWithRetry(partUrls[currentIdx], currentIdx);
-            }
+        const workerConcurrency = Math.min(MULTIPART_PART_CONCURRENCY, partUrls.length);
+        const workers = Array.from({ length: workerConcurrency }, async () => {
+          while (!isAborted && nextPartIdx < partUrls.length) {
+            const currentIdx = nextPartIdx++;
+            await uploadSinglePartWithRetry(partUrls[currentIdx], currentIdx);
           }
-        );
+        });
         await Promise.all(workers);
       };
 
@@ -719,17 +781,37 @@ export function UploadProvider({ children }) {
     const controller = new AbortController();
     activeControllersRef.current.set(id, controller);
 
+    // Ensure mobile file <= 25 MB is materialized into memory before uploading
+    let uploadFile = file;
+    if (isMobileDevice && file.size <= 25 * 1024 * 1024 && !file._materialized) {
+      try {
+        const buf = await file.arrayBuffer();
+        if (buf && buf.byteLength > 0) {
+          try {
+            uploadFile = new File([buf], file.name, { type: file.type });
+          } catch {
+            uploadFile = new Blob([buf], { type: file.type });
+            uploadFile.name = file.name;
+          }
+          uploadFile._materialized = true;
+          item.file = uploadFile;
+        }
+      } catch (matErr) {
+        console.warn('[Inline Materialization Notice]:', matErr.message);
+      }
+    }
+
     const token = localStorage.getItem('token');
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
     try {
       let fileId, s3Key, sha256, thumbnail;
 
-      if (file.size >= MULTIPART_THRESHOLD) {
+      if (uploadFile.size >= MULTIPART_THRESHOLD) {
         try {
           ({ fileId, s3Key, sha256, thumbnail } = await uploadLargeFileMultipart({
             id,
-            file,
+            file: uploadFile,
             folderId,
             headers,
             updateItem,
@@ -794,14 +876,14 @@ export function UploadProvider({ children }) {
             axios.post(
               `${API_BASE_URL || ''}/api/files/presigned-url`,
               {
-                fileName: file.name,
-                fileSize: file.size,
-                mimeType: file.type || 'application/octet-stream',
+                fileName: uploadFile.name,
+                fileSize: uploadFile.size,
+                mimeType: uploadFile.type || 'application/octet-stream',
                 folderId: folderId || null,
               },
               { headers, signal: controller.signal }
             ),
-            generateMediaThumbnail(file),
+            generateMediaThumbnail(uploadFile),
           ]);
           ticket = ticketRes.data;
           thumbnail = thumb;
@@ -864,7 +946,7 @@ export function UploadProvider({ children }) {
               progress: 100,
             });
             if (!batchCancelledRef.current && !controller.signal.aborted) {
-              toast.error(`Not enough vault storage for "${file.name}".`, { id: `quota-${id}` });
+              toast.error(`Not enough vault storage for "${uploadFile.name}".`, { id: `quota-${id}` });
             }
             return;
           }
@@ -876,11 +958,11 @@ export function UploadProvider({ children }) {
 
         let lastSingleProgressTime = 0;
         const [computedHash] = await Promise.all([
-          computeFileSHA256(file),
-          s3Axios.put(ticket.presignedUrl, file, {
+          computeFileSHA256(uploadFile),
+          s3Axios.put(ticket.presignedUrl, uploadFile, {
             signal: controller.signal,
             timeout: 120000, // 2-min timeout for single file PUT prevents socket hang
-            headers: { 'Content-Type': file.type || 'application/octet-stream' },
+            headers: { 'Content-Type': uploadFile.type || 'application/octet-stream' },
             transformRequest: [(data, reqHeaders) => {
               if (reqHeaders) {
                 delete reqHeaders.Authorization;
@@ -914,7 +996,7 @@ export function UploadProvider({ children }) {
       if (batchCancelledRef.current || controller.signal.aborted) return;
 
       // Step 3: Finalize upload with backend, attaching thumbnail
-      updateItem(id, { status: 'finalizing', progress: 96, uploadedBytes: file.size });
+      updateItem(id, { status: 'finalizing', progress: 96, uploadedBytes: uploadFile.size });
 
       if (batchCancelledRef.current || controller.signal.aborted) return;
 

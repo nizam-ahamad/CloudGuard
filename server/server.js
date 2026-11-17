@@ -78,7 +78,8 @@ app.use('/api', apiLimiter);
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
-app.use(express.json());
+app.use(express.json({ limit: '15mb' }));
+app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
 const s3 = new S3Client({
   region: process.env.AWS_REGION || 'eu-central-003',
@@ -2872,8 +2873,15 @@ app.use((err, req, res, next) => {
   if (res.headersSent) {
     return next(err);
   }
+  if (err.type === 'entity.too.large' || err.status === 413 || err.statusCode === 413) {
+    return res.status(413).json({
+      success: false,
+      error: 'Payload too large. Please reduce file or thumbnail size.',
+      code: 'PAYLOAD_TOO_LARGE',
+    });
+  }
   const isProd = process.env.NODE_ENV === 'production';
-  res.status(err.status || 500).json({
+  res.status(err.status || err.statusCode || 500).json({
     success: false,
     error: isProd ? 'Internal server error. Please try again later.' : err.message,
     ...(isProd ? {} : { stack: err.stack }),

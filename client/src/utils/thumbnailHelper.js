@@ -1,9 +1,9 @@
 /**
  * CloudGuard High-DPI Thumbnail Engine with Automatic EXIF Orientation
- * Generates sharp, upright WebP thumbnails (25 KB - 35 KB)
+ * Generates compact, upright JPEG thumbnails (< 40 KB, max 320px)
  * Optimized for Retina displays and high-resolution photo/video galleries.
  */
-export async function generateMediaThumbnail(file, maxDimension = 512, quality = 0.78) {
+export async function generateMediaThumbnail(file, maxDimension = 320, quality = 0.7) {
   if (!file) return null;
 
   // 1. Image Thumbnail Extraction with Automatic EXIF Orientation
@@ -31,9 +31,9 @@ export async function generateMediaThumbnail(file, maxDimension = 512, quality =
       ctx.imageSmoothingQuality = 'high';
       ctx.drawImage(bitmap, 0, 0, width, height);
 
-      let dataUrl = canvas.toDataURL('image/webp', quality);
+      let dataUrl = canvas.toDataURL('image/jpeg', quality);
       if (!dataUrl || dataUrl.startsWith('data:,')) {
-        dataUrl = canvas.toDataURL('image/jpeg', quality);
+        dataUrl = canvas.toDataURL('image/webp', quality);
       }
       return dataUrl;
     } catch (e) {
@@ -61,9 +61,9 @@ export async function generateMediaThumbnail(file, maxDimension = 512, quality =
             ctx.imageSmoothingQuality = 'high';
             ctx.drawImage(img, 0, 0, width, height);
 
-            let dataUrl = canvas.toDataURL('image/webp', quality);
+            let dataUrl = canvas.toDataURL('image/jpeg', quality);
             if (!dataUrl || dataUrl.startsWith('data:,')) {
-              dataUrl = canvas.toDataURL('image/jpeg', quality);
+              dataUrl = canvas.toDataURL('image/webp', quality);
             }
             resolve(dataUrl);
           };
@@ -94,8 +94,8 @@ export async function generateMediaThumbnail(file, maxDimension = 512, quality =
       };
 
       video.onseeked = () => {
-        let width = video.videoWidth || 512;
-        let height = video.videoHeight || 288;
+        let width = video.videoWidth || 320;
+        let height = video.videoHeight || 180;
 
         if (width > height) {
           if (width > maxDimension) {
@@ -117,7 +117,11 @@ export async function generateMediaThumbnail(file, maxDimension = 512, quality =
         ctx.drawImage(video, 0, 0, width, height);
 
         URL.revokeObjectURL(url);
-        resolve(canvas.toDataURL('image/webp', quality));
+        let dataUrl = canvas.toDataURL('image/jpeg', quality);
+        if (!dataUrl || dataUrl.startsWith('data:,')) {
+          dataUrl = canvas.toDataURL('image/webp', quality);
+        }
+        resolve(dataUrl);
       };
 
       video.onerror = () => {
