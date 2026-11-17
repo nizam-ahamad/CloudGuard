@@ -4121,8 +4121,15 @@ function App() {
       />
 
       {/* Preview Modal */}
-      {previewFile && (
-        ['mp4', 'webm', 'ogg', 'mov', 'mkv'].includes((previewFile.type || '').toLowerCase()) ? (
+      {previewFile && (() => {
+        const isAudio = Boolean(
+          previewFile?.mimeType?.startsWith('audio/') ||
+          previewFile?.mimetype?.startsWith('audio/') ||
+          /\.(mp3|wav|ogg|m4a|aac|flac)$/i.test(previewFile?.name || '')
+        );
+        const fileExt = (previewFile.type || (previewFile.name || '').split('.').pop() || '').toLowerCase();
+
+        return !isAudio && ['mp4', 'webm', 'ogg', 'mov', 'mkv'].includes(fileExt) ? (
           <div className="fixed inset-0 z-50 flex flex-col bg-black/95 backdrop-blur-md">
             <div className="flex items-center justify-between p-4 bg-transparent text-white w-full">
               <div className="flex items-center gap-3">
@@ -4170,14 +4177,32 @@ function App() {
                 </div>
               </div>
               <div className="flex-1 overflow-auto bg-neutral-100 dark:bg-neutral-950 p-4 flex items-center justify-center">
-                {(previewFile.type.toLowerCase() === 'png' || previewFile.type.toLowerCase() === 'jpg' || previewFile.type.toLowerCase() === 'jpeg') ? (
+                {(fileExt === 'png' || fileExt === 'jpg' || fileExt === 'jpeg') ? (
                   <img src={previewUrl} alt={previewFile.name} className="max-w-full max-h-[70vh] object-contain shadow-sm rounded" />
-                ) : previewFile.type.toLowerCase() === 'pdf' ? (
+                ) : fileExt === 'pdf' ? (
                   <iframe src={previewUrl} className="w-full h-[70vh] border-0 rounded" title="PDF Preview" />
-                ) : (previewFile.type.toLowerCase() === 'txt' || previewFile.type.toLowerCase() === 'md') ? (
+                ) : (fileExt === 'txt' || fileExt === 'md') ? (
                   <pre className="w-full h-full text-left bg-white dark:bg-[#121212] text-neutral-900 dark:text-neutral-100 p-6 rounded-lg overflow-auto text-sm font-mono whitespace-pre-wrap shadow-inner border border-neutral-200 dark:border-neutral-800">
                     {previewText || "Loading..."}
                   </pre>
+                ) : (isAudio && previewUrl) ? (
+                  <div className="w-full max-w-md bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl p-6 sm:p-8 shadow-xl flex flex-col items-center text-center space-y-4">
+                    <div className="w-16 h-16 rounded-full bg-primary/10 text-primary flex items-center justify-center">
+                      <span className="material-symbols-outlined text-3xl">music_note</span>
+                    </div>
+                    <div className="max-w-full px-2">
+                      <h4 className="text-base sm:text-lg font-semibold text-neutral-900 dark:text-white truncate" title={previewFile.name}>
+                        {previewFile.name}
+                      </h4>
+                    </div>
+                    <audio
+                      controls
+                      autoPlay
+                      preload="metadata"
+                      src={previewUrl}
+                      className="w-full max-w-md"
+                    />
+                  </div>
                 ) : (
                   <div className="text-neutral-500 dark:text-neutral-400 flex flex-col items-center gap-3">
                     <span className="material-symbols-outlined text-4xl">visibility_off</span>
@@ -4187,8 +4212,8 @@ function App() {
               </div>
             </div>
           </div>
-        )
-      )}
+        );
+      })()}
 
       {/* Delete Confirmation Modal */}
       <DeleteConfirmModal
