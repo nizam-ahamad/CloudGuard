@@ -81,6 +81,37 @@ const JWT_SECRET = process.env.JWT_SECRET;
 app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
+// Lightweight NoSQL operator sanitizer middleware
+// Recursively strips keys starting with '$' or containing '.' in-place
+function sanitizeNoSql(payload) {
+  if (!payload || typeof payload !== 'object') return payload;
+
+  if (Array.isArray(payload)) {
+    for (let i = 0; i < payload.length; i++) {
+      if (payload[i] && typeof payload[i] === 'object') {
+        sanitizeNoSql(payload[i]);
+      }
+    }
+    return payload;
+  }
+
+  for (const key of Object.keys(payload)) {
+    if (key.startsWith('$') || key.includes('.')) {
+      delete payload[key];
+    } else if (payload[key] && typeof payload[key] === 'object') {
+      sanitizeNoSql(payload[key]);
+    }
+  }
+  return payload;
+}
+
+app.use((req, res, next) => {
+  if (req.body) sanitizeNoSql(req.body);
+  if (req.query) sanitizeNoSql(req.query);
+  if (req.params) sanitizeNoSql(req.params);
+  next();
+});
+
 const s3 = new S3Client({
   region: process.env.AWS_REGION || 'eu-central-003',
   ...(process.env.AWS_ENDPOINT ? { endpoint: process.env.AWS_ENDPOINT } : {}),

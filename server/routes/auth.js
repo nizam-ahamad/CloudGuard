@@ -178,13 +178,16 @@ router.post('/google', async (req, res) => {
 // ==========================================
 router.post('/register', authLimiter, async (req, res) => {
   try {
-    const { name, email, password, consentGiven, isAdultConfirmed } = req.body;
-    const trimmedName = (name || '').trim();
-    const normalizedEmail = (email || '').toLowerCase().trim();
+    const { name, email, password, consentGiven, isAdultConfirmed } = req.body || {};
+    if (typeof name !== 'string' || typeof email !== 'string' || typeof password !== 'string') {
+      return res.status(400).json({ error: 'Invalid input format', message: 'Invalid input format' });
+    }
+    const trimmedName = name.trim();
+    const normalizedEmail = email.toLowerCase().trim();
     if (!trimmedName || !normalizedEmail || !password) return res.status(400).json({ error: 'All fields are required' });
     if (trimmedName.length > 50) return res.status(400).json({ error: 'Name cannot exceed 50 characters' });
     if (normalizedEmail.length > 120) return res.status(400).json({ error: 'Email cannot exceed 120 characters' });
-    if (typeof password === 'string' && password.length > 72) return res.status(400).json({ error: 'Password cannot exceed 72 characters' });
+    if (password.length > 72) return res.status(400).json({ error: 'Password cannot exceed 72 characters' });
 
     // Statutory DPDP Act 2023 Consent & Age-Gating Verification
     if (!consentGiven || !isAdultConfirmed) {
@@ -210,6 +213,7 @@ router.post('/register', authLimiter, async (req, res) => {
       existingUser.name = trimmedName;
       existingUser.otp = generateOtp();
       existingUser.otpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
+      existingUser.otpAttempts = 0;
       existingUser.consentGiven = true;
       existingUser.isAdultConfirmed = true;
       existingUser.consentTimestamp = new Date();
@@ -235,13 +239,14 @@ router.post('/register', authLimiter, async (req, res) => {
     }).lean();
 
     const newUserPayload = {
-      name: name.trim(),
+      name: trimmedName,
       email: normalizedEmail,
       password: hashedPassword,
       authProvider: 'local',
       isVerified: false,
       otp,
       otpExpires: new Date(Date.now() + 10 * 60 * 1000),
+      otpAttempts: 0,
       storageUsed: 0,
       storageLimit: 5 * 1024 * 1024 * 1024,
       consentGiven: true,
@@ -296,11 +301,14 @@ router.post('/register', authLimiter, async (req, res) => {
 // ==========================================
 router.post('/verify-activation-otp', otpLimiter, async (req, res) => {
   try {
-    const { email, otp } = req.body;
-    if (!email || !otp) {
+    const { email, otp } = req.body || {};
+    if (typeof email !== 'string' || typeof otp !== 'string') {
+      return res.status(400).json({ error: 'Invalid input format', message: 'Invalid input format' });
+    }
+    if (!email.trim() || !otp.trim()) {
       return res.status(400).json({ error: 'Email and verification code are required' });
     }
-    if (String(otp).trim().length > 8) {
+    if (otp.trim().length > 8) {
       return res.status(400).json({ error: 'Invalid verification code' });
     }
 
@@ -310,14 +318,29 @@ router.post('/verify-activation-otp', otpLimiter, async (req, res) => {
     if (!user) return res.status(404).json({ error: 'Account not found' });
     if (user.isVerified) return res.status(400).json({ error: 'Account is already verified. Please log in.' });
 
-    if (!user.otp || user.otp !== otp.trim() || new Date() > user.otpExpires) {
-      return res.status(400).json({ error: 'Invalid or expired verification code' });
+    const isMatch = Boolean(user.otp && user.otp === otp.trim() && user.otpExpires && new Date() <= user.otpExpires);
+
+    if (!isMatch) {
+      user.otpAttempts = (user.otpAttempts || 0) + 1;
+      if (user.otpAttempts >= 5) {
+        user.otp = undefined;
+        user.otpExpires = undefined;
+        user.otpAttempts = 0;
+        await user.save();
+        return res.status(429).json({
+          error: 'Too many invalid OTP attempts. Please request a new code.',
+          message: 'Too many invalid OTP attempts. Please request a new code.',
+        });
+      }
+      await user.save();
+      return res.status(400).json({ error: 'Invalid or expired verification code', message: 'Invalid or expired verification code' });
     }
 
     // Activate account
     user.isVerified = true;
     user.otp = null;
     user.otpExpires = null;
+    user.otpAttempts = 0;
 
     const priorDeletedLog = await DeletedAccountLog.findOne({
       emailHash: hashNormalizedEmail(normalizedEmail),
@@ -373,9 +396,12 @@ router.post('/verify-activation-otp', otpLimiter, async (req, res) => {
 // Alias: /verify-otp (supports both reset code validation and activation verification)
 router.post('/verify-otp', otpLimiter, async (req, res) => {
   try {
-    const { email, otp, type } = req.body;
-    if (!email || !otp) return res.status(400).json({ error: 'Email and OTP are required' });
-    if (String(otp).trim().length > 8) return res.status(400).json({ error: 'Invalid verification code' });
+    const { email, otp, type } = req.body || {};
+    if (typeof email !== 'string' || typeof otp !== 'string' || (type !== undefined && typeof type !== 'string')) {
+      return res.status(400).json({ error: 'Invalid input format', message: 'Invalid input format' });
+    }
+    if (!email.trim() || !otp.trim()) return res.status(400).json({ error: 'Email and OTP are required' });
+    if (otp.trim().length > 8) return res.status(400).json({ error: 'Invalid verification code' });
 
     const normalizedEmail = email.toLowerCase().trim();
     const user = await User.findOne({ email: normalizedEmail });
@@ -383,10 +409,24 @@ router.post('/verify-otp', otpLimiter, async (req, res) => {
 
     if (type === 'reset') {
       const isOtpMatch =
-        (user.otp && user.otp === otp.trim() && new Date() <= user.otpExpires) ||
-        (user.resetPasswordToken && user.resetPasswordToken === otp.trim() && new Date() <= user.resetPasswordExpire);
+        (user.otp && user.otp === otp.trim() && user.otpExpires && new Date() <= user.otpExpires) ||
+        (user.resetPasswordToken && user.resetPasswordToken === otp.trim() && user.resetPasswordExpire && new Date() <= user.resetPasswordExpire);
       if (!isOtpMatch) {
-        return res.status(400).json({ error: 'Invalid or expired reset code' });
+        user.otpAttempts = (user.otpAttempts || 0) + 1;
+        if (user.otpAttempts >= 5) {
+          user.otp = undefined;
+          user.otpExpires = undefined;
+          user.resetPasswordToken = undefined;
+          user.resetPasswordExpire = undefined;
+          user.otpAttempts = 0;
+          await user.save();
+          return res.status(429).json({
+            error: 'Too many invalid OTP attempts. Please request a new code.',
+            message: 'Too many invalid OTP attempts. Please request a new code.',
+          });
+        }
+        await user.save();
+        return res.status(400).json({ error: 'Invalid or expired reset code', message: 'Invalid or expired reset code' });
       }
       return res.status(200).json({ success: true, message: 'Reset code valid' });
     }
@@ -394,13 +434,27 @@ router.post('/verify-otp', otpLimiter, async (req, res) => {
     // Default: Activation OTP
     if (user.isVerified) return res.status(400).json({ error: 'Account is already verified. Please log in.' });
 
-    if (!user.otp || user.otp !== otp.trim() || new Date() > user.otpExpires) {
-      return res.status(400).json({ error: 'Invalid or expired verification code' });
+    const isActivationMatch = Boolean(user.otp && user.otp === otp.trim() && user.otpExpires && new Date() <= user.otpExpires);
+    if (!isActivationMatch) {
+      user.otpAttempts = (user.otpAttempts || 0) + 1;
+      if (user.otpAttempts >= 5) {
+        user.otp = undefined;
+        user.otpExpires = undefined;
+        user.otpAttempts = 0;
+        await user.save();
+        return res.status(429).json({
+          error: 'Too many invalid OTP attempts. Please request a new code.',
+          message: 'Too many invalid OTP attempts. Please request a new code.',
+        });
+      }
+      await user.save();
+      return res.status(400).json({ error: 'Invalid or expired verification code', message: 'Invalid or expired verification code' });
     }
 
     user.isVerified = true;
     user.otp = null;
     user.otpExpires = null;
+    user.otpAttempts = 0;
 
     const priorDeletedLog = await DeletedAccountLog.findOne({
       emailHash: hashNormalizedEmail(normalizedEmail),
@@ -456,16 +510,20 @@ router.post('/verify-otp', otpLimiter, async (req, res) => {
 // Resend OTP endpoint
 router.post('/resend-otp', otpLimiter, async (req, res) => {
   try {
-    const { email, type } = req.body;
-    if (!email) return res.status(400).json({ error: 'Email is required' });
-
+    const { email, type } = req.body || {};
+    if (typeof email !== 'string' || (type !== undefined && typeof type !== 'string')) {
+      return res.status(400).json({ error: 'Invalid input format', message: 'Invalid input format' });
+    }
     const normalizedEmail = email.toLowerCase().trim();
+    if (!normalizedEmail) return res.status(400).json({ error: 'Email is required' });
+
     const user = await User.findOne({ email: normalizedEmail });
     if (!user) return res.status(404).json({ error: 'Account not found' });
 
     const otp = generateOtp();
     user.otp = otp;
     user.otpExpires = new Date(Date.now() + 10 * 60 * 1000);
+    user.otpAttempts = 0;
     if (type === 'reset') {
       user.resetPasswordToken = otp;
       user.resetPasswordExpire = user.otpExpires;
@@ -490,16 +548,19 @@ router.post('/resend-otp', otpLimiter, async (req, res) => {
 // ==========================================
 router.post('/login', authLimiter, async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password } = req.body || {};
+    if (typeof email !== 'string' || typeof password !== 'string') {
+      return res.status(400).json({ error: 'Invalid input format', message: 'Invalid input format' });
+    }
 
-    const normalizedEmail = (email || '').toLowerCase().trim();
+    const normalizedEmail = email.toLowerCase().trim();
     if (!normalizedEmail || !password) {
       return res.status(400).json({ error: 'Please enter both email and password' });
     }
     if (normalizedEmail.length > 120) {
       return res.status(400).json({ error: 'Email cannot exceed 120 characters' });
     }
-    if (typeof password === 'string' && password.length > 72) {
+    if (password.length > 72) {
       return res.status(400).json({ error: 'Password cannot exceed 72 characters' });
     }
 
@@ -528,6 +589,7 @@ router.post('/login', authLimiter, async (req, res) => {
       const otp = generateOtp();
       user.otp = otp;
       user.otpExpires = new Date(Date.now() + 10 * 60 * 1000);
+      user.otpAttempts = 0;
       await user.save();
 
       sendActivationOtp(user.email, otp, user.name);
@@ -581,10 +643,12 @@ router.post('/login', authLimiter, async (req, res) => {
 // ==========================================
 router.post('/forgot-password', otpLimiter, async (req, res) => {
   try {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ error: 'Email is required' });
-
+    const { email } = req.body || {};
+    if (typeof email !== 'string') {
+      return res.status(400).json({ error: 'Invalid input format', message: 'Invalid input format' });
+    }
     const normalizedEmail = email.toLowerCase().trim();
+    if (!normalizedEmail) return res.status(400).json({ error: 'Email is required' });
     if (normalizedEmail.length > 120) return res.status(400).json({ error: 'Email cannot exceed 120 characters' });
 
     const user = await User.findOne({ email: normalizedEmail });
@@ -599,6 +663,7 @@ router.post('/forgot-password', otpLimiter, async (req, res) => {
     user.resetPasswordToken = otp;
     user.otpExpires = new Date(Date.now() + 10 * 60 * 1000);
     user.resetPasswordExpire = user.otpExpires;
+    user.otpAttempts = 0;
     await user.save();
 
     sendResetOtp(user.email, otp, user.name);
@@ -615,18 +680,21 @@ router.post('/forgot-password', otpLimiter, async (req, res) => {
 // ==========================================
 router.post('/reset-password', otpLimiter, async (req, res) => {
   try {
-    const { email, otp, newPassword } = req.body;
-    if (!email || !otp || !newPassword) {
-      return res.status(400).json({ error: 'Email, OTP, and new password are required' });
+    const { email, otp, newPassword } = req.body || {};
+    if (typeof email !== 'string' || typeof otp !== 'string' || typeof newPassword !== 'string') {
+      return res.status(400).json({ error: 'Invalid input format', message: 'Invalid input format' });
     }
     const normalizedEmail = email.toLowerCase().trim();
+    if (!normalizedEmail || !otp.trim() || !newPassword) {
+      return res.status(400).json({ error: 'Email, OTP, and new password are required' });
+    }
     if (normalizedEmail.length > 120) {
       return res.status(400).json({ error: 'Email cannot exceed 120 characters' });
     }
-    if (String(otp).trim().length > 8) {
+    if (otp.trim().length > 8) {
       return res.status(400).json({ error: 'Invalid or expired reset code' });
     }
-    if (typeof newPassword === 'string' && newPassword.length > 72) {
+    if (newPassword.length > 72) {
       return res.status(400).json({ error: 'Password cannot exceed 72 characters' });
     }
 
@@ -636,14 +704,31 @@ router.post('/reset-password', otpLimiter, async (req, res) => {
     }
 
     const user = await User.findOne({ email: normalizedEmail });
+    if (!user) {
+      return res.status(400).json({ error: 'Invalid or expired reset code', message: 'Invalid or expired reset code' });
+    }
 
-    const isOtpValid = user && (
-      (user.otp && user.otp === otp.trim() && new Date() <= user.otpExpires) ||
-      (user.resetPasswordToken && user.resetPasswordToken === otp.trim() && new Date() <= user.resetPasswordExpire)
+    const isOtpValid = (
+      (user.otp && user.otp === otp.trim() && user.otpExpires && new Date() <= user.otpExpires) ||
+      (user.resetPasswordToken && user.resetPasswordToken === otp.trim() && user.resetPasswordExpire && new Date() <= user.resetPasswordExpire)
     );
 
     if (!isOtpValid) {
-      return res.status(400).json({ error: 'Invalid or expired reset code' });
+      user.otpAttempts = (user.otpAttempts || 0) + 1;
+      if (user.otpAttempts >= 5) {
+        user.otp = undefined;
+        user.otpExpires = undefined;
+        user.resetPasswordToken = undefined;
+        user.resetPasswordExpire = undefined;
+        user.otpAttempts = 0;
+        await user.save();
+        return res.status(429).json({
+          error: 'Too many invalid OTP attempts. Please request a new code.',
+          message: 'Too many invalid OTP attempts. Please request a new code.',
+        });
+      }
+      await user.save();
+      return res.status(400).json({ error: 'Invalid or expired reset code', message: 'Invalid or expired reset code' });
     }
 
     const salt = await bcrypt.genSalt(10);
@@ -653,6 +738,7 @@ router.post('/reset-password', otpLimiter, async (req, res) => {
     user.otpExpires = null;
     user.resetPasswordToken = null;
     user.resetPasswordExpire = null;
+    user.otpAttempts = 0;
     user.isVerified = true; // Setting password verifies account
     await user.save();
 
@@ -667,11 +753,14 @@ router.post('/reset-password', otpLimiter, async (req, res) => {
 router.put('/reset-password/:token', otpLimiter, async (req, res) => {
   try {
     const token = req.params.token;
-    const { password, email } = req.body;
+    const { password, email } = req.body || {};
+    if (typeof password !== 'string' || (email !== undefined && typeof email !== 'string')) {
+      return res.status(400).json({ error: 'Invalid input format', message: 'Invalid input format' });
+    }
     if (!password) {
       return res.status(400).json({ error: 'Please provide a new password' });
     }
-    if (typeof password === 'string' && password.length > 72) {
+    if (password.length > 72) {
       return res.status(400).json({ error: 'Password cannot exceed 72 characters' });
     }
     if (email && email.trim().length > 120) {
@@ -705,6 +794,7 @@ router.put('/reset-password/:token', otpLimiter, async (req, res) => {
     user.otpExpires = null;
     user.resetPasswordToken = null;
     user.resetPasswordExpire = null;
+    user.otpAttempts = 0;
     user.isVerified = true;
     await user.save();
 

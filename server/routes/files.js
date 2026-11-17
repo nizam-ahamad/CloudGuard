@@ -543,8 +543,9 @@ router.post('/presigned-url', authMiddleware, async (req, res) => {
       : null;
     const userId = req.user.id || req.user._id;
 
-    if (!fileName || fileSize === undefined || fileSize === null || Number(fileSize) <= 0) {
-      return res.status(400).json({ error: 'Filename and valid non-zero file size are required' });
+    const parsedFileSize = Number(fileSize);
+    if (!fileName || !Number.isFinite(parsedFileSize) || parsedFileSize <= 0) {
+      return res.status(400).json({ error: 'Filename and valid non-zero file size are required', message: 'Invalid file size' });
     }
 
     // 2. Storage Quota Enforcement
@@ -678,8 +679,9 @@ router.post('/multipart/init', authMiddleware, async (req, res) => {
       ? activeFolder
       : null;
 
-    if (!fileName || !fileSize || Number(fileSize) <= 0) {
-      return res.status(400).json({ error: 'Filename and valid non-zero file size are required' });
+    const parsedFileSize = Number(fileSize);
+    if (!fileName || !Number.isFinite(parsedFileSize) || parsedFileSize <= 0) {
+      return res.status(400).json({ error: 'Filename and valid non-zero file size are required', message: 'Invalid file size' });
     }
 
     // 1. Pre-flight storage quota and write-lock checks (identical to single-PUT)
