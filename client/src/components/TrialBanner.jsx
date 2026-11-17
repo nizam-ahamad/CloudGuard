@@ -233,9 +233,9 @@ export function TrialBanner({ user }) {
 
 /**
  * Ultra-Compact Single-Row Sidebar Upgrade Bar (~36px height)
- * Fits perfectly in the sidebar on 1080p/laptop viewports with zero vertical scrollbars.
+ * Smoothly transitions between expanded row and centered icon-only rail.
  * Visible across accounts (free trial, 50 GB, 100 GB).
- * Adapts to "Vault Plan" / "Active" if already at maximum 200 GB tier.
+ * Adapts to "Vault Plan" if already at maximum 200 GB tier.
  * Sleek matte warm-stone & muted-amber styling matching CloudGuard's sidebar UI.
  */
 export function SidebarUpgradeCard({ user, isCollapsed = false, hideIfMaxTier = false }) {
@@ -247,42 +247,45 @@ export function SidebarUpgradeCard({ user, isCollapsed = false, hideIfMaxTier = 
     return null;
   }
 
-  // When desktop sidebar is collapsed to 80px (w-20)
-  if (isCollapsed) {
-    return (
-      <div className="relative group px-2 py-1 flex justify-center my-0.5">
-        <Link
-          to="/pricing"
-          title={isMaxTier ? 'Vault Plan — Manage Plan' : 'Upgrade Plan — Unlock up to 200 GB'}
-          className="w-9 h-9 rounded-xl flex items-center justify-center bg-stone-200/80 hover:bg-stone-800 hover:text-amber-100 text-stone-700 border border-stone-300/60 dark:bg-[#282623] dark:hover:bg-[#322f2b] dark:text-amber-200/90 dark:border-amber-300/20 transition-colors cursor-pointer shadow-none"
-        >
-          <Sparkles className="w-4 h-4" />
-        </Link>
-        <div className="absolute left-full ml-4 px-3 py-1.5 bg-neutral-900 dark:bg-[#1e1f20] text-white text-xs rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
-          {isMaxTier ? 'Manage Plan' : 'Upgrade Plan'}
-        </div>
-      </div>
-    );
-  }
+  const label = isMaxTier ? 'Vault Plan' : 'Upgrade';
 
   return (
     <Link
       to="/pricing"
-      className="mx-4 my-1 px-2.5 py-2 rounded-lg flex items-center justify-between gap-2 bg-stone-100/80 hover:bg-stone-200/70 border border-stone-200/90 dark:bg-[#1c1b19] dark:hover:bg-[#24221f] dark:border-white/[0.08] transition-colors cursor-pointer select-none group"
+      title={label}
+      className={`group relative my-1 rounded-lg flex items-center bg-stone-100/80 hover:bg-stone-200/70 border border-stone-200/90 dark:bg-[#1c1b19] dark:hover:bg-[#24221f] dark:border-white/[0.08] transition-all duration-200 cursor-pointer select-none ${
+        isCollapsed
+          ? 'w-10 h-10 mx-auto justify-center px-0'
+          : 'mx-4 px-3 py-2 justify-between'
+      }`}
     >
       {/* Left: Icon + Label */}
-      <div className="flex items-center gap-1.5 min-w-0">
-        <Sparkles className="w-3.5 h-3.5 shrink-0 text-amber-700/80 dark:text-amber-300/80" />
-        <span className="text-xs font-medium truncate text-stone-800 dark:text-stone-200">
-          {isMaxTier ? 'Vault Plan' : 'Upgrade'}
+      <div className={`flex items-center min-w-0 ${isCollapsed ? 'justify-center' : 'gap-2'}`}>
+        <Sparkles className="w-4 h-4 shrink-0 text-amber-700/80 dark:text-amber-300/80" />
+        <span
+          className={`font-medium text-xs text-stone-800 dark:text-stone-200 whitespace-nowrap overflow-hidden transition-all duration-200 ${
+            isCollapsed ? 'w-0 opacity-0 hidden' : 'w-auto opacity-100'
+          }`}
+        >
+          {label}
         </span>
       </div>
 
-      {/* Right: Inline badge with 200 GB + Arrow */}
-      <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-stone-800 text-amber-100 border border-amber-400/20 dark:bg-[#282623] dark:text-amber-200/90 dark:border-amber-300/20 shrink-0 flex items-center gap-1 group-hover:scale-[1.02] transition-transform">
-        <span>{isMaxTier ? 'Active' : '200 GB'}</span>
-        <ArrowRight className="w-2.5 h-2.5" />
-      </span>
+      {/* Right: Clean Arrow Icon */}
+      <div
+        className={`shrink-0 flex items-center transition-all duration-200 ${
+          isCollapsed ? 'w-0 opacity-0 hidden' : 'w-auto opacity-100'
+        }`}
+      >
+        <ArrowRight className="w-3.5 h-3.5 shrink-0 text-stone-400 group-hover:text-stone-700 dark:text-stone-500 dark:group-hover:text-stone-300 transition-transform duration-200 group-hover:translate-x-0.5" />
+      </div>
+
+      {/* Tooltip in collapsed icon-only rail (matching surrounding nav items) */}
+      {isCollapsed && (
+        <div className="absolute left-full ml-4 px-3 py-1 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-800 dark:text-[#e3e3e3] text-xs rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+          {label}
+        </div>
+      )}
     </Link>
   );
 }
