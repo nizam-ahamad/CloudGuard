@@ -32,6 +32,39 @@ function formatPlanLabel(planId) {
   }
 }
 
+const DEFAULT_STORAGE_LIMIT_BYTES = 5 * 1024 * 1024 * 1024; // 5 GB (5,368,709,120 bytes) default for free/trial
+
+/**
+ * Resolves the effective storage quota in bytes for any user:
+ * 1. Checks explicit storageLimit on user or user.subscription
+ * 2. Checks known plan ID if storageLimit is 0/null/undefined
+ * 3. Falls back to 5 GB (5 * 1024 * 1024 * 1024) free/trial default
+ */
+function resolveUserStorageQuota(user) {
+  if (!user) return DEFAULT_STORAGE_LIMIT_BYTES;
+
+  // 1. Direct explicit storageLimit on user or user.subscription
+  const directLimit = Number(user.storageLimit || user.subscription?.storageLimit || 0);
+  if (directLimit > 0) {
+    return directLimit;
+  }
+
+  // 2. Resolve by plan identifier if storageLimit is missing, 0, or null
+  const planId = String(user.subscription?.planId || user.plan || '').toLowerCase().trim();
+  if (planId.includes('200gb') || planId.includes('ultra') || planId === 'tier_200gb') {
+    return 200 * 1024 * 1024 * 1024;
+  }
+  if (planId.includes('100gb') || planId.includes('pro') || planId === 'tier_100gb') {
+    return 100 * 1024 * 1024 * 1024;
+  }
+  if (planId.includes('50gb') || planId.includes('essential') || planId === 'tier_50gb') {
+    return 50 * 1024 * 1024 * 1024;
+  }
+
+  // 3. Fallback to 5 GB free/trial default
+  return DEFAULT_STORAGE_LIMIT_BYTES;
+}
+
 /**
  * GET /api/admin/me
  * Authenticated via auth: returns 200 { success: true, isAdmin: boolean }
@@ -157,7 +190,7 @@ router.get('/overview', async (req, res) => {
         planLabel,
         trialExpiresAt: user.trialExpiresAt,
         storageUsed: user.storageUsed || 0,
-        storageLimit: user.storageLimit || 5368709120,
+        storageLimit: resolveUserStorageQuota(user),
         subscription: {
           ...(user.subscription || {}),
           status: normalizedStatus
@@ -184,7 +217,8 @@ router.get('/overview', async (req, res) => {
     const pastDueUsers = users.filter((u) => u.subscription?.status === 'past_due').length;
     const expiredUsers = users.filter((u) => u.subscription?.status === 'expired').length;
     const totalStorageUsedBytes = users.reduce((sum, u) => sum + (u.storageUsed || 0), 0);
-    const totalStorageAllocatedBytes = users.reduce((sum, u) => sum + (u.storageLimit || 0), 0);
+    // Sum effective storage quota across ALL accounts (paid tiers + free/trial 5 GB fallbacks)
+    const totalStorageAllocatedBytes = enrichedUsers.reduce((sum, u) => sum + (u.storageLimit || 0), 0);
 
     // Backblaze B2 Pricing: $0.006 / GB / month × ₹93.49 × 1.0413 landed Indian card rate = ₹0.5841 / GB / month
     const totalStorageUsedGB = totalStorageUsedBytes / (1024 * 1024 * 1024);

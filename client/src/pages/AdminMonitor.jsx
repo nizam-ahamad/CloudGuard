@@ -156,6 +156,22 @@ export default function AdminMonitor() {
     refundEligibleCount: 0
   };
 
+  // Resolve total allocated storage across all accounts (paid tiers + free/trial 5 GB fallbacks)
+  const totalStorageAllocatedBytes = useMemo(() => {
+    if (users.length > 0) {
+      return users.reduce((sum, u) => {
+        const directLimit = Number(u.storageLimit || u.subscription?.storageLimit || 0);
+        if (directLimit > 0) return sum + directLimit;
+        const plan = String(u.subscription?.planId || u.plan || '').toLowerCase().trim();
+        if (plan.includes('200gb') || plan.includes('ultra') || plan === 'tier_200gb') return sum + 200 * 1024 * 1024 * 1024;
+        if (plan.includes('100gb') || plan.includes('pro') || plan === 'tier_100gb') return sum + 100 * 1024 * 1024 * 1024;
+        if (plan.includes('50gb') || plan.includes('essential') || plan === 'tier_50gb') return sum + 50 * 1024 * 1024 * 1024;
+        return sum + 5 * 1024 * 1024 * 1024; // 5 GB default for free / trial
+      }, 0);
+    }
+    return metrics.totalStorageAllocatedBytes || 0;
+  }, [users, metrics.totalStorageAllocatedBytes]);
+
   const filteredUsers = useMemo(() => {
     return users.filter((u) => {
       // Filter tab
@@ -279,7 +295,7 @@ export default function AdminMonitor() {
               {formatBytes(metrics.totalStorageUsedBytes)}
             </div>
             <div className="mt-3 flex items-center justify-between text-xs text-neutral-400">
-              <span>Alloc: {formatBytes(metrics.totalStorageAllocatedBytes)}</span>
+              <span>Alloc: {formatBytes(totalStorageAllocatedBytes)}</span>
               <span className="text-neutral-300 font-mono">₹{metrics.estimatedB2MonthlyINR}/mo Storage</span>
             </div>
           </div>
@@ -463,7 +479,7 @@ export default function AdminMonitor() {
                             {formatBytes(u.storageUsed)}
                           </div>
                           <div className="text-[10px] text-neutral-500">
-                            Limit: {formatBytes(u.storageLimit)}
+                            Limit: {formatBytes(u.storageLimit || 5368709120)}
                           </div>
                         </td>
 
