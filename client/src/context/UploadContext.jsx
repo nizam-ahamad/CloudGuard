@@ -7,11 +7,11 @@ import { useToast } from './ToastContext';
 import { API_BASE_URL } from '../config';
 
 const UploadContext = createContext(null);
-// Concurrency limits: Mobile/iOS is strictly limited to 2 to prevent memory pressure
-// and dropped temporary file handles from iOS Photo Library, while desktop gets 4 streams.
+// Concurrency limits: strictly enforced at 2 across both desktop and mobile
+// (drops to 1 on mobile when uploading files > 25 MB)
 const isMobileDevice = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent || '');
 const isIOS = typeof navigator !== 'undefined' && /iPhone|iPad|iPod/i.test(navigator.userAgent || '');
-const MAX_CONCURRENT_UPLOADS = isMobileDevice ? 2 : 4;
+const MAX_CONCURRENT_UPLOADS = 2;
 const MULTIPART_THRESHOLD = 25 * 1024 * 1024; // 25 MB
 const MULTIPART_WORKERS = 4;
 const MAX_PART_RETRIES = 3; // Up to 3 retries with backoff on network stall/timeout
@@ -187,6 +187,7 @@ export function UploadProvider({ children }) {
   const batchStartTimeRef = useRef(0);
   const currentBatchCompletedRef = useRef(0);
   const currentBatchFailedRef = useRef(0);
+  const batchSuccessCountRef = useRef(0);
   const emaBytesPerSecRef = useRef(0);
   const lastProgressSampleRef = useRef({ time: Date.now(), bytes: 0 });
   const speedSamplesRef = useRef([]);
@@ -533,6 +534,7 @@ export function UploadProvider({ children }) {
       ['uploading', 'hashing', 'finalizing', 'queued', 'pending'].includes(i.status)
     ).length;
     if (currentActiveCount === 0) {
+      batchSuccessCountRef.current = 0;
       currentBatchCompletedRef.current = 0;
       currentBatchFailedRef.current = 0;
     }
@@ -606,11 +608,15 @@ export function UploadProvider({ children }) {
       }
     }
 
-    setQueue((prev) => [...prev, ...newItems]);
+    setQueue((prev) => {
+      const next = [...prev, ...newItems];
+      queueRef.current = next;
+      return next;
+    });
     setIsOpen(true);
   }, []);
 
-  // Worker loop enforcing mobile concurrency: max 2 (and 1 when uploading files > 25 MB)
+  // Worker loop enforcing concurrency: max 2 across desktop/mobile (and 1 on mobile when uploading files > 25 MB)
   useEffect(() => {
     if (batchCancelledRef.current) return;
 
@@ -632,14 +638,15 @@ export function UploadProvider({ children }) {
       return;
     }
 
-    // Cap MAX_CONCURRENT_UPLOADS = 2 on mobile (and 1 when uploading files > 25 MB)
+    // Enforce MAX_CONCURRENT_UPLOADS = 2 unconditionally across both desktop and mobile
+    // (drops to 1 on mobile when an active file is > 25 MB)
     const hasActiveLargeFile = activeItems.some(
       (item) => (item.file?.size || item.size || 0) > 25 * 1024 * 1024
     );
 
-    const effectiveMaxConcurrent = isMobileDevice
-      ? (hasActiveLargeFile ? 1 : 2)
-      : 4;
+    const effectiveMaxConcurrent = (isMobileDevice && hasActiveLargeFile)
+      ? 1
+      : MAX_CONCURRENT_UPLOADS;
 
     const slotsAvailable = Math.max(0, effectiveMaxConcurrent - activeCount);
     if (slotsAvailable > 0 && queuedItems.length > 0) {
@@ -662,16 +669,18 @@ export function UploadProvider({ children }) {
   }, [queue]);
 
   const updateItem = useCallback((id, updates) => {
-    setQueue((prev) =>
-      prev.map((item) => {
+    setQueue((prev) => {
+      const next = prev.map((item) => {
         if (item.id !== id) return item;
         if (TERMINAL_STATUSES.has(item.status)) {
           if (updates.status && !TERMINAL_STATUSES.has(updates.status)) return item;
           if (!updates.status) return item;
         }
         return { ...item, ...updates };
-      })
-    );
+      });
+      queueRef.current = next;
+      return next;
+    });
   }, []);
 
   const uploadLargeFileMultipart = async ({ id, file, folderId, headers, updateItem, signal }) => {
@@ -1482,6 +1491,8 @@ export function UploadProvider({ children }) {
         }
       } else if (finalStatus === 'unverified') {
         updateItem(id, { status: 'unverified', progress: 100 });
+        batchSuccessCountRef.current += 1;
+        currentBatchCompletedRef.current += 1;
         if (!isBulkUpload && !batchCancelledRef.current && !controller.signal.aborted) {
           toast.info
             ? toast.info(`Deep scan incomplete. "${file.name}" marked unverified.`, { duration: 4000 })
@@ -1489,6 +1500,7 @@ export function UploadProvider({ children }) {
         }
       } else {
         updateItem(id, { status: 'clean', progress: 100 });
+        batchSuccessCountRef.current += 1;
         currentBatchCompletedRef.current += 1;
         if (!isBulkUpload && !batchCancelledRef.current && !controller.signal.aborted) {
           toast.success(`"${file.name}" verified safe.`, { duration: 3000 });
@@ -1552,8 +1564,9 @@ export function UploadProvider({ children }) {
           dispatchThrottledUpdates(folderId, true);
           window.dispatchEvent(new CustomEvent('cloudguard:all-uploads-completed', { detail: { folderId } }));
 
-          if (!batchCancelledRef.current && currentBatchCompletedRef.current > 0) {
-            const completedCount = currentBatchCompletedRef.current;
+          if (!batchCancelledRef.current && batchSuccessCountRef.current > 0) {
+            const completedCount = batchSuccessCountRef.current;
+            batchSuccessCountRef.current = 0;
             currentBatchCompletedRef.current = 0;
             currentBatchFailedRef.current = 0;
             if (completedCount === 1) {
@@ -1562,6 +1575,7 @@ export function UploadProvider({ children }) {
               toast.success(`Batch upload completed: ${completedCount} files uploaded safely.`, { duration: 5000 });
             }
           } else {
+            batchSuccessCountRef.current = 0;
             currentBatchCompletedRef.current = 0;
             currentBatchFailedRef.current = 0;
           }
@@ -1618,6 +1632,7 @@ export function UploadProvider({ children }) {
     });
     batchTotalRef.current = 0;
     batchStartTimeRef.current = 0;
+    batchSuccessCountRef.current = 0;
     currentBatchCompletedRef.current = 0;
     currentBatchFailedRef.current = 0;
     emaBytesPerSecRef.current = 0;
