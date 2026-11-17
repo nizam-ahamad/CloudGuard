@@ -232,11 +232,9 @@ export function TrialBanner({ user }) {
 }
 
 /**
- * Ultra-Compact Single-Row Sidebar Upgrade Bar (~36px height)
- * Smoothly transitions between expanded row and centered icon-only rail.
- * Visible across accounts (free trial, 50 GB, 100 GB).
- * Adapts to "Vault Plan" if already at maximum 200 GB tier.
- * Sleek matte warm-stone & muted-amber styling matching CloudGuard's sidebar UI.
+ * Ultra-Compact Single-Row Sidebar Upgrade Bar (~38px height)
+ * Smoothly transitions in sync with My Files, Photos, Recent, Bin, Monitor, and Settings.
+ * Icon stays pinned at the exact same horizontal position in both collapsed and expanded states.
  */
 export function SidebarUpgradeCard({ user, isCollapsed = false, hideIfMaxTier = false }) {
   const activeUser = user || getStoredUser();
@@ -252,35 +250,27 @@ export function SidebarUpgradeCard({ user, isCollapsed = false, hideIfMaxTier = 
   return (
     <Link
       to="/pricing"
-      title={label}
-      className={`group relative my-1 rounded-lg flex items-center bg-stone-100/80 hover:bg-stone-200/70 border border-stone-200/90 dark:bg-[#1c1b19] dark:hover:bg-[#24221f] dark:border-white/[0.08] transition-all duration-200 cursor-pointer select-none ${
-        isCollapsed
-          ? 'w-10 h-10 mx-auto justify-center px-0'
-          : 'mx-4 px-3 py-2 justify-between'
-      }`}
+      title={isCollapsed ? label : undefined}
+      className="group relative mx-4 my-1 flex items-center h-[38px] rounded-xl bg-stone-100/80 hover:bg-stone-200/70 border border-stone-200/90 dark:bg-[#1c1b19] dark:hover:bg-[#24221f] dark:border-white/[0.08] transition-all duration-300 ease-in-out overflow-hidden whitespace-nowrap cursor-pointer select-none"
     >
-      {/* Left: Icon + Label */}
-      <div className={`flex items-center min-w-0 ${isCollapsed ? 'justify-center' : 'gap-2'}`}>
+      {/* Pinned Left Icon: Exactly matches the min-w-[3rem] geometry of Bin and Monitor */}
+      <div className="min-w-[3rem] w-12 flex justify-center items-center shrink-0">
         <Sparkles className="w-4 h-4 shrink-0 text-amber-700/80 dark:text-amber-300/80" />
-        <span
-          className={`font-medium text-xs text-stone-800 dark:text-stone-200 whitespace-nowrap overflow-hidden transition-all duration-200 ${
-            isCollapsed ? 'w-0 opacity-0 hidden' : 'w-auto opacity-100'
-          }`}
-        >
-          {label}
-        </span>
       </div>
 
-      {/* Right: Clean Arrow Icon */}
+      {/* Label and Arrow: Smoothly fade in/out with zero horizontal jumping */}
       <div
-        className={`shrink-0 flex items-center transition-all duration-200 ${
-          isCollapsed ? 'w-0 opacity-0 hidden' : 'w-auto opacity-100'
+        className={`flex items-center justify-between flex-1 pr-3 min-w-0 transition-opacity duration-200 ${
+          isCollapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'
         }`}
       >
-        <ArrowRight className="w-3.5 h-3.5 shrink-0 text-stone-400 group-hover:text-stone-700 dark:text-stone-500 dark:group-hover:text-stone-300 transition-transform duration-200 group-hover:translate-x-0.5" />
+        <span className="text-xs font-medium text-stone-800 dark:text-stone-200 truncate whitespace-nowrap">
+          {label}
+        </span>
+        <ArrowRight className="w-3.5 h-3.5 shrink-0 text-stone-400 group-hover:text-stone-700 dark:text-stone-500 dark:group-hover:text-stone-300 transition-transform duration-200 group-hover:translate-x-0.5 ml-2" />
       </div>
 
-      {/* Tooltip in collapsed icon-only rail (matching surrounding nav items) */}
+      {/* Floating Tooltip in Collapsed Mode (Matches Bin, Monitor, Settings) */}
       {isCollapsed && (
         <div className="absolute left-full ml-4 px-3 py-1 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-800 dark:text-[#e3e3e3] text-xs rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
           {label}
