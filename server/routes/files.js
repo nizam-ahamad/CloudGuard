@@ -1247,9 +1247,14 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
           { $inc: { storageUsed: claimedFile.size } },
           { new: true }
         );
-        if (u && u.subscription) {
-          u.subscription.peakStorageBytes = Math.max(u.subscription?.peakStorageBytes || 0, u.storageUsed);
-          await u.save();
+        if (u) {
+          const newStorageUsed = u.storageUsed || 0;
+          await User.findByIdAndUpdate(rawUserId, {
+            $max: {
+              peakStorageBytes: newStorageUsed,
+              'subscription.peakStorageBytes': newStorageUsed,
+            },
+          });
         }
         return res.status(200).json({
           success: true,
@@ -1427,9 +1432,14 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
         { $inc: { storageUsed: claimedFile.size } },
         { new: true }
       );
-      if (u && u.subscription) {
-        u.subscription.peakStorageBytes = Math.max(u.subscription?.peakStorageBytes || 0, u.storageUsed);
-        await u.save();
+      if (u) {
+        const newStorageUsed = u.storageUsed || 0;
+        await User.findByIdAndUpdate(rawUserId || file.userId, {
+          $max: {
+            peakStorageBytes: newStorageUsed,
+            'subscription.peakStorageBytes': newStorageUsed,
+          },
+        });
       }
       return res.status(200).json({
         success: true,
@@ -2068,8 +2078,10 @@ const getStorageStats = async (req, res) => {
     const userDoc = await User.findById(rawUserId);
     if (userDoc) {
       userDoc.storageUsed = actualStorageUsed;
+      const newPeak = Math.max(userDoc.peakStorageBytes || 0, userDoc.subscription?.peakStorageBytes || 0, actualStorageUsed);
+      userDoc.peakStorageBytes = newPeak;
       if (userDoc.subscription) {
-        userDoc.subscription.peakStorageBytes = Math.max(userDoc.subscription?.peakStorageBytes || 0, userDoc.storageUsed);
+        userDoc.subscription.peakStorageBytes = newPeak;
       }
       await userDoc.save();
     }

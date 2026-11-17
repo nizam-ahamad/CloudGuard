@@ -398,7 +398,7 @@ export default function AdminMonitor() {
                       : (u.planLabel || formatPlanName(planId));
                     const billingCycle = u.subscription?.billingCycle || 'none';
                     const status = u.subscription?.status || 'active';
-                    const peakBytes = u.peakBytes !== undefined ? u.peakBytes : Math.max(u.subscription?.peakStorageBytes || 0, u.storageUsed || 0);
+                    const peakBytes = Math.max(u.peakBytes || 0, u.subscription?.peakStorageBytes || 0, u.peakStorageBytes || 0, u.storageUsed || 0);
                     const peakGB = (peakBytes / (1024 * 1024 * 1024)).toFixed(2);
                     const remainingDays = u.ageDays !== null ? Math.max(0, (7 - u.ageDays)).toFixed(1) : null;
 
@@ -594,7 +594,7 @@ export default function AdminMonitor() {
               </div>
               <div className="flex justify-between">
                 <span className="text-neutral-400">Peak Storage:</span>
-                <span className="text-white">{formatBytes(resetTargetUser.peakBytes || 0)}</span>
+                <span className="text-white">{formatBytes(Math.max(resetTargetUser.peakBytes || 0, resetTargetUser.subscription?.peakStorageBytes || 0, resetTargetUser.peakStorageBytes || 0, resetTargetUser.storageUsed || 0))}</span>
               </div>
             </div>
 

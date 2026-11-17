@@ -48,6 +48,10 @@ const userSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    peakStorageBytes: {
+      type: Number,
+      default: 0,
+    },
     storageLimit: {
       type: Number,
       default: 5368709120, // 5 GB

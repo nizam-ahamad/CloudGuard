@@ -101,7 +101,7 @@ router.get('/overview', async (req, res) => {
         : null;
 
       const purchaseDate = latestPayment?.createdAt || user.subscription?.startDate || null;
-      const peakBytes = Math.max(user.subscription?.peakStorageBytes || 0, user.storageUsed || 0);
+      const peakBytes = Math.max(user.peakStorageBytes || 0, user.subscription?.peakStorageBytes || 0, user.storageUsed || 0);
       const exceeded2GBRoof = peakBytes > REFUND_MAX_PEAK_BYTES;
       const ageDays = purchaseDate
         ? Number(((Date.now() - new Date(purchaseDate).getTime()) / 86400000).toFixed(2))

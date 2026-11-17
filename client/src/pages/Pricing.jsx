@@ -141,6 +141,7 @@ export default function Pricing() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const hasAutoResumedCheckoutRef = useRef(false);
+  const isSubmittingOrderRef = useRef(false);
   const [isPreviewsLoading, setIsPreviewsLoading] = useState(false);
   const [billingCycle, setBillingCycle] = useState('annual'); // 'monthly' | 'annual'
   const [selectedPlan, setSelectedPlan] = useState(null);
@@ -415,7 +416,8 @@ export default function Pricing() {
   const handlePlanSelect = handleSelectPlan;
 
   const executeCheckout = async (plan) => {
-    if (!plan) return;
+    if (!plan || isSubmittingOrderRef.current) return;
+    isSubmittingOrderRef.current = true;
 
     const targetCycle = orderSummaryPlan?.billingCycle || billingCycle || 'annual';
     const targetTierId = plan.tierId || (plan.id === 'essential' ? 'tier_50gb' : plan.id === 'pro' ? 'tier_100gb' : plan.id === 'ultra' ? 'tier_200gb' : plan.id);
@@ -448,6 +450,7 @@ export default function Pricing() {
         setIsProcessingPayment(false);
         setOrderSummaryPlan(null);
         setSelectedPlan(null);
+        isSubmittingOrderRef.current = false;
         return;
       }
 
@@ -468,6 +471,7 @@ export default function Pricing() {
           toast.error(result.error.message || 'Payment cancelled');
           setLoadingPlanId(null);
           setIsProcessingPayment(false);
+          isSubmittingOrderRef.current = false;
           return;
         }
         if (result.paymentDetails) {
@@ -498,8 +502,10 @@ export default function Pricing() {
         setIsProcessingPayment(false);
         setOrderSummaryPlan(null);
         setSelectedPlan(null);
+        isSubmittingOrderRef.current = false;
       });
     } catch (err) {
+      isSubmittingOrderRef.current = false;
       const errMsg = err.response?.data?.error || err.message || 'Failed to process plan change';
       toast.error(errMsg);
       setPaymentError(errMsg);
@@ -1009,6 +1015,7 @@ export default function Pricing() {
               className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-150"
               onClick={(e) => {
                 if (e.target === e.currentTarget && !loadingPlanId && !isProcessingPayment) {
+                  isSubmittingOrderRef.current = false;
                   setOrderSummaryPlan(null);
                 }
               }}
@@ -1025,7 +1032,10 @@ export default function Pricing() {
                   <button
                     type="button"
                     disabled={Boolean(loadingPlanId || isProcessingPayment)}
-                    onClick={() => setOrderSummaryPlan(null)}
+                    onClick={() => {
+                      isSubmittingOrderRef.current = false;
+                      setOrderSummaryPlan(null);
+                    }}
                     className="text-neutral-400 hover:text-neutral-700 dark:hover:text-white p-1 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800/60 transition-colors cursor-pointer disabled:opacity-50"
                     aria-label="Close modal"
                   >
@@ -1130,7 +1140,7 @@ export default function Pricing() {
                 <div className="flex flex-col-reverse sm:flex-row items-center gap-2.5 pt-0.5">
                   <button
                     type="button"
-                    disabled={Boolean(loadingPlanId)}
+                    disabled={Boolean(loadingPlanId || isProcessingPayment)}
                     onClick={() => executeCheckout(orderSummaryPlan.plan)}
                     className="w-full sm:flex-1 py-2.5 px-4 rounded-xl bg-[#F5F5F4] hover:bg-[#E7E5E4] active:scale-[0.99] text-neutral-950 border border-neutral-300 dark:border-transparent font-semibold text-xs shadow-sm transition-all cursor-pointer disabled:opacity-60 flex items-center justify-center gap-2"
                   >
@@ -1138,8 +1148,11 @@ export default function Pricing() {
                   </button>
                   <button
                     type="button"
-                    disabled={Boolean(loadingPlanId)}
-                    onClick={() => setOrderSummaryPlan(null)}
+                    disabled={Boolean(loadingPlanId || isProcessingPayment)}
+                    onClick={() => {
+                      isSubmittingOrderRef.current = false;
+                      setOrderSummaryPlan(null);
+                    }}
                     className="w-full sm:w-auto py-2.5 px-5 rounded-xl bg-neutral-200 hover:bg-neutral-300 dark:bg-[#242424] dark:hover:bg-[#2e2e2e] text-neutral-800 dark:text-neutral-200 font-medium text-xs transition-colors cursor-pointer"
                   >
                     Cancel

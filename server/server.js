@@ -1256,8 +1256,10 @@ const getStorageStatsInServer = async (req, res) => {
     const userDoc = await User.findById(rawUserId);
     if (userDoc) {
       userDoc.storageUsed = actualStorageUsed;
+      const newPeak = Math.max(userDoc.peakStorageBytes || 0, userDoc.subscription?.peakStorageBytes || 0, actualStorageUsed);
+      userDoc.peakStorageBytes = newPeak;
       if (userDoc.subscription) {
-        userDoc.subscription.peakStorageBytes = Math.max(userDoc.subscription?.peakStorageBytes || 0, userDoc.storageUsed);
+        userDoc.subscription.peakStorageBytes = newPeak;
       }
       await userDoc.save();
     }

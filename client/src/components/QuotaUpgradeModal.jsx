@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { loadCashfree } from '../utils/cashfree';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
@@ -14,6 +14,7 @@ export default function QuotaUpgradeModal({ quotaData, onResume, onCancel, user,
   const [preview, setPreview] = useState(null);
   const [loading, setLoading] = useState(false);
   const [isFetchingPreview, setIsFetchingPreview] = useState(true);
+  const isSubmittingOrderRef = useRef(false);
 
   const planNames = {
     tier_50gb: 'Essential Vault (50 GB)',
@@ -40,7 +41,14 @@ export default function QuotaUpgradeModal({ quotaData, onResume, onCancel, user,
     return () => { isMounted = false; };
   }, [targetPlanId, targetCycle]);
 
+  const handleCancel = () => {
+    isSubmittingOrderRef.current = false;
+    onCancel(fileItem.id);
+  };
+
   const handleUpgradeAndResume = async () => {
+    if (isSubmittingOrderRef.current) return;
+    isSubmittingOrderRef.current = true;
     setLoading(true);
     try {
       const res = await api.post('/payments/create-order', {
@@ -58,6 +66,7 @@ export default function QuotaUpgradeModal({ quotaData, onResume, onCancel, user,
       }).then(async (result) => {
         if (result.error) {
           toast.error(result.error.message || 'Payment cancelled');
+          isSubmittingOrderRef.current = false;
           setLoading(false);
           return;
         }
@@ -76,9 +85,11 @@ export default function QuotaUpgradeModal({ quotaData, onResume, onCancel, user,
             toast.error('Payment verification failed. Please contact support.');
           }
         }
+        isSubmittingOrderRef.current = false;
         setLoading(false);
       });
     } catch (err) {
+      isSubmittingOrderRef.current = false;
       toast.error(err.response?.data?.error || err.message || 'Upgrade failed');
       setLoading(false);
     }
@@ -95,8 +106,9 @@ export default function QuotaUpgradeModal({ quotaData, onResume, onCancel, user,
       >
         <button
           type="button"
-          onClick={() => onCancel(fileItem.id)}
-          className="absolute top-4 right-4 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 transition-colors"
+          disabled={loading}
+          onClick={handleCancel}
+          className="absolute top-4 right-4 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 transition-colors disabled:opacity-50"
         >
           <X className="w-4 h-4"/>
         </button>
@@ -161,8 +173,8 @@ export default function QuotaUpgradeModal({ quotaData, onResume, onCancel, user,
           <button
             type="button"
             disabled={loading}
-            onClick={() => onCancel(fileItem.id)}
-            className="px-4 py-2 rounded-xl text-xs font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
+            onClick={handleCancel}
+            className="px-4 py-2 rounded-xl text-xs font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer disabled:opacity-50"
           >
             Cancel Upload
           </button>
