@@ -814,7 +814,7 @@ router.post('/multipart/init', authMiddleware, async (req, res) => {
             PartNumber: partNumber,
           });
           const signedUrl = await getSignedUrl(s3Client, partCmd, { expiresIn: 14400 });
-          return { partNumber, signedUrl };
+          return { partNumber, uploadUrl: signedUrl, signedUrl };
         })
       );
     } catch (signErr) {
@@ -837,6 +837,28 @@ router.post('/multipart/init', authMiddleware, async (req, res) => {
   } catch (err) {
     console.error('[Multipart Init Error]:', err);
     return res.status(500).json({ error: 'Failed to initialize multipart upload' });
+  }
+});
+
+// POST /api/files/multipart/sign-part — Fallback single-part signer
+router.post('/multipart/sign-part', authMiddleware, async (req, res) => {
+  try {
+    const { s3Key, uploadId, partNumber } = req.body;
+    if (!s3Key || !uploadId || !partNumber) {
+      return res.status(400).json({ error: 'Missing required sign-part parameters' });
+    }
+    const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
+    const partCmd = new UploadPartCommand({
+      Bucket: bucket,
+      Key: s3Key,
+      UploadId,
+      PartNumber: Number(partNumber),
+    });
+    const signedUrl = await getSignedUrl(s3Client, partCmd, { expiresIn: 14400 });
+    return res.status(200).json({ partNumber: Number(partNumber), uploadUrl: signedUrl, signedUrl });
+  } catch (err) {
+    console.error('[Sign Part Error]:', err.message || err);
+    return res.status(502).json({ error: 'Failed to sign part' });
   }
 });
 

@@ -47,6 +47,15 @@ export function formatEta(seconds) {
   return remMins > 0 ? `~${hours}h ${remMins}m left` : `~${hours}h left`;
 }
 
+// Safely generate thumbnail with 1500ms max timeout so slow mobile image/canvas decodes never stall upload startup
+export function generateThumbnailWithTimeout(file) {
+  if (!file) return Promise.resolve(null);
+  return Promise.race([
+    generateMediaThumbnail(file),
+    new Promise((resolve) => setTimeout(() => resolve(null), 1500)),
+  ]).catch(() => null);
+}
+
 // Compute queue-level metrics with clamped bytes to guarantee non-negative remainingBytes
 function computeQueueMetrics(items) {
   if (!items || !items.length) {
@@ -569,7 +578,7 @@ export function UploadProvider({ children }) {
           },
           { headers, signal: abortController.signal }
         ),
-        generateMediaThumbnail(file),
+        generateThumbnailWithTimeout(file),
       ]);
     } catch (initErr) {
       if (
@@ -602,7 +611,7 @@ export function UploadProvider({ children }) {
       throw new Error('Upload cancelled');
     }
 
-    updateItem(id, { status: 'uploading', progress: 10, uploadedBytes: 0 });
+    updateItem(id, { status: 'uploading', progress: 5, uploadedBytes: 0 });
 
     let completedPartsBytes = 0;
     const inFlightBytesMap = {};
@@ -617,7 +626,7 @@ export function UploadProvider({ children }) {
         inFlightTotal += inFlightBytesMap[k] || 0;
       }
       const totalLoaded = Math.min(file.size, completedPartsBytes + inFlightTotal);
-      const percent = Math.min(95, Math.max(10, Math.round((totalLoaded * 100) / file.size)));
+      const percent = Math.min(95, Math.max(5, Math.round(5 + (totalLoaded / file.size) * 90)));
       const now = Date.now();
       if (now - lastProgressTime >= 200 || percent >= 95) {
         lastProgressTime = now;
@@ -646,8 +655,18 @@ export function UploadProvider({ children }) {
             throw new Error('iOS revoked file access — please retry this file');
           }
 
+          let targetUrl = partMeta?.uploadUrl || partMeta?.signedUrl;
+          if (!targetUrl) {
+            const signRes = await axios.post(
+              `${API_BASE_URL || ''}/api/files/multipart/sign-part`,
+              { s3Key, uploadId, partNumber: index + 1 },
+              { headers, signal: abortController.signal }
+            );
+            targetUrl = signRes.data?.uploadUrl || signRes.data?.signedUrl;
+          }
+
           inFlightBytesMap[index] = 0;
-          const putRes = await s3Axios.put(partMeta.signedUrl, chunkBuf, {
+          const putRes = await s3Axios.put(targetUrl, chunkBuf, {
             signal: abortController.signal,
             timeout: 60000, // 60s timeout per chunk prevents mobile 5G socket hang
             headers: { 'Content-Type': 'application/octet-stream' },
@@ -726,9 +745,10 @@ export function UploadProvider({ children }) {
     };
 
     try {
-      // 2. Continuous worker pool (maintains 3 chunks continuously in flight without wave batching gaps)
+      // 2. Continuous worker pool (3 workers on mobile, 5 on desktop)
       const runWorkers = async () => {
-        const workerConcurrency = Math.min(MULTIPART_PART_CONCURRENCY, partUrls.length);
+        const multipartWorkers = isMobileDevice ? 3 : 5;
+        const workerConcurrency = Math.min(multipartWorkers, partUrls.length);
         const workers = Array.from({ length: workerConcurrency }, async () => {
           while (!isAborted && nextPartIdx < partUrls.length) {
             const currentIdx = nextPartIdx++;
@@ -738,7 +758,12 @@ export function UploadProvider({ children }) {
         await Promise.all(workers);
       };
 
-      const [sha256] = await Promise.all([computeFileSHA256(file), runWorkers()]);
+      const hashPromise = computeFileSHA256(file);
+      await runWorkers();
+      const sha256 = await Promise.race([
+        hashPromise,
+        new Promise((resolve) => setTimeout(() => resolve(null), 500)),
+      ]).catch(() => null);
 
       // 3. Complete multipart assembly on S3 / Backblaze B2
       await axios.post(
@@ -755,6 +780,120 @@ export function UploadProvider({ children }) {
       // Deduplicated cancel: routes through notifyBackendCancel so only one cancel request fires per file
       notifyBackendCancel({ fileId, s3Key, uploadId });
       throw err;
+    }
+  };
+
+  const uploadSingleFileWithRetry = async ({
+    id,
+    ticket,
+    uploadFile,
+    controller,
+    updateItem,
+    trackByteSpeedTick,
+  }) => {
+    let attempt = 0;
+    const MAX_SINGLE_RETRIES = 3;
+    while (attempt < MAX_SINGLE_RETRIES) {
+      if (controller.signal.aborted || batchCancelledRef.current) {
+        throw new Error('Upload cancelled');
+      }
+
+      let stallTimer = null;
+      let totalTimer = null;
+      const singleAbort = new AbortController();
+      const abortHandler = () => {
+        try {
+          singleAbort.abort();
+        } catch {}
+      };
+      controller.signal.addEventListener('abort', abortHandler, { once: true });
+
+      const resetStallTimer = () => {
+        if (stallTimer) clearTimeout(stallTimer);
+        stallTimer = setTimeout(() => {
+          console.warn(`[Single PUT Stall] No progress for 20s on attempt ${attempt + 1}, aborting socket.`);
+          try {
+            singleAbort.abort();
+          } catch {}
+        }, 20000);
+      };
+
+      try {
+        resetStallTimer();
+        totalTimer = setTimeout(() => {
+          console.warn(`[Single PUT Timeout] Total request exceeded 45s on attempt ${attempt + 1}, aborting socket.`);
+          try {
+            singleAbort.abort();
+          } catch {}
+        }, 45000);
+
+        let lastSingleProgressTime = 0;
+        await s3Axios.put(ticket.presignedUrl, uploadFile, {
+          signal: singleAbort.signal,
+          headers: { 'Content-Type': uploadFile.type || 'application/octet-stream' },
+          transformRequest: [(data, reqHeaders) => {
+            if (reqHeaders) {
+              delete reqHeaders.Authorization;
+              delete reqHeaders.authorization;
+            }
+            return data;
+          }],
+          onUploadProgress: (progressEvent) => {
+            resetStallTimer();
+            if (controller.signal.aborted || batchCancelledRef.current) return;
+            if (progressEvent.total) {
+              const percent = Math.min(
+                95,
+                Math.max(5, Math.round(5 + (progressEvent.loaded / progressEvent.total) * 90))
+              );
+              const now = Date.now();
+              if (now - lastSingleProgressTime >= 150 || percent >= 95) {
+                lastSingleProgressTime = now;
+                updateItem(id, {
+                  progress: percent,
+                  uploadedBytes: progressEvent.loaded,
+                });
+                trackByteSpeedTick();
+              }
+            }
+          },
+        });
+
+        if (stallTimer) clearTimeout(stallTimer);
+        if (totalTimer) clearTimeout(totalTimer);
+        controller.signal.removeEventListener('abort', abortHandler);
+        return;
+      } catch (putErr) {
+        if (stallTimer) clearTimeout(stallTimer);
+        if (totalTimer) clearTimeout(totalTimer);
+        controller.signal.removeEventListener('abort', abortHandler);
+
+        if (
+          controller.signal.aborted ||
+          batchCancelledRef.current ||
+          axios.isCancel(putErr) ||
+          putErr?.name === 'CanceledError' ||
+          putErr?.name === 'AbortError' ||
+          putErr?.code === 'ERR_CANCELED'
+        ) {
+          throw putErr;
+        }
+
+        const isNetworkOrTimeout =
+          !putErr.response ||
+          putErr.code === 'ECONNABORTED' ||
+          putErr.message?.includes('timeout') ||
+          putErr.message?.includes('Network Error') ||
+          singleAbort.signal.aborted;
+
+        attempt += 1;
+        if (attempt >= MAX_SINGLE_RETRIES || !isNetworkOrTimeout) {
+          throw putErr;
+        }
+
+        const backoffMs = 1000 * Math.pow(2, attempt - 1);
+        await new Promise((r) => setTimeout(r, backoffMs));
+      }
     }
   };
 
@@ -867,7 +1006,7 @@ export function UploadProvider({ children }) {
           throw mpErr;
         }
       } else {
-        updateItem(id, { status: 'hashing', progress: 5, uploadedBytes: 0 });
+        updateItem(id, { status: 'uploading', progress: 5, uploadedBytes: 0 });
 
         // Parallelize thumbnail generation and ticket retrieval
         let ticket;
@@ -883,7 +1022,7 @@ export function UploadProvider({ children }) {
               },
               { headers, signal: controller.signal }
             ),
-            generateMediaThumbnail(uploadFile),
+            generateThumbnailWithTimeout(uploadFile),
           ]);
           ticket = ticketRes.data;
           thumbnail = thumb;
@@ -954,43 +1093,23 @@ export function UploadProvider({ children }) {
         }
 
         if (batchCancelledRef.current || controller.signal.aborted) return;
-        updateItem(id, { status: 'uploading', progress: 10 });
+        updateItem(id, { status: 'uploading', progress: 5 });
 
-        let lastSingleProgressTime = 0;
-        const [computedHash] = await Promise.all([
-          computeFileSHA256(uploadFile),
-          s3Axios.put(ticket.presignedUrl, uploadFile, {
-            signal: controller.signal,
-            timeout: 120000, // 2-min timeout for single file PUT prevents socket hang
-            headers: { 'Content-Type': uploadFile.type || 'application/octet-stream' },
-            transformRequest: [(data, reqHeaders) => {
-              if (reqHeaders) {
-                delete reqHeaders.Authorization;
-                delete reqHeaders.authorization;
-              }
-              return data;
-            }],
-            onUploadProgress: (progressEvent) => {
-              if (controller.signal.aborted || batchCancelledRef.current) return;
-              if (progressEvent.total) {
-                const percent = Math.min(
-                  95,
-                  Math.round((progressEvent.loaded * 100) / progressEvent.total)
-                );
-                const now = Date.now();
-                if (now - lastSingleProgressTime >= 150 || percent >= 95) {
-                  lastSingleProgressTime = now;
-                  updateItem(id, {
-                    progress: percent,
-                    uploadedBytes: progressEvent.loaded,
-                  });
-                  trackByteSpeedTick();
-                }
-              }
-            },
-          }),
-        ]);
-        sha256 = computedHash;
+        const hashPromise = computeFileSHA256(uploadFile);
+
+        await uploadSingleFileWithRetry({
+          id,
+          ticket,
+          uploadFile,
+          controller,
+          updateItem,
+          trackByteSpeedTick,
+        });
+
+        sha256 = await Promise.race([
+          hashPromise,
+          new Promise((resolve) => setTimeout(() => resolve(null), 500)),
+        ]).catch(() => null);
       }
 
       if (batchCancelledRef.current || controller.signal.aborted) return;
