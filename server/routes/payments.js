@@ -1,5 +1,6 @@
 const express = require('express');
 const axios = require('axios');
+const PDFDocument = require('pdfkit');
 const auth = require('../middleware/auth');
 const User = require('../models/User');
 const Payment = require('../models/Payment');
@@ -837,7 +838,7 @@ router.get('/history', auth, async (req, res) => {
 
 /**
  * GET /api/payments/invoice/:orderId
- * Renders an official, print-ready Bill of Supply (Invoice)
+ * Generates an official, print-ready Bill of Supply (Invoice) as a binary vector PDF
  */
 router.get('/invoice/:orderId', async (req, res) => {
   try {
@@ -850,141 +851,158 @@ router.get('/invoice/:orderId', async (req, res) => {
       month: 'long',
       year: 'numeric'
     });
-    const periodStart = new Date(payment.periodStart).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-    const periodEnd = new Date(payment.periodEnd).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+    const periodStart = payment.periodStart
+      ? new Date(payment.periodStart).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+      : invoiceDate;
+    const periodEnd = payment.periodEnd
+      ? new Date(payment.periodEnd).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+      : 'N/A';
 
-    // Allow inline print scripting by clearing CSP on this specific static invoice document
-    res.removeHeader('Content-Security-Policy');
-    res.setHeader('Content-Type', 'text/html');
+    const customerName = payment.customerDetails?.name || payment.userId?.name || 'Subscriber';
+    const customerEmail = payment.customerDetails?.email || payment.userId?.email || 'N/A';
+    const planName = payment.planName || 'CloudGuard Storage';
+    const storageGB = payment.storageGB ? `${payment.storageGB} GB` : 'Standard';
+    const amountVal = typeof payment.amount === 'number' ? payment.amount : Number(payment.amount || 0);
+    const amountFormatted = amountVal.toFixed(2);
 
-    return res.send(`
-      <!DOCTYPE html>
-      <html lang="en">
-      <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Invoice - ${payment.invoiceNumber}</title>
-        <style>
-          * { box-sizing: border-box; margin: 0; padding: 0; }
-          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f8fafc; color: #0f172a; padding: 40px 20px; }
-          .invoice-box { max-width: 800px; margin: auto; padding: 40px; border: 1px solid #e2e8f0; border-radius: 16px; background: #fff; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
-          .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #0f172a; padding-bottom: 20px; margin-bottom: 30px; }
-          .logo { font-size: 24px; font-weight: 800; letter-spacing: -0.5px; }
-          .badge { font-size: 12px; background: #e0f2fe; color: #0369a1; padding: 4px 10px; border-radius: 6px; font-weight: 600; display: inline-block; margin-top: 6px; }
-          .details-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-bottom: 30px; font-size: 13px; line-height: 1.6; }
-          .section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; color: #64748b; margin-bottom: 8px; letter-spacing: 0.5px; }
-          table { width: 100%; border-collapse: collapse; margin-bottom: 30px; font-size: 13px; }
-          th { background: #f1f5f9; padding: 12px; text-align: left; font-weight: 600; border-bottom: 1px solid #cbd5e1; }
-          td { padding: 14px 12px; border-bottom: 1px solid #e2e8f0; }
-          .totals { margin-left: auto; width: 300px; font-size: 13px; margin-bottom: 30px; }
-          .totals-row { display: flex; justify-content: space-between; padding: 6px 0; }
-          .totals-row.grand { border-top: 2px solid #0f172a; font-weight: 700; font-size: 16px; padding-top: 10px; color: #0f172a; }
-          .footer { font-size: 11px; color: #64748b; line-height: 1.6; border-top: 1px solid #e2e8f0; padding-top: 20px; }
-          .print-btn { background: #0f172a; color: white; border: none; padding: 10px 20px; border-radius: 8px; font-weight: 600; cursor: pointer; float: right; margin-bottom: 20px; transition: background 0.2s; }
-          .print-btn:hover { background: #1e293b; }
-          @media print {
-            body { background: white; padding: 0; }
-            .invoice-box { border: none; box-shadow: none; padding: 0; max-width: 100%; }
-            .print-btn { display: none !important; }
-          }
-        </style>
-      </head>
-      <body>
-        <div class="invoice-box">
-          <button id="printBtn" class="print-btn" type="button">Print / Save as PDF</button>
-          <div style="clear: both;"></div>
+    const safeFilename = `${payment.invoiceNumber || orderId}.pdf`;
 
-          <div class="header">
-            <div>
-              <div class="logo">CloudGuard</div>
-              <div class="badge">BILL OF SUPPLY / OFFICIAL RECEIPT</div>
-            </div>
-            <div style="text-align: right; font-size: 13px; line-height: 1.5;">
-              <div><strong>Invoice No:</strong> ${payment.invoiceNumber}</div>
-              <div><strong>Date:</strong> ${invoiceDate}</div>
-              <div><strong>Order ID:</strong> ${payment.orderId}</div>
-            </div>
-          </div>
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"`);
 
-          <div class="details-grid">
-            <div>
-              <div class="section-title">Sold By (Supplier)</div>
-              <strong>CloudGuard</strong> (Proprietor: Nizam Ahamad)<br>
-              House No. 120, Main Market, Ward No. 3<br>
-              Shaktifarm, Udham Singh Nagar<br>
-              Uttarakhand - 263151, India<br>
-              <strong>Udyam Reg:</strong> UDYAM-UK-12-0107479<br>
-              <strong>GSTIN:</strong> Exempted (Under Threshold)
-            </div>
-            <div>
-              <div class="section-title">Billed To (Customer)</div>
-              <strong>${payment.customerDetails?.name || 'Subscriber'}</strong><br>
-              Email: ${payment.customerDetails?.email || 'N/A'}<br>
-              Country: India<br>
-              <strong>Status:</strong> <span style="color: #16a34a; font-weight: 600;">PAID (Cashfree Gateway)</span>
-            </div>
-          </div>
+    const doc = new PDFDocument({ size: 'A4', margin: 40 });
+    doc.pipe(res);
 
-          <table>
-            <thead>
-              <tr>
-                <th>Description</th>
-                <th>SAC Code</th>
-                <th>Billing Period</th>
-                <th style="text-align: right;">Amount (INR)</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>
-                  <strong>${payment.planName} (${payment.storageGB} GB)</strong><br>
-                  <span style="color: #64748b; font-size: 12px;">Cloud storage quota and automated AI malware threat inspection</span>
-                </td>
-                <td>998315</td>
-                <td>${periodStart} – ${periodEnd}</td>
-                <td style="text-align: right;">₹${payment.amount.toFixed(2)}</td>
-              </tr>
-            </tbody>
-          </table>
+    const leftMargin = 40;
+    const rightMargin = 555;
+    const pageWidth = rightMargin - leftMargin;
 
-          <div class="totals">
-            <div class="totals-row">
-              <span>Subtotal:</span>
-              <span>₹${payment.amount.toFixed(2)}</span>
-            </div>
-            <div class="totals-row">
-              <span>Taxes (GST Exempt):</span>
-              <span>₹0.00</span>
-            </div>
-            <div class="totals-row grand">
-              <span>Total Paid:</span>
-              <span>₹${payment.amount.toFixed(2)}</span>
-            </div>
-          </div>
+    // --- HEADER ---
+    doc.fontSize(22).font('Helvetica-Bold').fillColor('#0f172a').text('CloudGuard', leftMargin, 40);
 
-          <div class="footer">
-            <strong>Terms & Notes:</strong><br>
-            • This is an electronically generated Bill of Supply issued under Section 31(3)(c) of the CGST Act, 2017. No physical signature is required.<br>
-            • Payment verified and settled via Cashfree Payments.<br>
-            • For billing support or refund queries, contact support@cloudguard.site within 7 days of transaction date.
-          </div>
-        </div>
+    // Badge below logo
+    const badgeY = 68;
+    doc.roundedRect(leftMargin, badgeY, 195, 18, 4).fillAndStroke('#e0f2fe', '#bae6fd');
+    doc.fontSize(8.5).font('Helvetica-Bold').fillColor('#0369a1').text('BILL OF SUPPLY / OFFICIAL RECEIPT', leftMargin + 8, badgeY + 4.5);
 
-        <script>
-          document.addEventListener('DOMContentLoaded', function() {
-            var btn = document.getElementById('printBtn');
-            if (btn) {
-              btn.addEventListener('click', function() {
-                window.print();
-              });
-            }
-          });
-        </script>
-      </body>
-      </html>
-    `);
+    // Invoice Details Top Right
+    doc.fontSize(9.5).font('Helvetica-Bold').fillColor('#0f172a').text(`Invoice No: ${payment.invoiceNumber || 'N/A'}`, leftMargin, 40, { align: 'right', width: pageWidth });
+    doc.fontSize(9).font('Helvetica').fillColor('#334155').text(`Date: ${invoiceDate}`, leftMargin, 55, { align: 'right', width: pageWidth });
+    doc.fontSize(8.5).font('Helvetica').fillColor('#64748b').text(`Order ID: ${payment.orderId}`, leftMargin, 70, { align: 'right', width: pageWidth });
+
+    // Header Divider
+    const dividerY = 100;
+    doc.moveTo(leftMargin, dividerY).lineTo(rightMargin, dividerY).lineWidth(1.5).strokeColor('#0f172a').stroke();
+
+    // --- TWO-COLUMN DETAILS ---
+    const detailsY = 115;
+
+    // Left Column: Supplier
+    doc.fontSize(9).font('Helvetica-Bold').fillColor('#64748b').text('SOLD BY (SUPPLIER)', leftMargin, detailsY);
+    let currY = detailsY + 14;
+
+    doc.fontSize(9.5).font('Helvetica-Bold').fillColor('#0f172a').text('CloudGuard', leftMargin, currY, { continued: true });
+    doc.font('Helvetica').fillColor('#334155').text(' (Proprietor: Nizam Ahamad)');
+    currY += 13;
+
+    doc.fontSize(9).font('Helvetica').fillColor('#334155');
+    doc.text('House No. 120, Main Market, Ward No. 2', leftMargin, currY);
+    currY += 12;
+    doc.text('Shaktifarm, Udham Singh Nagar', leftMargin, currY);
+    currY += 12;
+    doc.text('Uttarakhand - 263151, India', leftMargin, currY);
+    currY += 12;
+    doc.font('Helvetica-Bold').text('Udyam Reg: ', leftMargin, currY, { continued: true });
+    doc.font('Helvetica').text('UDYAM-UK-12-0107479');
+    currY += 12;
+    doc.font('Helvetica-Bold').text('GSTIN: ', leftMargin, currY, { continued: true });
+    doc.font('Helvetica').text('Exempted (Under Threshold)');
+
+    // Right Column: Customer
+    const rightColX = 310;
+    doc.fontSize(9).font('Helvetica-Bold').fillColor('#64748b').text('BILLED TO (CUSTOMER)', rightColX, detailsY);
+    let rCurrY = detailsY + 14;
+
+    doc.fontSize(10).font('Helvetica-Bold').fillColor('#0f172a').text(customerName, rightColX, rCurrY);
+    rCurrY += 14;
+
+    doc.fontSize(9).font('Helvetica').fillColor('#334155');
+    doc.text(`Email: ${customerEmail}`, rightColX, rCurrY);
+    rCurrY += 13;
+    doc.text('Country: India', rightColX, rCurrY);
+    rCurrY += 13;
+
+    doc.font('Helvetica-Bold').text('Status: ', rightColX, rCurrY, { continued: true });
+    doc.font('Helvetica-Bold').fillColor('#16a34a').text('PAID (Cashfree Gateway)');
+
+    // --- LINE-ITEM TABLE ---
+    const tableTop = 230;
+    const tableHeaderH = 22;
+
+    // Header background fill
+    doc.rect(leftMargin, tableTop, pageWidth, tableHeaderH).fillColor('#f1f5f9').fill();
+    doc.moveTo(leftMargin, tableTop + tableHeaderH).lineTo(rightMargin, tableTop + tableHeaderH).lineWidth(1).strokeColor('#cbd5e1').stroke();
+
+    // Table header texts
+    doc.fontSize(8.5).font('Helvetica-Bold').fillColor('#334155');
+    doc.text('Description', leftMargin + 8, tableTop + 6);
+    doc.text('SAC Code', leftMargin + 240, tableTop + 6);
+    doc.text('Billing Period', leftMargin + 310, tableTop + 6);
+    doc.text('Amount (INR)', leftMargin, tableTop + 6, { align: 'right', width: pageWidth - 8 });
+
+    // Row contents
+    const rowY = tableTop + tableHeaderH + 10;
+    doc.fontSize(9.5).font('Helvetica-Bold').fillColor('#0f172a').text(`${planName} (${storageGB})`, leftMargin + 8, rowY);
+    doc.fontSize(8).font('Helvetica').fillColor('#64748b').text('Cloud storage quota and automated AI malware threat inspection', leftMargin + 8, rowY + 13);
+
+    doc.fontSize(9).font('Helvetica').fillColor('#334155').text('998315', leftMargin + 240, rowY);
+    doc.fontSize(8.5).font('Helvetica').fillColor('#334155').text(`${periodStart} - ${periodEnd}`, leftMargin + 310, rowY);
+    doc.fontSize(9.5).font('Helvetica-Bold').fillColor('#0f172a').text(`INR ${amountFormatted}`, leftMargin, rowY, { align: 'right', width: pageWidth - 8 });
+
+    // Bottom border of item row
+    const rowBottom = rowY + 32;
+    doc.moveTo(leftMargin, rowBottom).lineTo(rightMargin, rowBottom).lineWidth(0.5).strokeColor('#e2e8f0').stroke();
+
+    // --- TOTALS SECTION ---
+    let totalY = rowBottom + 12;
+    const totalsWidth = 200;
+    const totalsX = rightMargin - totalsWidth;
+
+    doc.fontSize(9).font('Helvetica').fillColor('#64748b').text('Subtotal:', totalsX, totalY);
+    doc.font('Helvetica').fillColor('#0f172a').text(`INR ${amountFormatted}`, totalsX, totalY, { align: 'right', width: totalsWidth - 8 });
+    totalY += 16;
+
+    doc.fontSize(9).font('Helvetica').fillColor('#64748b').text('Taxes (GST Exempt):', totalsX, totalY);
+    doc.font('Helvetica').fillColor('#0f172a').text('INR 0.00', totalsX, totalY, { align: 'right', width: totalsWidth - 8 });
+    totalY += 16;
+
+    doc.moveTo(totalsX, totalY).lineTo(rightMargin, totalY).lineWidth(1.5).strokeColor('#0f172a').stroke();
+    totalY += 8;
+
+    doc.fontSize(10.5).font('Helvetica-Bold').fillColor('#0f172a').text('Total Paid:', totalsX, totalY);
+    doc.fontSize(10.5).font('Helvetica-Bold').fillColor('#0f172a').text(`INR ${amountFormatted}`, totalsX, totalY, { align: 'right', width: totalsWidth - 8 });
+    totalY += 28;
+
+    // --- FOOTER / TERMS & NOTES ---
+    const footerY = 420;
+    doc.moveTo(leftMargin, footerY).lineTo(rightMargin, footerY).lineWidth(0.75).strokeColor('#e2e8f0').stroke();
+
+    doc.fontSize(8.5).font('Helvetica-Bold').fillColor('#475569').text('Terms & Notes:', leftMargin, footerY + 12);
+    doc.fontSize(8).font('Helvetica').fillColor('#64748b').text(
+      '• This is an electronically generated Bill of Supply issued under Section 31(3)(c) of the CGST Act, 2017. No physical signature is required.\n' +
+      '• Payment verified and settled via Cashfree Payments.\n' +
+      '• For billing support or refund queries, contact support@cloudguard.site within 7 days of transaction date.',
+      leftMargin,
+      footerY + 26,
+      { lineGap: 3.5, width: pageWidth }
+    );
+
+    doc.end();
   } catch (err) {
-    return res.status(500).send('Failed to generate invoice');
+    console.error('Invoice PDF Generation Error:', err);
+    if (!res.headersSent) {
+      return res.status(500).send('Failed to generate invoice');
+    }
   }
 });
 
