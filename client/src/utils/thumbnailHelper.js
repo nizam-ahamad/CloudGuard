@@ -87,6 +87,31 @@ export async function generateMediaThumbnail(file, maxDimension = 320, quality =
       const url = URL.createObjectURL(file);
       video.src = url;
 
+      let cleanedUp = false;
+      const cleanup = () => {
+        if (cleanedUp) return;
+        cleanedUp = true;
+        try {
+          clearTimeout(timeoutId);
+        } catch (_) {}
+        try {
+          video.onloadedmetadata = null;
+          video.onseeked = null;
+          video.onerror = null;
+          video.pause();
+          video.removeAttribute('src');
+          video.load();
+        } catch (_) {}
+        try {
+          URL.revokeObjectURL(url);
+        } catch (_) {}
+      };
+
+      const timeoutId = setTimeout(() => {
+        cleanup();
+        resolve(null);
+      }, 5000);
+
       video.onloadedmetadata = () => {
         const duration = video.duration || 10;
         const targetTime = duration > 5 ? 5.0 : Math.max(0.2, duration * 0.5);
@@ -116,16 +141,20 @@ export async function generateMediaThumbnail(file, maxDimension = 320, quality =
         ctx.imageSmoothingQuality = 'high';
         ctx.drawImage(video, 0, 0, width, height);
 
-        URL.revokeObjectURL(url);
-        let dataUrl = canvas.toDataURL('image/jpeg', quality);
-        if (!dataUrl || dataUrl.startsWith('data:,')) {
-          dataUrl = canvas.toDataURL('image/webp', quality);
-        }
+        let dataUrl = null;
+        try {
+          dataUrl = canvas.toDataURL('image/jpeg', quality);
+          if (!dataUrl || dataUrl.startsWith('data:,')) {
+            dataUrl = canvas.toDataURL('image/webp', quality);
+          }
+        } catch (_) {}
+
+        cleanup();
         resolve(dataUrl);
       };
 
       video.onerror = () => {
-        URL.revokeObjectURL(url);
+        cleanup();
         resolve(null);
       };
     });

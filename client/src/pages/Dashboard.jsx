@@ -238,6 +238,34 @@ export const StorageMeter = ({ storageStats: propStats, fetchStorageStats }) => 
   );
 };
 
+/**
+ * Construct full breadcrumb trail from folder object and its ancestors
+ * Guaranteed format: [{ id: null, name: 'Home' }, ...ancestors]
+ */
+export const buildBreadcrumbTrail = (folderData) => {
+  const trail = [{ id: null, name: 'Home' }];
+  if (folderData?.ancestors && Array.isArray(folderData.ancestors) && folderData.ancestors.length > 0) {
+    folderData.ancestors.forEach((anc) => {
+      trail.push({
+        id: anc._id || anc.id,
+        name: anc.name,
+      });
+    });
+    if (!trail.some((c) => String(c.id) === String(folderData._id || folderData.id))) {
+      trail.push({
+        id: folderData._id || folderData.id,
+        name: folderData.name || 'Folder',
+      });
+    }
+  } else if (folderData?._id || folderData?.id) {
+    trail.push({
+      id: folderData._id || folderData.id,
+      name: folderData.name || 'Folder',
+    });
+  }
+  return trail;
+};
+
 export const Dashboard = (props) => {
   const {
     hasMoreRecent = false,
@@ -247,6 +275,36 @@ export const Dashboard = (props) => {
   const { enqueueFiles } = useUpload();
   const toast = useToast();
   const [storageStats, setStorageStats] = useState(() => props.storageStats || globalDashboardStorageCache || null);
+  const [breadcrumbs, setBreadcrumbs] = useState(() => props.breadcrumbs || [{ id: null, name: 'Home' }]);
+
+  useEffect(() => {
+    const urlFolderId = new URLSearchParams(window.location.search).get('folder');
+    if (!urlFolderId) {
+      setBreadcrumbs([{ id: null, name: 'Home' }]);
+      if (typeof props.setBreadcrumbs === 'function') {
+        props.setBreadcrumbs([{ id: null, name: 'Home' }]);
+      }
+      return;
+    }
+
+    const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+    axios
+      .get(`${API_BASE_URL}/api/folders/${urlFolderId}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      .then((res) => {
+        const folderData = res.data;
+        const trail = buildBreadcrumbTrail(folderData);
+        setBreadcrumbs(trail);
+        if (typeof props.setBreadcrumbs === 'function') {
+          props.setBreadcrumbs(trail);
+        }
+        if (typeof props.onBreadcrumbChange === 'function') {
+          props.onBreadcrumbChange(trail);
+        }
+      })
+      .catch((err) => console.error('Failed to fetch breadcrumb trail in Dashboard:', err));
+  }, [props.setBreadcrumbs, props.onBreadcrumbChange]);
 
   const fileInputRef = useRef(null);
   const folderInputRef = useRef(null);
@@ -469,6 +527,38 @@ export const Dashboard = (props) => {
 
       <SubscriptionAlertBanner />
       <StorageMeter storageStats={storageStats} fetchStorageStats={props.fetchStorageStats} />
+
+      {/* Folder Breadcrumbs (Preserved across reloads) */}
+      {breadcrumbs && breadcrumbs.length > 1 && (
+        <nav aria-label="Breadcrumb Trail" className="flex items-center gap-1.5 text-xs text-neutral-500 dark:text-neutral-400 py-1">
+          {breadcrumbs.map((crumb, idx) => (
+            <React.Fragment key={crumb.id || 'home'}>
+              <span
+                className={`truncate ${
+                  idx === breadcrumbs.length - 1
+                    ? 'font-bold text-neutral-900 dark:text-neutral-100'
+                    : 'cursor-pointer hover:underline'
+                }`}
+                onClick={() => {
+                  if (idx === breadcrumbs.length - 1) return;
+                  if (typeof props.onBreadcrumbClick === 'function') {
+                    props.onBreadcrumbClick(crumb.id, idx);
+                  } else {
+                    const search = crumb.id ? `?folder=${crumb.id}` : '';
+                    window.location.href = `/dashboard${search}`;
+                  }
+                }}
+              >
+                {crumb.name}
+              </span>
+              {idx < breadcrumbs.length - 1 && (
+                <span className="text-neutral-400 dark:text-neutral-600 shrink-0">&gt;</span>
+              )}
+            </React.Fragment>
+          ))}
+        </nav>
+      )}
+
       <FolderNavigationSkeleton />
 
       {/* Desktop Drag-and-Drop Area (Hidden on mobile) */}

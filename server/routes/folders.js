@@ -470,6 +470,99 @@ async function getDescendantFolderIds(folderId, userMatch) {
   return allDescendants;
 }
 
+/**
+ * Cycle-safe upward traversal of folder ancestors up to maxDepth (default 20).
+ * Returns ordered array of ancestors from top-level down to the current folder:
+ * [{ _id, id, name }, ...]
+ */
+async function getFolderAncestors(folderId, userMatch, maxDepth = 20) {
+  if (!folderId || !mongoose.Types.ObjectId.isValid(String(folderId))) {
+    return [];
+  }
+
+  const ancestors = [];
+  const visited = new Set();
+  let currentId = String(folderId);
+
+  while (currentId && ancestors.length < maxDepth) {
+    if (visited.has(currentId)) {
+      console.warn(`[getFolderAncestors] Cycle detected at folder ${currentId}`);
+      break;
+    }
+    visited.add(currentId);
+
+    const folder = await Folder.findOne({
+      _id: new mongoose.Types.ObjectId(currentId),
+      isTrash: { $ne: true },
+      ...userMatch,
+    })
+      .select('_id name parentId parentFolder')
+      .lean();
+
+    if (!folder) break;
+
+    ancestors.unshift({
+      _id: folder._id,
+      id: folder._id,
+      name: folder.name,
+    });
+
+    const nextParent = folder.parentId || folder.parentFolder;
+    currentId = nextParent && mongoose.Types.ObjectId.isValid(String(nextParent))
+      ? String(nextParent)
+      : null;
+  }
+
+  return ancestors;
+}
+
+const handleGetSingleFolder = async (req, res) => {
+  try {
+    const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
+    if (!rawUserId || !mongoose.Types.ObjectId.isValid(String(rawUserId))) {
+      return res.status(401).json({ error: 'Unauthorized: Valid session required' });
+    }
+    const folderId = req.params.id;
+
+    if (!folderId || !mongoose.Types.ObjectId.isValid(folderId)) {
+      return res.status(400).json({ error: 'Invalid folder ID' });
+    }
+
+    const userIdObj = mongoose.Types.ObjectId.isValid(rawUserId)
+      ? new mongoose.Types.ObjectId(rawUserId)
+      : rawUserId;
+
+    const userMatch = {
+      $or: [
+        { userId: userIdObj },
+        { user: userIdObj },
+        { userId: String(rawUserId) },
+        { user: String(rawUserId) },
+      ],
+    };
+
+    const folder = await Folder.findOne({
+      _id: new mongoose.Types.ObjectId(folderId),
+      isTrash: { $ne: true },
+      ...userMatch,
+    }).lean();
+
+    if (!folder) {
+      return res.status(404).json({ error: 'Folder not found' });
+    }
+
+    const ancestors = await getFolderAncestors(folderId, userMatch);
+
+    return res.status(200).json({
+      ...folder,
+      ancestors,
+    });
+  } catch (err) {
+    console.error('Error fetching single folder with ancestors:', err);
+    return res.status(500).json({ error: 'Failed to fetch folder' });
+  }
+};
+
 const handleFolderDetails = async (req, res) => {
   try {
     const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
@@ -584,11 +677,13 @@ const handleFolderDetails = async (req, res) => {
     ]);
 
     const totalBytes = sizeStats[0]?.totalBytes || 0;
+    const ancestors = await getFolderAncestors(folderId, userMatch);
 
     return res.status(200).json({
       success: true,
       folder: {
         ...folder,
+        ancestors,
         // CONTAINS displays direct immediate children only
         fileCount: directFilesCount,
         folderCount: directFolderCount,
@@ -598,6 +693,7 @@ const handleFolderDetails = async (req, res) => {
         totalSize: totalBytes,
         size: totalBytes,
       },
+      ancestors,
       fileCount: directFilesCount,
       folderCount: directFolderCount,
       totalFiles: directFilesCount,
@@ -737,6 +833,7 @@ router.delete('/:id', authMiddleware, async (req, res) => {
 
 router.get('/:id/details', authMiddleware, handleFolderDetails);
 router.get('/:id/stats', authMiddleware, handleFolderDetails);
+router.get('/:id', authMiddleware, handleGetSingleFolder);
 
 // -------------------------------------------------------------
 // BULK FOLDER TREE CREATION (POST /ensure-tree)
@@ -930,3 +1027,4 @@ router.post('/ensure-tree', authMiddleware, async (req, res) => {
 
 module.exports = router;
 module.exports.handleBatchMove = handleBatchMove;
+module.exports.getFolderAncestors = getFolderAncestors;

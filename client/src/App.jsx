@@ -816,16 +816,27 @@ function App() {
       axios.get(`${API_BASE_URL}/api/folders/${urlFolderId}`, { headers: { Authorization: `Bearer ${token}` } })
         .then(res => {
           const folderData = res.data;
-          setBreadcrumbs(prev => {
-            const existingIndex = prev.findIndex(b => b.id === folderData._id);
-            if (existingIndex >= 0) {
-              return prev.slice(0, existingIndex + 1);
+          if (folderData?.ancestors && Array.isArray(folderData.ancestors) && folderData.ancestors.length > 0) {
+            const crumbs = [{ id: null, name: 'Home' }];
+            folderData.ancestors.forEach(a => {
+              crumbs.push({ id: a._id || a.id, name: a.name });
+            });
+            if (!crumbs.some(c => String(c.id) === String(folderData._id))) {
+              crumbs.push({ id: folderData._id, name: folderData.name });
             }
-            if (prev.length > 0 && prev[prev.length - 1].id === folderData.parentId) {
-              return [...prev, { id: folderData._id, name: folderData.name }];
-            }
-            return [{ id: null, name: 'Home' }, { id: folderData._id, name: folderData.name }];
-          });
+            setBreadcrumbs(crumbs);
+          } else {
+            setBreadcrumbs(prev => {
+              const existingIndex = prev.findIndex(b => b.id === folderData._id);
+              if (existingIndex >= 0) {
+                return prev.slice(0, existingIndex + 1);
+              }
+              if (prev.length > 0 && prev[prev.length - 1].id === folderData.parentId) {
+                return [...prev, { id: folderData._id, name: folderData.name }];
+              }
+              return [{ id: null, name: 'Home' }, { id: folderData._id, name: folderData.name }];
+            });
+          }
         })
         .catch(err => console.error('Failed to fetch breadcrumb folder', err));
     } else {

@@ -1768,10 +1768,32 @@ app.get('/api/folders', verifyToken, async (req, res) => {
 
 app.get('/api/folders/:id', verifyToken, async (req, res) => {
   try {
+    const rawUserId = req.user?._id || req.user?.id || req.user?.userId;
     const folderId = req.params.id;
-    const folder = await FolderModel.findOne({ _id: folderId, userId: req.user._id });
+    if (!folderId || !mongoose.Types.ObjectId.isValid(String(folderId))) {
+      return res.status(400).json({ error: 'Invalid folder ID' });
+    }
+    const query = buildTenantQuery(rawUserId, { _id: folderId });
+    const folder = await FolderModel.findOne(query).lean();
     if (!folder) return res.status(404).json({ error: 'Folder not found' });
-    return res.json(folder);
+
+    // Cycle-safe ancestor path from top-level down to current folder
+    const ancestors = [];
+    const visited = new Set();
+    let currentId = String(folderId);
+    while (currentId && ancestors.length < 20) {
+      if (visited.has(currentId)) break;
+      visited.add(currentId);
+      const curr = await FolderModel.findOne(buildTenantQuery(rawUserId, { _id: currentId, isTrash: { $ne: true } }))
+        .select('_id name parentId parentFolder')
+        .lean();
+      if (!curr) break;
+      ancestors.unshift({ _id: curr._id, id: curr._id, name: curr.name });
+      const nextParent = curr.parentId || curr.parentFolder;
+      currentId = nextParent && mongoose.Types.ObjectId.isValid(String(nextParent)) ? String(nextParent) : null;
+    }
+
+    return res.json({ ...folder, ancestors });
   } catch (err) {
     console.error('Error fetching single folder:', err);
     return res.status(500).json({ error: 'Failed to fetch folder' });
