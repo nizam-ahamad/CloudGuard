@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 
-export default function PasswordInput({ value, onChange, placeholder, required, className, name }) {
+export default function PasswordInput({ value, onChange, placeholder, required, className, name, maxLength = 72, ...rest }) {
   const [showPassword, setShowPassword] = useState(false);
 
   return (
@@ -12,7 +12,9 @@ export default function PasswordInput({ value, onChange, placeholder, required, 
         placeholder={placeholder}
         required={required}
         name={name}
+        maxLength={maxLength}
         className={`${className} pr-12`}
+        {...rest}
       />
       <button
         type="button"

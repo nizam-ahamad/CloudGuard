@@ -338,6 +338,7 @@ export default function AdminMonitor() {
               <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-neutral-500" />
               <input
                 type="text"
+                maxLength={100}
                 placeholder="Search user email, name, order ID..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}

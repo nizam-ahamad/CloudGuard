@@ -2559,6 +2559,7 @@ function App() {
                 <input 
                   type="text" 
                   required 
+                  maxLength={50}
                   className="w-full px-4 py-2 bg-white dark:bg-[#1e1f20] dark:text-zinc-200 rounded-lg border-2 border-[#282a2c] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200"
                   value={authForm.name}
                   onChange={e => setAuthForm({...authForm, name: e.target.value})}
@@ -2570,6 +2571,7 @@ function App() {
               <input 
                 type="email" 
                 required 
+                maxLength={120}
                 className="w-full px-4 py-2 bg-white dark:bg-[#1e1f20] dark:text-zinc-200 rounded-lg border-2 border-[#282a2c] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200"
                 value={authForm.email}
                 onChange={e => setAuthForm({...authForm, email: e.target.value})}
@@ -2693,6 +2695,7 @@ function App() {
                     <input 
                       type="email" 
                       required 
+                      maxLength={120}
                       className="w-full px-4 py-2 bg-white dark:bg-[#131314] border border-outline-variant dark:border-zinc-700 dark:text-zinc-200 rounded-lg focus:ring-2 focus:ring-secondary outline-none transition-all mb-4"
                       value={forgotEmail}
                       onChange={e => setForgotEmail(e.target.value)}
@@ -2955,6 +2958,7 @@ function App() {
               <input 
                 value={searchQuery} 
                 onChange={(e) => setSearchQuery(e.target.value)}
+                maxLength={100}
                 className="w-full bg-neutral-100 dark:bg-neutral-800/80 text-neutral-900 dark:text-white border border-neutral-200 dark:border-neutral-700/60 rounded-xl pl-9 pr-9 py-2 text-xs outline-none placeholder-neutral-400 focus:ring-2 focus:ring-blue-500/40 transition-all" 
                 placeholder="Search files, folders..." 
                 type="text" 
@@ -3056,6 +3060,7 @@ function App() {
               <input
                 type="text"
                 autoFocus
+                maxLength={100}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Search files, folders..."
@@ -4010,6 +4015,7 @@ function App() {
                 autoFocus
                 type="text" 
                 required 
+                maxLength={60}
                 disabled={isRenamingFolder}
                 className="w-full px-4 py-3 bg-white dark:bg-[#131314] border border-neutral-200 dark:border-zinc-700 text-neutral-900 dark:text-zinc-200 rounded-xl focus:ring-2 focus:ring-secondary outline-none transition-all mb-6 font-body-md disabled:opacity-60"
                 placeholder="Folder name" 
@@ -4062,6 +4068,7 @@ function App() {
                 autoFocus
                 type="text" 
                 required 
+                maxLength={120}
                 className="w-full px-4 py-3 bg-white dark:bg-[#131314] border border-neutral-200 dark:border-zinc-700 text-neutral-900 dark:text-zinc-200 rounded-xl focus:ring-2 focus:ring-secondary outline-none transition-all mb-6 font-body-md"
                 placeholder="File name" 
                 value={newRenameFileName} 
@@ -4309,6 +4316,7 @@ function App() {
               <input
                 type="text"
                 autoFocus
+                maxLength={60}
                 disabled={isCreatingFolder}
                 value={newFolderName}
                 onChange={(e) => setNewFolderName(e.target.value)}

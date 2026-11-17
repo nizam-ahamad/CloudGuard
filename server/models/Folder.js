@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 
 const folderSchema = new mongoose.Schema(
   {
-    name: { type: String, required: true, trim: true },
+    name: { type: String, required: true, trim: true, maxlength: [60, 'Folder name cannot exceed 60 characters'] },
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     parentId: { type: mongoose.Schema.Types.ObjectId, ref: 'Folder', default: null },

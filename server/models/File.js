@@ -2,8 +2,8 @@ const mongoose = require('mongoose');
 
 const fileSchema = new mongoose.Schema(
   {
-    name: { type: String, required: true },
-    originalName: { type: String },
+    name: { type: String, required: true, trim: true, maxlength: [255, 'File name cannot exceed 255 characters'] },
+    originalName: { type: String, trim: true, maxlength: [255, 'Original name cannot exceed 255 characters'] },
     sanitizedName: { type: String },
     diskName: { type: String },
     size: { type: Number, required: true },

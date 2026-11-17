@@ -179,7 +179,12 @@ router.post('/google', async (req, res) => {
 router.post('/register', authLimiter, async (req, res) => {
   try {
     const { name, email, password, consentGiven, isAdultConfirmed } = req.body;
-    if (!name || !email || !password) return res.status(400).json({ error: 'All fields are required' });
+    const trimmedName = (name || '').trim();
+    const normalizedEmail = (email || '').toLowerCase().trim();
+    if (!trimmedName || !normalizedEmail || !password) return res.status(400).json({ error: 'All fields are required' });
+    if (trimmedName.length > 50) return res.status(400).json({ error: 'Name cannot exceed 50 characters' });
+    if (normalizedEmail.length > 120) return res.status(400).json({ error: 'Email cannot exceed 120 characters' });
+    if (typeof password === 'string' && password.length > 72) return res.status(400).json({ error: 'Password cannot exceed 72 characters' });
 
     // Statutory DPDP Act 2023 Consent & Age-Gating Verification
     if (!consentGiven || !isAdultConfirmed) {
@@ -193,7 +198,6 @@ router.post('/register', authLimiter, async (req, res) => {
       return res.status(400).json({ error: 'Password must be at least 8 characters long and contain at least 1 letter and 1 number' });
     }
 
-    const normalizedEmail = email.toLowerCase().trim();
     let existingUser = await User.findOne({ email: normalizedEmail });
 
     if (existingUser) {
@@ -203,7 +207,7 @@ router.post('/register', authLimiter, async (req, res) => {
       // If user exists but wasn't verified, regenerate OTP and update password
       const salt = await bcrypt.genSalt(10);
       existingUser.password = await bcrypt.hash(password, salt);
-      existingUser.name = name.trim();
+      existingUser.name = trimmedName;
       existingUser.otp = generateOtp();
       existingUser.otpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
       existingUser.consentGiven = true;
@@ -296,6 +300,9 @@ router.post('/verify-activation-otp', otpLimiter, async (req, res) => {
     if (!email || !otp) {
       return res.status(400).json({ error: 'Email and verification code are required' });
     }
+    if (String(otp).trim().length > 8) {
+      return res.status(400).json({ error: 'Invalid verification code' });
+    }
 
     const normalizedEmail = email.toLowerCase().trim();
     const user = await User.findOne({ email: normalizedEmail });
@@ -368,6 +375,7 @@ router.post('/verify-otp', otpLimiter, async (req, res) => {
   try {
     const { email, otp, type } = req.body;
     if (!email || !otp) return res.status(400).json({ error: 'Email and OTP are required' });
+    if (String(otp).trim().length > 8) return res.status(400).json({ error: 'Invalid verification code' });
 
     const normalizedEmail = email.toLowerCase().trim();
     const user = await User.findOne({ email: normalizedEmail });
@@ -484,11 +492,17 @@ router.post('/login', authLimiter, async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    if (!email || !password) {
+    const normalizedEmail = (email || '').toLowerCase().trim();
+    if (!normalizedEmail || !password) {
       return res.status(400).json({ error: 'Please enter both email and password' });
     }
+    if (normalizedEmail.length > 120) {
+      return res.status(400).json({ error: 'Email cannot exceed 120 characters' });
+    }
+    if (typeof password === 'string' && password.length > 72) {
+      return res.status(400).json({ error: 'Password cannot exceed 72 characters' });
+    }
 
-    const normalizedEmail = email.toLowerCase().trim();
     // Explicitly include +password in query
     const user = await User.findOne({ email: normalizedEmail }).select('+password');
 
@@ -571,6 +585,8 @@ router.post('/forgot-password', otpLimiter, async (req, res) => {
     if (!email) return res.status(400).json({ error: 'Email is required' });
 
     const normalizedEmail = email.toLowerCase().trim();
+    if (normalizedEmail.length > 120) return res.status(400).json({ error: 'Email cannot exceed 120 characters' });
+
     const user = await User.findOne({ email: normalizedEmail });
 
     // Always respond with success to prevent email enumeration
@@ -603,13 +619,22 @@ router.post('/reset-password', otpLimiter, async (req, res) => {
     if (!email || !otp || !newPassword) {
       return res.status(400).json({ error: 'Email, OTP, and new password are required' });
     }
+    const normalizedEmail = email.toLowerCase().trim();
+    if (normalizedEmail.length > 120) {
+      return res.status(400).json({ error: 'Email cannot exceed 120 characters' });
+    }
+    if (String(otp).trim().length > 8) {
+      return res.status(400).json({ error: 'Invalid or expired reset code' });
+    }
+    if (typeof newPassword === 'string' && newPassword.length > 72) {
+      return res.status(400).json({ error: 'Password cannot exceed 72 characters' });
+    }
 
     const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/;
     if (!passwordRegex.test(newPassword)) {
       return res.status(400).json({ error: 'Password must be at least 8 characters long and contain at least 1 letter and 1 number' });
     }
 
-    const normalizedEmail = email.toLowerCase().trim();
     const user = await User.findOne({ email: normalizedEmail });
 
     const isOtpValid = user && (
@@ -645,6 +670,12 @@ router.put('/reset-password/:token', otpLimiter, async (req, res) => {
     const { password, email } = req.body;
     if (!password) {
       return res.status(400).json({ error: 'Please provide a new password' });
+    }
+    if (typeof password === 'string' && password.length > 72) {
+      return res.status(400).json({ error: 'Password cannot exceed 72 characters' });
+    }
+    if (email && email.trim().length > 120) {
+      return res.status(400).json({ error: 'Email cannot exceed 120 characters' });
     }
 
     const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/;
@@ -692,6 +723,12 @@ router.put('/password', verifyToken, async (req, res) => {
     const { currentPassword, newPassword } = req.body;
     if (!newPassword) {
       return res.status(400).json({ error: 'New password is required' });
+    }
+    if (typeof newPassword === 'string' && newPassword.length > 72) {
+      return res.status(400).json({ error: 'New password cannot exceed 72 characters' });
+    }
+    if (currentPassword && typeof currentPassword === 'string' && currentPassword.length > 72) {
+      return res.status(400).json({ error: 'Current password cannot exceed 72 characters' });
     }
 
     const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/;

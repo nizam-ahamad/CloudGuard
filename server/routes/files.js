@@ -437,7 +437,7 @@ router.get('/', authMiddleware, async (req, res) => {
     }
 
     const isRecent = req.query.recent === 'true';
-    const searchQuery = (req.query.search || '').trim();
+    const searchQuery = (req.query.search || '').trim().slice(0, 100);
     const targetFolderId = req.query.folderId || req.query.folder || null;
     const hasTargetFolder = Boolean(targetFolderId && targetFolderId !== 'null' && targetFolderId !== 'undefined');
 
@@ -2222,6 +2222,52 @@ router.put('/:id/move', authMiddleware, handleFileMove);
 router.patch('/:id/move', authMiddleware, handleFileMove);
 
 /**
+ * PATCH & PUT /:id/rename and /:id - File rename with length cap (1-120 chars)
+ */
+const handleFileRename = async (req, res) => {
+  try {
+    const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
+    if (!rawUserId) return res.status(401).json({ error: 'Authentication required' });
+
+    const userMatch = mongoose.Types.ObjectId.isValid(rawUserId)
+      ? { $in: [String(rawUserId), new mongoose.Types.ObjectId(rawUserId)] }
+      : String(rawUserId);
+
+    const { name, newName } = req.body;
+    const trimmedName = (name || newName || '').trim();
+
+    if (!trimmedName || trimmedName.length > 120) {
+      return res.status(400).json({
+        error: 'File name must be between 1 and 120 characters',
+        message: 'File name must be between 1 and 120 characters'
+      });
+    }
+
+    const file = await File.findOne({
+      _id: req.params.id,
+      $or: [{ userId: userMatch }, { user: userMatch }],
+      isTrash: false
+    });
+
+    if (!file) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+
+    file.name = trimmedName;
+    file.originalName = trimmedName;
+    await file.save();
+
+    return res.status(200).json({ success: true, file });
+  } catch (err) {
+    console.error('File rename error:', err);
+    return res.status(500).json({ error: 'Failed to rename file' });
+  }
+};
+
+router.patch('/:id/rename', authMiddleware, handleFileRename);
+router.put('/:id/rename', authMiddleware, handleFileRename);
+
+/**
  * PUT /folder/:id & PATCH /folder/:id - Rename/Move folder with duplicate name guard
  */
 const handleFolderRenameInFiles = async (req, res) => {
@@ -2229,6 +2275,13 @@ const handleFolderRenameInFiles = async (req, res) => {
     const { id } = req.params;
     const { name, newName, parentId, targetFolderId } = req.body;
     const trimmedName = (name || newName || '').trim();
+
+    if (trimmedName && trimmedName.length > 60) {
+      return res.status(400).json({
+        error: 'Folder name must be between 1 and 60 characters',
+        message: 'Folder name must be between 1 and 60 characters'
+      });
+    }
     const userId = req.user?._id || req.user?.id;
     const userMatch = mongoose.Types.ObjectId.isValid(userId)
       ? { $in: [String(userId), new mongoose.Types.ObjectId(userId)] }

@@ -388,6 +388,7 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
                   type={showCurrentPassword ? 'text' : 'password'}
                   name="cg-current-pwd-field"
                   id="cg-current-pwd-field"
+                  maxLength={72}
                   value={currentPassword}
                   onChange={(e) => setCurrentPassword(e.target.value)}
                   required
@@ -433,6 +434,7 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
                 type={showNewPassword ? 'text' : 'password'}
                 name="cg-new-pwd-field"
                 id="cg-new-pwd-field"
+                maxLength={72}
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
                 required
@@ -850,6 +852,7 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
                   style={{ WebkitTextSecurity: showDeletePassword ? 'none' : 'disc' }}
                   name="danger-zone-confirm-secret"
                   id="danger-zone-verify-pass"
+                  maxLength={72}
                   value={deletePassword}
                   onChange={(e) => setDeletePassword(e.target.value)}
                   placeholder="Enter your password to verify ownership"
@@ -891,6 +894,7 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
             </label>
             <input
               type="text"
+              maxLength={20}
               value={deleteConfirmText}
               onChange={(e) => setDeleteConfirmText(e.target.value)}
               placeholder="Type DELETE to confirm"

@@ -604,6 +604,7 @@ export default function AuthPage() {
                     type={showPassword ? 'text' : 'password'}
                     name="password"
                     required
+                    maxLength={72}
                     disabled={isLoading}
                     value={formData.password}
                     onChange={handleInputChange}
@@ -629,6 +630,7 @@ export default function AuthPage() {
                     type={showConfirmPassword ? 'text' : 'password'}
                     name="confirmPassword"
                     required
+                    maxLength={72}
                     disabled={isLoading}
                     value={formData.confirmPassword}
                     onChange={handleInputChange}
@@ -695,6 +697,7 @@ export default function AuthPage() {
                   type="email"
                   name="email"
                   required
+                  maxLength={120}
                   disabled={isLoading}
                   value={formData.email}
                   onChange={handleInputChange}
@@ -791,6 +794,7 @@ export default function AuthPage() {
                     type="text"
                     name="name"
                     required
+                    maxLength={50}
                     disabled={isLoading}
                     value={formData.name}
                     onChange={handleInputChange}
@@ -808,6 +812,7 @@ export default function AuthPage() {
                   type="email"
                   name="email"
                   required
+                  maxLength={120}
                   disabled={isLoading}
                   value={formData.email}
                   onChange={handleInputChange}
@@ -839,6 +844,7 @@ export default function AuthPage() {
                     type={showPassword ? 'text' : 'password'}
                     name="password"
                     required
+                    maxLength={72}
                     disabled={isLoading}
                     value={formData.password}
                     onChange={handleInputChange}

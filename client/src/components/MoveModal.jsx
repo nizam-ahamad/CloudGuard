@@ -350,6 +350,7 @@ function MoveModalContent({
                   ref={inlineInputRef}
                   type="text"
                   autoFocus
+                  maxLength={60}
                   disabled={isSubmittingFolder}
                   value={inlineFolderName}
                   onChange={(e) => {

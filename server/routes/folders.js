@@ -56,7 +56,9 @@ router.post('/', authMiddleware, async (req, res) => {
 
     const { name, parentId } = req.body;
     const trimmedName = (name || '').trim();
-    if (!trimmedName) return res.status(400).json({ error: 'Folder name is required' });
+    if (!trimmedName || trimmedName.length > 60) {
+      return res.status(400).json({ error: 'Folder name must be between 1 and 60 characters', message: 'Folder name must be between 1 and 60 characters' });
+    }
 
     const parent =
       parentId && parentId !== 'null' && parentId !== 'undefined' && parentId !== 'root' && mongoose.Types.ObjectId.isValid(parentId)
@@ -222,8 +224,8 @@ const handleFolderUpdate = async (req, res) => {
       return handleMoveFolder(req, res);
     }
 
-    if (!trimmedName) {
-      return res.status(400).json({ error: 'Folder name cannot be empty' });
+    if (!trimmedName || trimmedName.length > 60) {
+      return res.status(400).json({ error: 'Folder name must be between 1 and 60 characters', message: 'Folder name must be between 1 and 60 characters' });
     }
 
     const folder = await Folder.findOne({
@@ -725,7 +727,7 @@ router.get('/', authMiddleware, async (req, res) => {
       isTrash: { $ne: true },
     };
 
-    const searchQuery = (req.query.search || req.query.q || '').trim();
+    const searchQuery = (req.query.search || req.query.q || '').trim().slice(0, 100);
     if (searchQuery) {
       filter.name = { $regex: escapeRegex(searchQuery), $options: 'i' };
     } else if (req.query.all !== 'true') {
