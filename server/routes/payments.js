@@ -726,22 +726,25 @@ router.post('/cancel-subscription', auth, async (req, res) => {
       year: 'numeric'
     });
 
+    const cancelHtml = buildCloudGuardEmail({
+      title: 'Subscription Cancelled',
+      badge: 'SUBSCRIPTION CANCELLED',
+      isUrgent: false,
+      contentHtml: `
+        <p>Your CloudGuard subscription has been successfully cancelled as requested. You will not be charged again.</p>
+        <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; margin: 20px 0;">
+          <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>Vault Access:</strong> Full access until <strong>${expiryDateStr}</strong></p>
+          <p style="margin: 0; font-size: 13px; color: #64748b;">Your stored files will remain safe. You can resume your subscription anytime before this date to prevent interruption.</p>
+        </div>
+      `,
+      ctaText: 'Resume Subscription',
+      ctaUrl: `${process.env.CLIENT_URL || 'https://cloudguard.site'}/pricing`
+    });
+
     sendSubscriptionEmail({
       to: user.email,
       subject: 'Subscription Cancelled — CloudGuard Vault',
-      html: `
-        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; color: #111;">
-          <h2 style="color: #0f172a; margin-bottom: 8px;">Subscription Cancelled</h2>
-          <p style="font-size: 14px; color: #475569; line-height: 1.5;">
-            Your CloudGuard subscription has been successfully cancelled as requested. You will not be charged again.
-          </p>
-          <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; margin: 20px 0;">
-            <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>Vault Access:</strong> Full access until <strong>${expiryDateStr}</strong></p>
-            <p style="margin: 0; font-size: 13px; color: #64748b;">Your stored files will remain safe. You can resume your subscription anytime before this date to prevent interruption.</p>
-          </div>
-          <p style="font-size: 12px; color: #94a3b8; margin-top: 24px;">CloudGuard Vault • Secure Cloud Storage</p>
-        </div>
-      `
+      html: cancelHtml
     });
 
     return res.json({
@@ -785,21 +788,24 @@ router.post('/reactivate-subscription', auth, async (req, res) => {
       year: 'numeric'
     });
 
+    const resumeHtml = buildCloudGuardEmail({
+      title: 'Subscription Resumed',
+      badge: 'SUBSCRIPTION ACTIVE',
+      isUrgent: false,
+      contentHtml: `
+        <p>Welcome back! Your CloudGuard subscription is active, and your vault storage will continue uninterrupted.</p>
+        <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; margin: 20px 0;">
+          <p style="margin: 0; font-size: 13px;"><strong>Next Renewal / Cycle End:</strong> ${renewalDateStr}</p>
+        </div>
+      `,
+      ctaText: 'Open Vault',
+      ctaUrl: `${process.env.CLIENT_URL || 'https://cloudguard.site'}/dashboard`
+    });
+
     sendSubscriptionEmail({
       to: user.email,
       subject: 'Subscription Resumed — CloudGuard Vault',
-      html: `
-        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; color: #111;">
-          <h2 style="color: #0f172a; margin-bottom: 8px;">Subscription Resumed</h2>
-          <p style="font-size: 14px; color: #475569; line-height: 1.5;">
-            Welcome back! Your CloudGuard subscription is active, and your vault storage will continue uninterrupted.
-          </p>
-          <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; margin: 20px 0;">
-            <p style="margin: 0; font-size: 13px;"><strong>Next Renewal / Cycle End:</strong> ${renewalDateStr}</p>
-          </div>
-          <p style="font-size: 12px; color: #94a3b8; margin-top: 24px;">CloudGuard Vault • Secure Cloud Storage</p>
-        </div>
-      `
+      html: resumeHtml
     });
 
     return res.json({

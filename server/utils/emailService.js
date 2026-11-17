@@ -83,17 +83,17 @@ function buildCloudGuardEmail({ title, badge, contentHtml, ctaText, ctaUrl, isUr
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <title>${title || 'CloudGuard Notification'}</title>
     </head>
-    <body style="margin: 0; padding: 30px 15px; background-color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #0f172a;">
-      <table align="center" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 580px; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.03);">
+    <body style="margin: 0; padding: 16px 12px; background-color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #0f172a; -webkit-font-smoothing: antialiased;">
+      <table align="center" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 560px; width: 100%; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.03);">
         <tr>
-          <td style="padding: 32px 32px 20px 32px; border-bottom: 1px solid #f1f5f9;">
+          <td style="padding: 24px 20px 18px 20px; border-bottom: 1px solid #f1f5f9;">
             <table width="100%" border="0" cellpadding="0" cellspacing="0">
               <tr>
-                <td>
-                  <span style="font-size: 22px; font-weight: 800; letter-spacing: -0.5px; color: #0f172a;">CloudGuard</span>
+                <td style="vertical-align: middle;">
+                  <span style="font-size: 20px; font-weight: 800; letter-spacing: -0.5px; color: #0f172a; white-space: nowrap;">CloudGuard</span>
                 </td>
-                <td align="right" style="white-space: nowrap;">
-                  <span style="display: inline-block; padding: 6px 10px; font-size: 11px; font-weight: 700; color: ${accentColor}; background: ${badgeBg}; border: 1px solid ${badgeBorder}; border-radius: 6px; text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap;">
+                <td align="right" style="vertical-align: middle; white-space: nowrap; padding-left: 12px;">
+                  <span style="display: inline-block; padding: 6px 10px; font-size: 11px; font-weight: 700; color: ${accentColor}; background: ${badgeBg}; border: 1px solid ${badgeBorder}; border-radius: 6px; text-transform: uppercase; letter-spacing: 0.06em; white-space: nowrap;">
                     ${badge || 'SECURITY NOTICE'}
                   </span>
                 </td>
@@ -102,14 +102,14 @@ function buildCloudGuardEmail({ title, badge, contentHtml, ctaText, ctaUrl, isUr
           </td>
         </tr>
         <tr>
-          <td style="padding: 32px;">
-            <h2 style="margin: 0 0 16px 0; font-size: 20px; font-weight: 700; color: #0f172a;">${title}</h2>
+          <td style="padding: 28px 20px;">
+            <h2 style="margin: 0 0 16px 0; font-size: 19px; font-weight: 700; color: #0f172a; line-height: 1.3;">${title}</h2>
             <div style="font-size: 14px; line-height: 1.6; color: #334155;">
               ${contentHtml}
             </div>
             ${ctaText && ctaUrl ? `
               <div style="margin-top: 28px; text-align: left;">
-                <a href="${ctaUrl}" style="display: inline-block; background-color: ${accentColor}; color: #ffffff; text-decoration: none; font-size: 13px; font-weight: 600; padding: 12px 24px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.08);">
+                <a href="${ctaUrl}" style="display: inline-block; background-color: ${accentColor}; color: #ffffff; text-decoration: none; font-size: 13px; font-weight: 600; padding: 12px 24px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.08); white-space: nowrap;">
                   ${ctaText} &rarr;
                 </a>
               </div>
@@ -117,7 +117,7 @@ function buildCloudGuardEmail({ title, badge, contentHtml, ctaText, ctaUrl, isUr
           </td>
         </tr>
         <tr>
-          <td style="padding: 24px 32px; background-color: #f8fafc; border-top: 1px solid #f1f5f9; font-size: 12px; color: #64748b; line-height: 1.5;">
+          <td style="padding: 20px 20px; background-color: #f8fafc; border-top: 1px solid #f1f5f9; font-size: 12px; color: #64748b; line-height: 1.5;">
             CloudGuard Vault • Zero-Knowledge AI-Protected Cloud Storage<br>
             For support or questions, reach us at <a href="mailto:support@cloudguard.site" style="color: #2563eb; text-decoration: none;">support@cloudguard.site</a>.
           </td>
@@ -783,21 +783,33 @@ function getWelcomeEmailHtml(name) {
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Welcome to CloudGuard</title>
   </head>
-  <body style="margin: 0; padding: 0; background-color: #0a0a0a; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased;">
-    <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #0a0a0a; padding: 48px 16px;">
+  <body style="margin: 0; padding: 16px 12px; background-color: #0a0a0a; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; color: #f5f5f5;">
+    <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #0a0a0a;">
       <tr>
         <td align="center">
-          <table width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 460px; background-color: #141414; border: 1px solid #262626; border-radius: 14px; overflow: hidden;">
+          <table width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 560px; width: 100%; background-color: #141414; border: 1px solid #262626; border-radius: 14px; overflow: hidden;">
             <tr>
-              <td style="padding: 28px 32px 20px 32px; border-bottom: 1px solid #222222;">
-                <span style="font-size: 17px; font-weight: 700; letter-spacing: -0.4px; color: #ffffff;">
-                  CloudGuard
-                </span>
+              <td style="padding: 24px 20px 18px 20px; border-bottom: 1px solid #222222;">
+                <table width="100%" border="0" cellpadding="0" cellspacing="0">
+                  <tr>
+                    <td style="vertical-align: middle;">
+                      <span style="font-size: 18px; font-weight: 700; letter-spacing: -0.4px; color: #ffffff; white-space: nowrap;">
+                        CloudGuard
+                      </span>
+                    </td>
+                    <td align="right" style="vertical-align: middle; white-space: nowrap; padding-left: 12px;">
+                      <span style="display: inline-block; padding: 6px 10px; font-size: 11px; font-weight: 700; color: #60a5fa; background: rgba(37,99,235,0.15); border: 1px solid rgba(59,130,246,0.3); border-radius: 6px; text-transform: uppercase; letter-spacing: 0.06em; white-space: nowrap;">
+                        WELCOME ABOARD
+                      </span>
+                    </td>
+                  </tr>
+                </table>
               </td>
             </tr>
             <tr>
-              <td style="padding: 32px 32px 28px 32px;">
+              <td style="padding: 28px 20px;">
                 <h1 style="margin: 0 0 12px 0; font-size: 20px; font-weight: 600; color: #f5f5f5; letter-spacing: -0.3px;">
                   ${greeting}
                 </h1>
@@ -807,7 +819,7 @@ function getWelcomeEmailHtml(name) {
                 <table border="0" cellspacing="0" cellpadding="0">
                   <tr>
                     <td>
-                      <a href="https://cloudguard.site/dashboard" target="_blank" style="display: inline-block; background-color: #ffffff; color: #0a0a0a; font-size: 13px; font-weight: 600; text-decoration: none; padding: 10px 22px; border-radius: 8px;">
+                      <a href="https://cloudguard.site/dashboard" target="_blank" style="display: inline-block; background-color: #ffffff; color: #0a0a0a; font-size: 13px; font-weight: 600; text-decoration: none; padding: 10px 22px; border-radius: 8px; white-space: nowrap;">
                         Open Vault →
                       </a>
                     </td>
@@ -816,7 +828,7 @@ function getWelcomeEmailHtml(name) {
               </td>
             </tr>
             <tr>
-              <td style="padding: 18px 32px; border-top: 1px solid #222222;">
+              <td style="padding: 16px 20px; border-top: 1px solid #222222;">
                 <p style="margin: 0; font-size: 11px; color: #525252;">
                   © CloudGuard • Secure cloud storage
                 </p>
@@ -832,27 +844,40 @@ function getWelcomeEmailHtml(name) {
 }
 
 function getOtpEmailHtml(params) {
+  const badgeText = params.badge || (params.title?.toLowerCase()?.includes('reset') ? 'PASSWORD RESET' : 'VERIFY EMAIL');
   return `
   <!DOCTYPE html>
   <html>
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${params.title || 'Security Verification'}</title>
   </head>
-  <body style="margin: 0; padding: 0; background-color: #0a0a0a; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased;">
-    <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #0a0a0a; padding: 48px 16px;">
+  <body style="margin: 0; padding: 16px 12px; background-color: #0a0a0a; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; color: #f5f5f5;">
+    <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #0a0a0a;">
       <tr>
         <td align="center">
-          <table width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 460px; background-color: #141414; border: 1px solid #262626; border-radius: 14px; overflow: hidden;">
+          <table width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 560px; width: 100%; background-color: #141414; border: 1px solid #262626; border-radius: 14px; overflow: hidden;">
             <tr>
-              <td style="padding: 28px 32px 20px 32px; border-bottom: 1px solid #222222;">
-                <span style="font-size: 17px; font-weight: 700; letter-spacing: -0.4px; color: #ffffff;">
-                  CloudGuard
-                </span>
+              <td style="padding: 24px 20px 18px 20px; border-bottom: 1px solid #222222;">
+                <table width="100%" border="0" cellpadding="0" cellspacing="0">
+                  <tr>
+                    <td style="vertical-align: middle;">
+                      <span style="font-size: 18px; font-weight: 700; letter-spacing: -0.4px; color: #ffffff; white-space: nowrap;">
+                        CloudGuard
+                      </span>
+                    </td>
+                    <td align="right" style="vertical-align: middle; white-space: nowrap; padding-left: 12px;">
+                      <span style="display: inline-block; padding: 6px 10px; font-size: 11px; font-weight: 700; color: #60a5fa; background: rgba(37,99,235,0.15); border: 1px solid rgba(59,130,246,0.3); border-radius: 6px; text-transform: uppercase; letter-spacing: 0.06em; white-space: nowrap;">
+                        ${badgeText}
+                      </span>
+                    </td>
+                  </tr>
+                </table>
               </td>
             </tr>
             <tr>
-              <td style="padding: 32px 32px 28px 32px;">
+              <td style="padding: 28px 20px;">
                 <h2 style="margin: 0 0 6px 0; font-size: 18px; font-weight: 600; color: #f5f5f5;">
                   ${params.title}
                 </h2>
@@ -865,7 +890,7 @@ function getOtpEmailHtml(params) {
                 <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #0d0d0d; border: 1px solid #262626; border-radius: 8px; margin: 0 0 22px 0;">
                   <tr>
                     <td align="center" style="padding: 16px 10px;">
-                      <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 28px; font-weight: 700; letter-spacing: 8px; color: #ffffff; padding-left: 8px;">
+                      <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 28px; font-weight: 700; letter-spacing: 8px; color: #ffffff; padding-left: 8px; white-space: nowrap;">
                         ${params.otp}
                       </span>
                     </td>
@@ -877,7 +902,7 @@ function getOtpEmailHtml(params) {
               </td>
             </tr>
             <tr>
-              <td style="padding: 18px 32px; border-top: 1px solid #222222;">
+              <td style="padding: 16px 20px; border-top: 1px solid #222222;">
                 <p style="margin: 0; font-size: 11px; color: #525252;">
                   Never share this code with anyone. CloudGuard will never ask for it.
                 </p>
