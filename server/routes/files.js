@@ -538,10 +538,13 @@ router.post('/presigned-url', authMiddleware, async (req, res) => {
     const fileSize = req.body.fileSize !== undefined ? req.body.fileSize : req.body.size;
     const mimeType = req.body.mimeType || req.body.type || req.body.contentType || 'application/octet-stream';
     const activeFolder = req.body.folderId || req.body.folder || null;
+    const validFolder = (activeFolder && mongoose.Types.ObjectId.isValid(String(activeFolder)))
+      ? activeFolder
+      : null;
     const userId = req.user.id || req.user._id;
 
-    if (!fileName || fileSize === undefined || fileSize === null) {
-      return res.status(400).json({ error: 'Filename and file size are required' });
+    if (!fileName || fileSize === undefined || fileSize === null || Number(fileSize) <= 0) {
+      return res.status(400).json({ error: 'Filename and valid non-zero file size are required' });
     }
 
     // 2. Storage Quota Enforcement
@@ -626,8 +629,8 @@ router.post('/presigned-url', authMiddleware, async (req, res) => {
       s3Key,
       userId,
       user: userId,
-      folder: activeFolder,
-      folderId: activeFolder,
+      folder: validFolder,
+      folderId: validFolder,
       isTrash: false,
       isDeleted: false,
       isMalicious: false,
@@ -643,7 +646,14 @@ router.post('/presigned-url', authMiddleware, async (req, res) => {
       ContentType: mimeType,
     });
 
-    const presignedUrl = await getSignedUrl(s3Client, command, { expiresIn: 900 });
+    let presignedUrl;
+    try {
+      presignedUrl = await getSignedUrl(s3Client, command, { expiresIn: 900 });
+    } catch (signErr) {
+      console.error('[Presigned URL Signing Error]:', signErr.message || signErr);
+      await File.deleteOne({ _id: newFile._id });
+      return res.status(502).json({ error: 'Storage provider error generating upload ticket. Please retry.' });
+    }
 
     return res.status(200).json({
       presignedUrl,
@@ -664,9 +674,12 @@ router.post('/multipart/init', authMiddleware, async (req, res) => {
     const { fileName, fileSize, mimeType, folderId, folder } = req.body;
     const userId = req.user.id || req.user._id;
     const activeFolder = folderId || folder || null;
+    const validFolder = (activeFolder && mongoose.Types.ObjectId.isValid(String(activeFolder)))
+      ? activeFolder
+      : null;
 
-    if (!fileName || !fileSize) {
-      return res.status(400).json({ error: 'Filename and file size are required' });
+    if (!fileName || !fileSize || Number(fileSize) <= 0) {
+      return res.status(400).json({ error: 'Filename and valid non-zero file size are required' });
     }
 
     // 1. Pre-flight storage quota and write-lock checks (identical to single-PUT)
@@ -750,8 +763,8 @@ router.post('/multipart/init', authMiddleware, async (req, res) => {
       s3Key,
       userId,
       user: userId,
-      folder: activeFolder,
-      folderId: activeFolder,
+      folder: validFolder,
+      folderId: validFolder,
       isTrash: false,
       isDeleted: false,
       isMalicious: false,
@@ -769,30 +782,49 @@ router.post('/multipart/init', authMiddleware, async (req, res) => {
       ContentType: contentType,
     });
 
-    const { UploadId } = await s3Client.send(createCmd);
+    let UploadId;
+    try {
+      const initResult = await s3Client.send(createCmd);
+      UploadId = initResult.UploadId;
+    } catch (s3Err) {
+      console.error('[Multipart Init S3 Error]:', s3Err.message || s3Err);
+      await File.deleteOne({ _id: newFile._id });
+      return res.status(502).json({ error: 'Storage provider error initiating multipart session. Please retry.' });
+    }
 
-    // 4. Adaptive part sizing (>= 10 MB: strictly above Backblaze B2's 5 MB minimum, well under 10k parts)
-    let partSize = 10 * 1024 * 1024; // 10 MB for files < 250 MB
-    if (numericFileSize >= 1024 * 1024 * 1024) {
-      partSize = 50 * 1024 * 1024; // 50 MB for files >= 1 GB
-    } else if (numericFileSize >= 250 * 1024 * 1024) {
-      partSize = 25 * 1024 * 1024; // 25 MB for files 250 MB to < 1 GB
+    // 4. Mobile-optimized part sizing: strictly 10 MB–16 MB (well above Backblaze B2's 5 MB minimum, avoids 5G socket stalls)
+    // S3/B2 supports up to 10,000 parts: 16 MB * 10,000 = 160 GB, covering all CloudGuard plan quotas
+    let partSize = 10 * 1024 * 1024; // 10 MB default chunk size
+    if (numericFileSize > 10000 * 10 * 1024 * 1024) {
+      partSize = Math.ceil(numericFileSize / 9000); // Scale up only if > 100 GB to stay under 10k parts
+    } else if (numericFileSize >= 100 * 1024 * 1024) {
+      partSize = 16 * 1024 * 1024; // 16 MB chunk size for files >= 100 MB
     }
     const totalParts = Math.ceil(numericFileSize / partSize);
 
-    const partUrls = await Promise.all(
-      Array.from({ length: totalParts }, async (_, idx) => {
-        const partNumber = idx + 1;
-        const partCmd = new UploadPartCommand({
-          Bucket: bucket,
-          Key: s3Key,
-          UploadId,
-          PartNumber: partNumber,
-        });
-        const signedUrl = await getSignedUrl(s3Client, partCmd, { expiresIn: 14400 });
-        return { partNumber, signedUrl };
-      })
-    );
+    let partUrls;
+    try {
+      partUrls = await Promise.all(
+        Array.from({ length: totalParts }, async (_, idx) => {
+          const partNumber = idx + 1;
+          const partCmd = new UploadPartCommand({
+            Bucket: bucket,
+            Key: s3Key,
+            UploadId,
+            PartNumber: partNumber,
+          });
+          const signedUrl = await getSignedUrl(s3Client, partCmd, { expiresIn: 14400 });
+          return { partNumber, signedUrl };
+        })
+      );
+    } catch (signErr) {
+      console.error('[Multipart Part Signing Error]:', signErr.message || signErr);
+      try {
+        await s3Client.send(new AbortMultipartUploadCommand({ Bucket: bucket, Key: s3Key, UploadId }));
+      } catch (abortErr) {}
+      await File.deleteOne({ _id: newFile._id });
+      return res.status(502).json({ error: 'Storage provider error generating part signatures. Please retry.' });
+    }
 
     return res.status(200).json({
       fileId: newFile._id,
@@ -818,8 +850,16 @@ router.post('/multipart/complete', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'Missing required multipart completion parameters' });
     }
 
+    if (!mongoose.Types.ObjectId.isValid(String(fileId))) {
+      return res.status(400).json({ error: 'Invalid fileId' });
+    }
+
     const file = await File.findOne({ _id: fileId, userId });
     if (!file) return res.status(404).json({ error: 'File record not found' });
+
+    if (!file.size || file.size <= 0) {
+      return res.status(400).json({ error: 'Invalid or empty file size for multipart completion' });
+    }
 
     // Write-lock enforcement
     const user = await User.findById(userId).select('plan trialExpiresAt subscription').lean();
@@ -854,19 +894,27 @@ router.post('/multipart/complete', authMiddleware, async (req, res) => {
       }));
 
     const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
-    await s3Client.send(
-      new CompleteMultipartUploadCommand({
-        Bucket: bucket,
-        Key: s3Key,
-        UploadId: uploadId,
-        MultipartUpload: { Parts: sortedParts },
-      })
-    );
+    try {
+      await s3Client.send(
+        new CompleteMultipartUploadCommand({
+          Bucket: bucket,
+          Key: s3Key,
+          UploadId: uploadId,
+          MultipartUpload: { Parts: sortedParts },
+        })
+      );
+    } catch (s3Err) {
+      console.error('[Multipart Complete S3 Error]:', s3Err.message || s3Err);
+      return res.status(502).json({
+        error: 'Storage provider error during multipart assembly. Please retry.',
+        details: s3Err.message,
+      });
+    }
 
     return res.status(200).json({ success: true, fileId, s3Key });
   } catch (err) {
-    console.error('[Multipart Complete Error]:', err);
-    return res.status(500).json({ error: 'Failed to assemble multipart upload' });
+    console.error('[Multipart Complete Error]:', err.message || err);
+    return res.status(500).json({ error: 'Failed to assemble multipart upload', details: err.message });
   }
 });
 
@@ -1029,8 +1077,13 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
     const { fileId, sha256, thumbnail } = req.body;
     const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
 
+    if (!fileId || !mongoose.Types.ObjectId.isValid(String(fileId))) {
+      return res.status(400).json({ error: 'Valid fileId is required' });
+    }
+
     file = await File.findOne(buildTenantQuery(rawUserId, { _id: fileId }));
     if (!file) return res.status(404).json({ error: 'File record not found' });
+    if (!file.s3Key) return res.status(400).json({ error: 'File storage key not found' });
 
     const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
 
@@ -1044,8 +1097,23 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
       );
       actualBytes = headResult.ContentLength;
     } catch (headErr) {
-      console.error('[S3 HeadObject Error]:', headErr.message);
+      console.error('[S3 HeadObject Error]:', headErr.message || headErr);
       return res.status(400).json({ success: false, error: 'Uploaded object not found in storage.' });
+    }
+
+    // Guard against size <= 0: reject empty files immediately
+    if (actualBytes === undefined || actualBytes === null || actualBytes <= 0) {
+      console.warn(`[Finalize Upload Guard] Rejecting empty or corrupted file ${file._id} (${file.s3Key}) with size ${actualBytes}`);
+      try {
+        await permanentlyDeleteS3Keys([file.s3Key, file.thumbnailKey].filter(Boolean), rawUserId);
+      } catch (delErr) {
+        console.error('[Finalize Empty Delete S3 Error]:', delErr.message);
+      }
+      await File.deleteOne({ _id: file._id });
+      return res.status(400).json({
+        success: false,
+        error: 'Uploaded file is empty (0 bytes) or could not be read from device.',
+      });
     }
 
     // Enforce storage quota against actual S3 bytes

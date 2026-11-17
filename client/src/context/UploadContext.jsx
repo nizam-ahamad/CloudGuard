@@ -7,10 +7,13 @@ import { useToast } from './ToastContext';
 import { API_BASE_URL } from '../config';
 
 const UploadContext = createContext(null);
-const MAX_CONCURRENT_UPLOADS = 2;
+// Concurrency limits: Mobile/iOS is strictly limited to 2 to prevent memory pressure
+// and dropped temporary file handles from iOS Photo Library, while desktop gets 4 streams.
+const isMobileDevice = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent || '');
+const MAX_CONCURRENT_UPLOADS = isMobileDevice ? 2 : 4;
 const MULTIPART_THRESHOLD = 25 * 1024 * 1024; // 25 MB
 const MULTIPART_PART_CONCURRENCY = 3;
-const MAX_PART_RETRIES = 6;
+const MAX_PART_RETRIES = 3; // Up to 3 retries with backoff on network stall/timeout
 const TERMINAL_STATUSES = new Set(['clean', 'threat_purged', 'error']);
 
 // Dedicated Axios instance without default Authorization header for direct S3 PUTs
@@ -119,6 +122,8 @@ export function UploadProvider({ children }) {
   const currentBatchFailedRef = useRef(0);
   const emaBytesPerSecRef = useRef(0);
   const lastProgressSampleRef = useRef({ time: Date.now(), bytes: 0 });
+  const speedSamplesRef = useRef([]);
+  const lastActiveSpeedRef = useRef(0);
   const lastEventDispatchRef = useRef(0);
   const eventDebounceTimerRef = useRef(null);
   const cancelledTicketsRef = useRef(new Set());
@@ -243,43 +248,67 @@ export function UploadProvider({ children }) {
 
   const trackByteSpeedTick = useCallback(() => {
     const now = Date.now();
-    const deltaSec = (now - lastProgressSampleRef.current.time) / 1000;
-    if (deltaSec < 0.25) return;
-
     const metrics = computeQueueMetrics(queueRef.current || []);
     const currentUploaded = metrics.uploadedBytes;
-    const deltaBytes = Math.max(0, currentUploaded - lastProgressSampleRef.current.bytes);
 
-    if (deltaBytes > 0) {
-      const instantBytesPerSec = Math.max(0, deltaBytes / deltaSec);
+    const hasActiveTransfers = (queueRef.current || []).some((i) =>
+      ['uploading', 'hashing', 'finalizing'].includes(i.status)
+    );
+
+    if (!hasActiveTransfers) {
+      setGlobalSpeed('');
+      lastActiveSpeedRef.current = 0;
+      emaBytesPerSecRef.current = 0;
+      speedSamplesRef.current = [];
+      return;
+    }
+
+    // Sliding 2-second window of active bytes transferred
+    const windowMs = 2000;
+    const samples = speedSamplesRef.current.filter((s) => now - s.time <= windowMs);
+    samples.push({ time: now, bytes: currentUploaded });
+    speedSamplesRef.current = samples;
+
+    const oldest = samples[0];
+    const deltaSec = (now - oldest.time) / 1000;
+    const deltaBytes = Math.max(0, currentUploaded - oldest.bytes);
+
+    if (deltaSec >= 0.4 && deltaBytes > 0) {
+      const activeWindowSpeed = deltaBytes / deltaSec;
       emaBytesPerSecRef.current =
         emaBytesPerSecRef.current > 0
-          ? 0.3 * instantBytesPerSec + 0.7 * emaBytesPerSecRef.current
-          : instantBytesPerSec;
+          ? 0.35 * activeWindowSpeed + 0.65 * emaBytesPerSecRef.current
+          : activeWindowSpeed;
+      lastActiveSpeedRef.current = emaBytesPerSecRef.current;
 
       const speed = emaBytesPerSecRef.current;
-      if (speed > 0) {
-        const speedStr =
-          speed >= 1024 * 1024
-            ? `${(speed / (1024 * 1024)).toFixed(1)} MB/s`
-            : `${Math.round(speed / 1024)} KB/s`;
-        setGlobalSpeed(speedStr);
-      }
+      const speedStr =
+        speed >= 1024 * 1024
+          ? `${(speed / (1024 * 1024)).toFixed(1)} MB/s`
+          : `${Math.round(speed / 1024)} KB/s`;
+      setGlobalSpeed(speedStr);
       lastProgressSampleRef.current = { time: now, bytes: currentUploaded };
-    } else if (deltaSec >= 3.0) {
-      emaBytesPerSecRef.current = emaBytesPerSecRef.current * 0.5;
-      if (emaBytesPerSecRef.current < 1024) {
-        emaBytesPerSecRef.current = 0;
-        setGlobalSpeed('');
-      } else {
-        const speed = emaBytesPerSecRef.current;
-        const speedStr =
-          speed >= 1024 * 1024
-            ? `${(speed / (1024 * 1024)).toFixed(1)} MB/s`
-            : `${Math.round(speed / 1024)} KB/s`;
-        setGlobalSpeed(speedStr);
+    } else if (hasActiveTransfers) {
+      const anyFinalizing = (queueRef.current || []).some((i) => i.status === 'finalizing');
+      const anyHashing = (queueRef.current || []).some((i) => i.status === 'hashing');
+
+      if (anyFinalizing) {
+        setGlobalSpeed('Finalizing...');
+      } else if (anyHashing) {
+        setGlobalSpeed('Scanning file...');
+      } else if (lastActiveSpeedRef.current > 0) {
+        // Keep active rolling speed or indicate preparing next part during part signing pauses
+        if (deltaBytes === 0 && deltaSec >= 1.2) {
+          setGlobalSpeed('Preparing next part...');
+        } else {
+          const speed = lastActiveSpeedRef.current;
+          const speedStr =
+            speed >= 1024 * 1024
+              ? `${(speed / (1024 * 1024)).toFixed(1)} MB/s`
+              : `${Math.round(speed / 1024)} KB/s`;
+          setGlobalSpeed(speedStr);
+        }
       }
-      lastProgressSampleRef.current = { time: now, bytes: currentUploaded };
     }
   }, []);
 
@@ -294,6 +323,8 @@ export function UploadProvider({ children }) {
       setGlobalSpeed('');
       batchStartTimeRef.current = 0;
       emaBytesPerSecRef.current = 0;
+      lastActiveSpeedRef.current = 0;
+      speedSamplesRef.current = [];
       return;
     }
 
@@ -301,6 +332,7 @@ export function UploadProvider({ children }) {
       batchStartTimeRef.current = Date.now();
       const initialMetrics = computeQueueMetrics(queueRef.current || []);
       lastProgressSampleRef.current = { time: Date.now(), bytes: initialMetrics.uploadedBytes };
+      speedSamplesRef.current = [{ time: Date.now(), bytes: initialMetrics.uploadedBytes }];
       setEtaSeconds(-1);
     }
 
@@ -313,12 +345,14 @@ export function UploadProvider({ children }) {
         setGlobalSpeed('');
         batchStartTimeRef.current = 0;
         emaBytesPerSecRef.current = 0;
+        lastActiveSpeedRef.current = 0;
+        speedSamplesRef.current = [];
         return;
       }
 
       const now = Date.now();
       const elapsedSec = (now - batchStartTimeRef.current) / 1000;
-      const speed = emaBytesPerSecRef.current;
+      const speed = emaBytesPerSecRef.current || lastActiveSpeedRef.current;
       const finishedCount = metrics.completedCount;
 
       // Show "Estimating time..." (etaSeconds = -1) only during the first 2 seconds before speed > 0 and finishedCount === 0
@@ -364,25 +398,41 @@ export function UploadProvider({ children }) {
     }
     batchTotalRef.current = Math.max(batchTotalRef.current, fileList.length, currentActiveCount + fileList.length);
 
+    let emptyFilesCount = 0;
     const newItems = fileList.map((item) => {
       // Support raw File objects as well as { file, targetFolderId } or { file, folderId } wrappers
       const actualFile = item?.file ? item.file : item;
       const resolvedFolderId = item?.targetFolderId !== undefined
         ? item.targetFolderId
         : (item?.folderId !== undefined ? item.folderId : (defaultFolderId || null));
+      const fileSize = actualFile?.size || 0;
+      const isEmpty = !actualFile || fileSize === 0;
+
+      if (isEmpty) {
+        emptyFilesCount += 1;
+      }
 
       return {
         id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
         file: actualFile,
         name: actualFile?.name || 'file',
-        size: actualFile?.size || 0,
+        size: fileSize,
         folderId: resolvedFolderId,
-        status: 'queued', // queued | hashing | uploading | finalizing | clean | threat_purged | error
-        progress: 0,
-        error: null,
+        status: isEmpty ? 'error' : 'queued', // Reject 0-byte files immediately so they never upload or finalize as Safe
+        progress: isEmpty ? 100 : 0,
+        error: isEmpty ? 'File is empty (0 bytes) or could not be read from device' : null,
         uploadedBytes: 0,
       };
     });
+
+    if (emptyFilesCount > 0) {
+      currentBatchFailedRef.current += emptyFilesCount;
+      toast.error(
+        emptyFilesCount === 1
+          ? 'File is empty (0 bytes) or could not be read from device'
+          : `${emptyFilesCount} files are empty (0 bytes) or could not be read from device`
+      );
+    }
 
     setQueue((prev) => [...prev, ...newItems]);
     setIsOpen(true);
@@ -525,15 +575,21 @@ export function UploadProvider({ children }) {
     const uploadSinglePartWithRetry = async (partMeta, index) => {
       const start = index * partSize;
       const end = Math.min(start + partSize, file.size);
-      const chunkBlob = file.slice(start, end); // Zero-copy disk slice
 
       let attempt = 0;
       while (attempt < MAX_PART_RETRIES) {
         if (isAborted || abortController.signal.aborted) throw new Error('Multipart upload aborted');
         try {
+          // Re-slice freshly per attempt to ensure iOS Safari temporary Photo Library handle remains valid
+          const chunkBlob = file.slice(start, end);
+          if (!chunkBlob || chunkBlob.size === 0) {
+            throw new Error('File chunk is empty (0 bytes) or could not be read from device');
+          }
+
           partProgressMap[index] = 0;
           const putRes = await s3Axios.put(partMeta.signedUrl, chunkBlob, {
             signal: abortController.signal,
+            timeout: 60000, // 60s timeout per chunk prevents mobile 5G socket hang
             headers: { 'Content-Type': 'application/octet-stream' },
             transformRequest: [
               (data, reqHeaders) => {
@@ -575,6 +631,8 @@ export function UploadProvider({ children }) {
           const status = err.response?.status;
           const isTransient =
             !err.response ||
+            err.code === 'ECONNABORTED' ||
+            err.message?.includes('timeout') ||
             status === 503 ||
             status === 429 ||
             status === 500 ||
@@ -594,10 +652,10 @@ export function UploadProvider({ children }) {
             throw err;
           }
 
-          // Jittered exponential backoff for Backblaze B2 pod recovery
+          // Jittered exponential backoff for connection recovery (up to 3 retries)
           const backoffMs =
-            Math.min(15000, 1500 * Math.pow(2, attempt - 1)) +
-            Math.floor(Math.random() * 600);
+            Math.min(8000, 1000 * Math.pow(2, attempt - 1)) +
+            Math.floor(Math.random() * 500);
           await new Promise((r) => setTimeout(r, backoffMs));
         }
       }
@@ -642,6 +700,21 @@ export function UploadProvider({ children }) {
     const { id, file, folderId } = item;
     if (batchCancelledRef.current) return;
     processingIdsRef.current.add(id);
+
+    // Reject 0-byte or unreadable files immediately before requesting presigned URL
+    if (!file || !file.size || file.size === 0) {
+      updateItem(id, {
+        status: 'error',
+        progress: 100,
+        error: 'File is empty (0 bytes) or could not be read from device',
+      });
+      currentBatchFailedRef.current += 1;
+      processingIdsRef.current.delete(id);
+      inFlightIdsRef.current.delete(id);
+      activeControllersRef.current.delete(id);
+      toast.error(`"${item.name || 'File'}" is empty (0 bytes) or could not be read from device.`);
+      return;
+    }
 
     const controller = new AbortController();
     activeControllersRef.current.set(id, controller);
@@ -806,6 +879,7 @@ export function UploadProvider({ children }) {
           computeFileSHA256(file),
           s3Axios.put(ticket.presignedUrl, file, {
             signal: controller.signal,
+            timeout: 120000, // 2-min timeout for single file PUT prevents socket hang
             headers: { 'Content-Type': file.type || 'application/octet-stream' },
             transformRequest: [(data, reqHeaders) => {
               if (reqHeaders) {
@@ -1005,6 +1079,8 @@ export function UploadProvider({ children }) {
     currentBatchCompletedRef.current = 0;
     currentBatchFailedRef.current = 0;
     emaBytesPerSecRef.current = 0;
+    lastActiveSpeedRef.current = 0;
+    speedSamplesRef.current = [];
     lastProgressSampleRef.current = { time: Date.now(), bytes: 0 };
     if (eventDebounceTimerRef.current) {
       clearTimeout(eventDebounceTimerRef.current);

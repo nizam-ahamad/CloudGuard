@@ -269,10 +269,10 @@ export default function AdminMonitor() {
             </div>
           </div>
 
-          {/* Card 2: B2 Storage & Est Cost */}
+          {/* Card 2: Cloud Storage & Est Cost */}
           <div className="bg-[#141414] border border-[#262626] rounded-2xl p-5 shadow-sm hover:border-[#383838] transition-colors">
             <div className="flex items-center justify-between text-neutral-400 mb-2">
-              <span className="text-xs uppercase tracking-wider font-semibold">B2 Cloud Storage</span>
+              <span className="text-xs uppercase tracking-wider font-semibold">Cloud Storage</span>
               <Database className="w-4 h-4 text-neutral-400" />
             </div>
             <div className="text-2xl font-bold text-white tracking-tight">
@@ -280,7 +280,7 @@ export default function AdminMonitor() {
             </div>
             <div className="mt-3 flex items-center justify-between text-xs text-neutral-400">
               <span>Alloc: {formatBytes(metrics.totalStorageAllocatedBytes)}</span>
-              <span className="text-neutral-300 font-mono">₹{metrics.estimatedB2MonthlyINR}/mo B2</span>
+              <span className="text-neutral-300 font-mono">₹{metrics.estimatedB2MonthlyINR}/mo Storage</span>
             </div>
           </div>
 
@@ -602,7 +602,7 @@ export default function AdminMonitor() {
               <p className="font-semibold text-neutral-300">Effects of this action:</p>
               <ul className="list-disc list-inside space-y-0.5 text-neutral-400">
                 <li>Resets plan to free with 5 GB storage limit</li>
-                <li>Write-locks uploads; sets 7-day download grace period if files exist before automated B2 deletion</li>
+                <li>Write-locks uploads; sets 7-day download grace period if files exist before automated cloud storage deletion</li>
                 <li>Clears trial eligibility so the user cannot re-enter trial</li>
                 <li>Increments refund count (one-refund-per-account cap enforced)</li>
                 <li>Marks latest payment as <code className="text-amber-400">REFUNDED</code></li>
