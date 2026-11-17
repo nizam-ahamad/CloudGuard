@@ -702,7 +702,7 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
                         rel="noopener noreferrer"
                         className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-200 dark:hover:bg-neutral-700 transition-colors"
                       >
-                        View / PDF
+                        Download
                       </a>
                     </td>
                   </tr>
