@@ -10,9 +10,10 @@ const UploadContext = createContext(null);
 // Concurrency limits: Mobile/iOS is strictly limited to 2 to prevent memory pressure
 // and dropped temporary file handles from iOS Photo Library, while desktop gets 4 streams.
 const isMobileDevice = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent || '');
+const isIOS = typeof navigator !== 'undefined' && /iPhone|iPad|iPod/i.test(navigator.userAgent || '');
 const MAX_CONCURRENT_UPLOADS = isMobileDevice ? 2 : 4;
 const MULTIPART_THRESHOLD = 25 * 1024 * 1024; // 25 MB
-const MULTIPART_PART_CONCURRENCY = 3;
+const MULTIPART_WORKERS = 4;
 const MAX_PART_RETRIES = 3; // Up to 3 retries with backoff on network stall/timeout
 const TERMINAL_STATUSES = new Set(['clean', 'threat_purged', 'error']);
 
@@ -614,23 +615,20 @@ export function UploadProvider({ children }) {
     updateItem(id, { status: 'uploading', progress: 5, uploadedBytes: 0 });
 
     let completedPartsBytes = 0;
-    const inFlightBytesMap = {};
+    const inFlightBytesRef = { current: {} };
     const completedParts = new Array(partUrls.length);
     let nextPartIdx = 0;
 
     let lastProgressTime = 0;
     const syncAggregateProgress = () => {
       if (isAborted) return;
-      let inFlightTotal = 0;
-      for (const k in inFlightBytesMap) {
-        inFlightTotal += inFlightBytesMap[k] || 0;
-      }
-      const totalLoaded = Math.min(file.size, completedPartsBytes + inFlightTotal);
-      const percent = Math.min(95, Math.max(5, Math.round(5 + (totalLoaded / file.size) * 90)));
+      const inFlightTotal = Object.values(inFlightBytesRef.current).reduce((a, b) => a + (b || 0), 0);
+      const totalUploadedBytes = Math.min(file.size, completedPartsBytes + inFlightTotal);
+      const percent = Math.min(95, Math.max(5, Math.round(5 + (totalUploadedBytes / file.size) * 90)));
       const now = Date.now();
-      if (now - lastProgressTime >= 200 || percent >= 95) {
+      if (now - lastProgressTime >= 250 || percent >= 95) {
         lastProgressTime = now;
-        updateItem(id, { progress: percent, uploadedBytes: totalLoaded });
+        updateItem(id, { progress: percent, uploadedBytes: totalUploadedBytes });
         trackByteSpeedTick();
       }
     };
@@ -638,21 +636,27 @@ export function UploadProvider({ children }) {
     const uploadSinglePartWithRetry = async (partMeta, index) => {
       const start = index * partSize;
       const end = Math.min(start + partSize, file.size);
+      const partBytes = end - start;
 
       let attempt = 0;
       while (attempt < MAX_PART_RETRIES) {
         if (isAborted || abortController.signal.aborted) throw new Error('Multipart upload aborted');
         try {
-          // Re-slice freshly per attempt to ensure iOS Safari temporary Photo Library handle remains valid
+          // Re-slice freshly per attempt to ensure handle remains valid
           const chunkBlob = file.slice(start, end);
           if (!chunkBlob || chunkBlob.size === 0) {
             throw new Error('File chunk is empty (0 bytes) or could not be read from device');
           }
 
-          // Verify chunk byte length before uploading so 0-byte parts are never sent to storage (preventing EntityTooSmall)
-          const chunkBuf = await chunkBlob.arrayBuffer();
-          if (chunkBuf.byteLength === 0) {
-            throw new Error('iOS revoked file access — please retry this file');
+          // Stream Blob slices directly without arrayBuffer() for files > 25 MB (and on Android):
+          // Keep arrayBuffer() materialization ONLY for iOS files <= 25 MB where iOS revokes Photo Library handles
+          let bodyToSend = chunkBlob;
+          if (isIOS && file.size <= 25 * 1024 * 1024) {
+            const chunkBuf = await chunkBlob.arrayBuffer();
+            if (chunkBuf.byteLength === 0) {
+              throw new Error('iOS revoked file access — please retry this file');
+            }
+            bodyToSend = chunkBuf;
           }
 
           let targetUrl = partMeta?.uploadUrl || partMeta?.signedUrl;
@@ -665,39 +669,77 @@ export function UploadProvider({ children }) {
             targetUrl = signRes.data?.uploadUrl || signRes.data?.signedUrl;
           }
 
-          inFlightBytesMap[index] = 0;
-          const putRes = await s3Axios.put(targetUrl, chunkBuf, {
-            signal: abortController.signal,
-            timeout: 60000, // 60s timeout per chunk prevents mobile 5G socket hang
-            headers: { 'Content-Type': 'application/octet-stream' },
-            transformRequest: [
-              (data, reqHeaders) => {
-                if (reqHeaders) {
-                  delete reqHeaders.Authorization;
-                  delete reqHeaders.authorization;
-                }
-                return data;
-              },
-            ],
-            onUploadProgress: (progressEvent) => {
+          inFlightBytesRef.current[index] = 0;
+
+          // Native XMLHttpRequest provides zero-copy streaming and true real-time onprogress byte ticks
+          const eTag = await new Promise((resolve, reject) => {
+            if (isAborted || abortController.signal.aborted) {
+              return reject(new Error('Multipart upload aborted'));
+            }
+
+            const xhr = new XMLHttpRequest();
+            xhr.open('PUT', targetUrl, true);
+            xhr.timeout = 60000; // 60s timeout per chunk prevents mobile socket hang
+            xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+
+            const abortHandler = () => {
+              try { xhr.abort(); } catch {}
+              reject(new Error('Multipart upload aborted'));
+            };
+
+            abortController.signal.addEventListener('abort', abortHandler, { once: true });
+
+            xhr.upload.onprogress = (e) => {
               if (isAborted || abortController.signal.aborted) return;
-              inFlightBytesMap[index] = progressEvent.loaded || 0;
-              syncAggregateProgress();
-            },
+              if (e.lengthComputable) {
+                inFlightBytesRef.current[index] = e.loaded;
+                syncAggregateProgress();
+              }
+            };
+
+            xhr.onload = () => {
+              abortController.signal.removeEventListener('abort', abortHandler);
+              if (xhr.status >= 200 && xhr.status < 300) {
+                const rawEtag = xhr.getResponseHeader('ETag') || xhr.getResponseHeader('etag');
+                if (!rawEtag) {
+                  return reject(new Error('Bucket CORS missing ExposeHeaders: ["ETag"]'));
+                }
+                resolve(rawEtag);
+              } else {
+                const err = new Error(`Chunk upload failed with HTTP ${xhr.status}`);
+                err.status = xhr.status;
+                reject(err);
+              }
+            };
+
+            xhr.onerror = () => {
+              abortController.signal.removeEventListener('abort', abortHandler);
+              const err = new Error('Chunk upload network error');
+              reject(err);
+            };
+
+            xhr.ontimeout = () => {
+              abortController.signal.removeEventListener('abort', abortHandler);
+              const err = new Error('Chunk upload timed out after 60s');
+              err.code = 'ECONNABORTED';
+              reject(err);
+            };
+
+            xhr.onabort = () => {
+              abortController.signal.removeEventListener('abort', abortHandler);
+              reject(new Error('Multipart upload aborted'));
+            };
+
+            xhr.send(bodyToSend);
           });
 
-          const eTag = putRes.headers?.etag || putRes.headers?.ETag;
-          if (!eTag) {
-            throw new Error('Bucket CORS missing ExposeHeaders: ["ETag"]');
-          }
-
-          completedPartsBytes += chunkBuf.byteLength;
-          delete inFlightBytesMap[index];
+          completedPartsBytes += partBytes;
+          delete inFlightBytesRef.current[index];
           completedParts[index] = { PartNumber: partMeta.partNumber, ETag: eTag };
           syncAggregateProgress();
           return;
         } catch (err) {
-          delete inFlightBytesMap[index];
+          delete inFlightBytesRef.current[index];
           syncAggregateProgress();
 
           if (
@@ -711,11 +753,12 @@ export function UploadProvider({ children }) {
             throw err;
           }
 
-          const status = err.response?.status;
+          const status = err.status || err.response?.status;
           const isTransient =
-            !err.response ||
+            !status ||
             err.code === 'ECONNABORTED' ||
             err.message?.includes('timeout') ||
+            err.message?.includes('network error') ||
             status === 503 ||
             status === 429 ||
             status === 500 ||
@@ -745,12 +788,11 @@ export function UploadProvider({ children }) {
     };
 
     try {
-      // 2. Continuous worker pool (3 workers on mobile, 5 on desktop)
+      // 2. True Continuous 4-Worker Pipeline (No Batch Barriers)
       const runWorkers = async () => {
-        const multipartWorkers = isMobileDevice ? 3 : 5;
-        const workerConcurrency = Math.min(multipartWorkers, partUrls.length);
+        const workerConcurrency = Math.min(MULTIPART_WORKERS, partUrls.length);
         const workers = Array.from({ length: workerConcurrency }, async () => {
-          while (!isAborted && nextPartIdx < partUrls.length) {
+          while (!isAborted && !abortController.signal.aborted && nextPartIdx < partUrls.length) {
             const currentIdx = nextPartIdx++;
             await uploadSinglePartWithRetry(partUrls[currentIdx], currentIdx);
           }
@@ -920,9 +962,9 @@ export function UploadProvider({ children }) {
     const controller = new AbortController();
     activeControllersRef.current.set(id, controller);
 
-    // Ensure mobile file <= 25 MB is materialized into memory before uploading
+    // Ensure iOS photo <= 25 MB is materialized into memory before uploading
     let uploadFile = file;
-    if (isMobileDevice && file.size <= 25 * 1024 * 1024 && !file._materialized) {
+    if (isIOS && file.size <= 25 * 1024 * 1024 && !file._materialized) {
       try {
         const buf = await file.arrayBuffer();
         if (buf && buf.byteLength > 0) {
