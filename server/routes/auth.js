@@ -12,7 +12,7 @@ const Folder = require('../models/Folder');
 const Payment = require('../models/Payment');
 const DeletedAccountLog = require('../models/DeletedAccountLog');
 const authMiddleware = require('../middleware/auth');
-const { sendActivationOtp, sendResetOtp, sendWelcomeEmail, sendNotificationEmail } = require('../utils/emailService');
+const { sendActivationOtp, sendResetOtp, sendWelcomeEmail, sendNotificationEmail, sendAccountDeletedEmail } = require('../utils/emailService');
 const { authLimiter, otpLimiter } = require('../middleware/rateLimiter');
 const { permanentlyDeleteS3Keys } = require('../utils/s3Delete');
 
@@ -861,7 +861,14 @@ router.delete('/account', authMiddleware, async (req, res) => {
       { upsert: true, new: true }
     );
 
+    const userEmail = user.email;
+    const userName = user.name || 'User';
+
     await User.findByIdAndDelete(rawUserId);
+
+    sendAccountDeletedEmail(userEmail, userName).catch((err) =>
+      console.error('[Account Deleted Email Error]', err.message)
+    );
 
     return res.status(200).json({
       success: true,

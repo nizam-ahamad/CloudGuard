@@ -639,6 +639,41 @@ function generateRefundAcknowledgmentEmail({ user, planName, refundAmount, order
   return { subject, html };
 }
 
+/**
+ * DPDP Account Erasure Confirmation
+ */
+function generateAccountDeletedEmail({ name }) {
+  const trimmedName = name ? String(name).trim() : 'User';
+  const subject = 'Account & Vault Permanently Deleted — CloudGuard';
+  const contentHtml = `
+    <p>Hello ${trimmedName},</p>
+    <p>This email confirms that your CloudGuard account and encrypted vault have been permanently deleted upon your request, in compliance with Digital Personal Data Protection (DPDP) data-erasure standards.</p>
+    <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 18px; margin: 20px 0;">
+      <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>Stored Files & Folders:</strong> Permanently erased from cloud object storage</p>
+      <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>Thumbnails & Metadata:</strong> Purged completely</p>
+      <p style="margin: 0 0 8px 0; font-size: 13px;"><strong>Active Subscriptions & Billing:</strong> Terminated (Zero remaining balance or obligations)</p>
+      <p style="margin: 0; font-size: 13px; color: #16a34a;"><strong>Erasure Verification:</strong> Irreversible (DPDP Section 12 compliant)</p>
+    </div>
+    <p style="font-size: 13px; line-height: 1.6; color: #475569;">
+      All personal data, credentials, and cryptographic keys associated with this account have been securely unlinked and wiped from our systems. You have zero remaining billing or active subscription obligations.
+    </p>
+    <p style="font-size: 13px; color: #64748b;">
+      Thank you for having used CloudGuard. If you ever need encrypted cloud storage in the future, you are welcome to create a new account anytime.
+    </p>
+  `;
+
+  const html = buildCloudGuardEmail({
+    title: 'Account & Vault Permanently Deleted',
+    badge: 'ACCOUNT DELETED',
+    contentHtml,
+    ctaText: '',
+    ctaUrl: '',
+    isUrgent: false
+  });
+
+  return { subject, html };
+}
+
 // -------------------------------------------------------------
 // Transactional Dispatchers for Direct Integration
 // -------------------------------------------------------------
@@ -723,6 +758,12 @@ async function sendRefundAcknowledgmentEmail(user, refundDetails) {
     clientUrl: refundDetails?.clientUrl
   });
   return sendSubscriptionEmail({ to: user.email, subject, html });
+}
+
+async function sendAccountDeletedEmail(email, name) {
+  if (!email) return { success: false, error: 'Recipient missing' };
+  const { subject, html } = generateAccountDeletedEmail({ name });
+  return sendSubscriptionEmail({ to: email, subject, html });
 }
 
 // -------------------------------------------------------------
@@ -939,6 +980,7 @@ module.exports = {
   generate24HourPurgeAlertEmail,
   generateHardPurgeCompletedEmail,
   generateRefundAcknowledgmentEmail,
+  generateAccountDeletedEmail,
   // Transactional dispatchers
   sendAnnual7DayReminderEmail,
   sendScheduledDowngradeEmail,
@@ -949,4 +991,5 @@ module.exports = {
   send24HourPurgeAlertEmail,
   sendHardPurgeCompletedEmail,
   sendRefundAcknowledgmentEmail,
+  sendAccountDeletedEmail,
 };

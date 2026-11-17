@@ -250,11 +250,15 @@ async function reconcileExpiredSubscriptions() {
     });
 
     for (const user of t7AnnualUsers) {
-      if (!isActivePaidSubscriber(user, now)) continue;
-      await sendAnnual7DayReminderEmail(user);
-      user.subscription.dunningStep = 1;
-      await user.save();
-      console.log(`[Subscription Manager] Step 1: Dispatched T-7 annual reminder for ${user.email}`);
+      try {
+        if (!isActivePaidSubscriber(user, now)) continue;
+        await sendAnnual7DayReminderEmail(user);
+        user.subscription.dunningStep = 1;
+        await user.save();
+        console.log(`[Subscription Manager] Step 1: Dispatched T-7 annual reminder for ${user.email}`);
+      } catch (userErr) {
+        console.error('[Reconcile User Error]', user._id, userErr.message);
+      }
     }
 
     // -------------------------------------------------------------
@@ -289,19 +293,23 @@ async function reconcileExpiredSubscriptions() {
     });
 
     for (const user of t3Users) {
-      if (isActivePaidSubscriber(user, now)) {
-        const subExp = user.subscription?.expiresAt ? new Date(user.subscription.expiresAt) : null;
-        if (subExp && subExp > new Date(now.getTime() + 3 * 86400000)) {
-          user.trialExpiresAt = null;
-          if (user.subscription) user.subscription.gracePeriodExpiresAt = null;
-          await user.save();
-          continue;
+      try {
+        if (isActivePaidSubscriber(user, now)) {
+          const subExp = user.subscription?.expiresAt ? new Date(user.subscription.expiresAt) : null;
+          if (subExp && subExp > new Date(now.getTime() + 3 * 86400000)) {
+            user.trialExpiresAt = null;
+            if (user.subscription) user.subscription.gracePeriodExpiresAt = null;
+            await user.save();
+            continue;
+          }
         }
+        await sendPrepaidExpiryWarningEmail(user);
+        user.subscription.dunningStep = 2;
+        await user.save();
+        console.log(`[Subscription Manager] Step 2: Dispatched T-3 expiry warning for ${user.email}`);
+      } catch (userErr) {
+        console.error('[Reconcile User Error]', user._id, userErr.message);
       }
-      await sendPrepaidExpiryWarningEmail(user);
-      user.subscription.dunningStep = 2;
-      await user.save();
-      console.log(`[Subscription Manager] Step 2: Dispatched T-3 expiry warning for ${user.email}`);
     }
 
     // -------------------------------------------------------------
@@ -336,19 +344,23 @@ async function reconcileExpiredSubscriptions() {
     });
 
     for (const user of t24hUsers) {
-      if (isActivePaidSubscriber(user, now)) {
-        const subExp = user.subscription?.expiresAt ? new Date(user.subscription.expiresAt) : null;
-        if (subExp && subExp > new Date(now.getTime() + 24 * 3600 * 1000)) {
-          user.trialExpiresAt = null;
-          if (user.subscription) user.subscription.gracePeriodExpiresAt = null;
-          await user.save();
-          continue;
+      try {
+        if (isActivePaidSubscriber(user, now)) {
+          const subExp = user.subscription?.expiresAt ? new Date(user.subscription.expiresAt) : null;
+          if (subExp && subExp > new Date(now.getTime() + 24 * 3600 * 1000)) {
+            user.trialExpiresAt = null;
+            if (user.subscription) user.subscription.gracePeriodExpiresAt = null;
+            await user.save();
+            continue;
+          }
         }
+        await send24HourPreExpiryEmail(user);
+        user.subscription.dunningStep = 3;
+        await user.save();
+        console.log(`[Subscription Manager] Step 3: Dispatched T-24h pre-expiry warning for ${user.email}`);
+      } catch (userErr) {
+        console.error('[Reconcile User Error]', user._id, userErr.message);
       }
-      await send24HourPreExpiryEmail(user);
-      user.subscription.dunningStep = 3;
-      await user.save();
-      console.log(`[Subscription Manager] Step 3: Dispatched T-24h pre-expiry warning for ${user.email}`);
     }
 
     // -------------------------------------------------------------
@@ -362,24 +374,28 @@ async function reconcileExpiredSubscriptions() {
     });
 
     for (const trialUser of expiredTrials) {
-      if (isActivePaidSubscriber(trialUser, now)) {
-        console.log(`[Subscription Manager] SHIELDED active paid subscriber ${trialUser.email} from trial expiry. Auto-healing stale timers.`);
-        trialUser.trialExpiresAt = null;
-        if (trialUser.subscription) {
-          trialUser.subscription.gracePeriodExpiresAt = null;
-          trialUser.subscription.dunningStep = 0;
+      try {
+        if (isActivePaidSubscriber(trialUser, now)) {
+          console.log(`[Subscription Manager] SHIELDED active paid subscriber ${trialUser.email} from trial expiry. Auto-healing stale timers.`);
+          trialUser.trialExpiresAt = null;
+          if (trialUser.subscription) {
+            trialUser.subscription.gracePeriodExpiresAt = null;
+            trialUser.subscription.dunningStep = 0;
+          }
+          await trialUser.save();
+          continue;
         }
+        const graceEnd = new Date(now.getTime() + 7 * 86400000);
+        if (!trialUser.subscription) trialUser.subscription = {};
+        trialUser.subscription.status = 'past_due';
+        trialUser.subscription.gracePeriodExpiresAt = graceEnd;
+        trialUser.subscription.dunningStep = 4;
         await trialUser.save();
-        continue;
+        console.log(`[Subscription Manager] Step 4: 14-day trial expired for ${trialUser.email}. Set to past_due with 7-day grace.`);
+        await sendGracePeriodStartedEmail(trialUser, graceEnd);
+      } catch (userErr) {
+        console.error('[Reconcile User Error]', trialUser._id, userErr.message);
       }
-      const graceEnd = new Date(now.getTime() + 7 * 86400000);
-      if (!trialUser.subscription) trialUser.subscription = {};
-      trialUser.subscription.status = 'past_due';
-      trialUser.subscription.gracePeriodExpiresAt = graceEnd;
-      trialUser.subscription.dunningStep = 4;
-      await trialUser.save();
-      console.log(`[Subscription Manager] Step 4: 14-day trial expired for ${trialUser.email}. Set to past_due with 7-day grace.`);
-      await sendGracePeriodStartedEmail(trialUser, graceEnd);
     }
 
     // 4b. Expired Paid Subscriptions (Quota Gate Evaluation)
@@ -394,60 +410,64 @@ async function reconcileExpiredSubscriptions() {
       const FREE_QUOTA_BYTES = 5 * 1024 * 1024 * 1024; // 5 GB default
 
       for (const user of expiredUsers) {
-        if (isActivePaidSubscriber(user, now)) {
-          console.log(`[Subscription Manager] SHIELDED active paid subscriber ${user.email} in expired paid users check. Auto-healing stale timers.`);
-          user.trialExpiresAt = null;
-          if (user.subscription) {
+        try {
+          if (isActivePaidSubscriber(user, now)) {
+            console.log(`[Subscription Manager] SHIELDED active paid subscriber ${user.email} in expired paid users check. Auto-healing stale timers.`);
+            user.trialExpiresAt = null;
+            if (user.subscription) {
+              user.subscription.gracePeriodExpiresAt = null;
+              user.subscription.dunningStep = 0;
+            }
+            await user.save();
+            continue;
+          }
+
+          const scheduled = user.subscription?.scheduledDowngrade;
+          const targetPlanId = scheduled?.targetPlanId || 'free';
+          const targetCatalog = PLAN_CATALOG[targetPlanId];
+          const targetQuotaBytes = targetCatalog ? targetCatalog.storageBytes : FREE_QUOTA_BYTES;
+          const targetPlanName = targetCatalog ? targetCatalog.name : 'Free Vault (5 GB)';
+          const currentStorageUsed = user.storageUsed || 0;
+
+          // --- THE QUOTA GATE EVALUATION ---
+          if (currentStorageUsed <= targetQuotaBytes) {
+            // CASE A: Storage fits within target tier quota -> Execute downgrade cleanly (Scenario 5)
+            user.plan = targetPlanId;
+            user.storageLimit = targetQuotaBytes;
+            user.subscription.planId = targetPlanId;
+            user.subscription.status = targetPlanId === 'free' ? 'expired' : 'active';
+            user.subscription.billingCycle = scheduled?.targetBillingCycle || 'none';
+            user.subscription.scheduledDowngrade = { targetPlanId: null, targetBillingCycle: null, scheduledAt: null };
             user.subscription.gracePeriodExpiresAt = null;
             user.subscription.dunningStep = 0;
+
+            await user.save();
+            console.log(`[Subscription Manager] Downgrade cleanly executed for ${user.email} -> ${targetPlanName}`);
+
+            const clientUrl = process.env.CLIENT_URL || 'https://cloudguard.site';
+            const { subject, html } = generateQuotaGatePassEmail({
+              user,
+              targetPlanName,
+              storageUsedGB: currentStorageUsed / (1024 ** 3),
+              targetQuotaGB: targetQuotaBytes / (1024 ** 3),
+              clientUrl
+            });
+            sendSubscriptionEmail({ to: user.email, subject, html }).catch(e => {
+              console.error('[Quota Gate Pass Email Error]:', e.message);
+            });
+          } else {
+            // CASE B: Storage EXCEEDS target quota -> Downgrade blocked, activate write-lock + 7-day grace period
+            const graceEnd = new Date(now.getTime() + 7 * 86400000);
+            user.subscription.status = 'past_due';
+            user.subscription.gracePeriodExpiresAt = graceEnd;
+            user.subscription.dunningStep = 4;
+            await user.save();
+
+            console.warn(`[Subscription Manager] Step 4: Downgrade BLOCKED for ${user.email}. Storage ${currentStorageUsed} exceeds ${targetQuotaBytes}. Past due grace set.`);
+            await sendGracePeriodStartedEmail(user, graceEnd);
           }
-          await user.save();
-          continue;
-        }
-
-        const scheduled = user.subscription?.scheduledDowngrade;
-        const targetPlanId = scheduled?.targetPlanId || 'free';
-        const targetCatalog = PLAN_CATALOG[targetPlanId];
-        const targetQuotaBytes = targetCatalog ? targetCatalog.storageBytes : FREE_QUOTA_BYTES;
-        const targetPlanName = targetCatalog ? targetCatalog.name : 'Free Vault (5 GB)';
-        const currentStorageUsed = user.storageUsed || 0;
-
-        // --- THE QUOTA GATE EVALUATION ---
-        if (currentStorageUsed <= targetQuotaBytes) {
-          // CASE A: Storage fits within target tier quota -> Execute downgrade cleanly (Scenario 5)
-          user.plan = targetPlanId;
-          user.storageLimit = targetQuotaBytes;
-          user.subscription.planId = targetPlanId;
-          user.subscription.status = targetPlanId === 'free' ? 'expired' : 'active';
-          user.subscription.billingCycle = scheduled?.targetBillingCycle || 'none';
-          user.subscription.scheduledDowngrade = { targetPlanId: null, targetBillingCycle: null, scheduledAt: null };
-          user.subscription.gracePeriodExpiresAt = null;
-          user.subscription.dunningStep = 0;
-
-          await user.save();
-          console.log(`[Subscription Manager] Downgrade cleanly executed for ${user.email} -> ${targetPlanName}`);
-
-          const clientUrl = process.env.CLIENT_URL || 'https://cloudguard.site';
-          const { subject, html } = generateQuotaGatePassEmail({
-            user,
-            targetPlanName,
-            storageUsedGB: currentStorageUsed / (1024 ** 3),
-            targetQuotaGB: targetQuotaBytes / (1024 ** 3),
-            clientUrl
-          });
-          sendSubscriptionEmail({ to: user.email, subject, html }).catch(e => {
-            console.error('[Quota Gate Pass Email Error]:', e.message);
-          });
-        } else {
-          // CASE B: Storage EXCEEDS target quota -> Downgrade blocked, activate write-lock + 7-day grace period
-          const graceEnd = new Date(now.getTime() + 7 * 86400000);
-          user.subscription.status = 'past_due';
-          user.subscription.gracePeriodExpiresAt = graceEnd;
-          user.subscription.dunningStep = 4;
-          await user.save();
-
-          console.warn(`[Subscription Manager] Step 4: Downgrade BLOCKED for ${user.email}. Storage ${currentStorageUsed} exceeds ${targetQuotaBytes}. Past due grace set.`);
-          await sendGracePeriodStartedEmail(user, graceEnd);
+        } catch (userErr) {
+          console.error('[Reconcile User Error]', user._id, userErr.message);
         }
       }
     }
@@ -468,25 +488,29 @@ async function reconcileExpiredSubscriptions() {
     });
 
     for (const dUser of day6Users) {
-      if (isActivePaidSubscriber(dUser, now)) {
-        console.log(`[Subscription Manager] SHIELDED active paid subscriber ${dUser.email} from Day 6 purge alert. Auto-healing stale timers.`);
-        dUser.trialExpiresAt = null;
-        if (dUser.subscription) {
-          dUser.subscription.status = 'active';
-          dUser.subscription.gracePeriodExpiresAt = null;
-          dUser.subscription.dunningStep = 0;
+      try {
+        if (isActivePaidSubscriber(dUser, now)) {
+          console.log(`[Subscription Manager] SHIELDED active paid subscriber ${dUser.email} from Day 6 purge alert. Auto-healing stale timers.`);
+          dUser.trialExpiresAt = null;
+          if (dUser.subscription) {
+            dUser.subscription.status = 'active';
+            dUser.subscription.gracePeriodExpiresAt = null;
+            dUser.subscription.dunningStep = 0;
+          }
+          await dUser.save();
+          continue;
         }
+        const baselineQuota = 5 * 1024 * 1024 * 1024;
+        const excessGB = Math.max(0, ((dUser.storageUsed || 0) - baselineQuota) / (1024 ** 3));
+        const purgeDate = dUser.subscription?.gracePeriodExpiresAt;
+        const deleteUrl = `${process.env.CLIENT_URL || 'https://cloudguard.site'}/pricing`;
+        await send24HourPurgeAlertEmail(dUser, excessGB, purgeDate, deleteUrl);
+        dUser.subscription.dunningStep = 5;
         await dUser.save();
-        continue;
+        console.warn(`[Subscription Manager] Step 5: Dispatched 24-hr final purge alert for ${dUser.email}`);
+      } catch (userErr) {
+        console.error('[Reconcile User Error]', dUser._id, userErr.message);
       }
-      const baselineQuota = 5 * 1024 * 1024 * 1024;
-      const excessGB = Math.max(0, ((dUser.storageUsed || 0) - baselineQuota) / (1024 ** 3));
-      const purgeDate = dUser.subscription?.gracePeriodExpiresAt;
-      const deleteUrl = `${process.env.CLIENT_URL || 'https://cloudguard.site'}/pricing`;
-      await send24HourPurgeAlertEmail(dUser, excessGB, purgeDate, deleteUrl);
-      dUser.subscription.dunningStep = 5;
-      await dUser.save();
-      console.warn(`[Subscription Manager] Step 5: Dispatched 24-hr final purge alert for ${dUser.email}`);
     }
 
     // -------------------------------------------------------------
