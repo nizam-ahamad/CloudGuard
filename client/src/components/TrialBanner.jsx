@@ -187,46 +187,47 @@ export function TrialBanner({ user }) {
     <div
       role="region"
       aria-label="Free Trial Information"
-      className="relative mb-4 rounded-xl flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 px-3.5 py-2.5 sm:px-5 sm:py-3 bg-stone-100/90 border border-stone-300/80 text-stone-800 dark:bg-[#1e1d1b] dark:border-amber-200/15 dark:text-stone-200 shadow-none transition-all"
+      className="relative mb-4 rounded-xl flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 sm:gap-4 p-3 sm:px-5 sm:py-3 bg-stone-100/90 border border-stone-300/80 text-stone-800 dark:bg-[#1e1d1b] dark:border-amber-200/15 dark:text-stone-200 shadow-none transition-all"
     >
-      {/* Left: Badge + Message */}
-      <div className="flex items-start sm:items-center gap-2.5 min-w-0 flex-1">
-        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] sm:text-xs font-bold uppercase tracking-wider bg-amber-900/10 text-amber-800 border border-amber-700/20 dark:bg-amber-400/10 dark:text-amber-300/85 dark:border-amber-300/20 shrink-0">
+      {/* Mobile Top Header Row: Badge on left, Dismiss button on top-right (< sm); contents on desktop */}
+      <div className="flex items-center justify-between w-full sm:contents">
+        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] sm:text-xs font-bold uppercase tracking-wider bg-amber-900/10 text-amber-800 border border-amber-700/20 dark:bg-amber-400/10 dark:text-amber-300/85 dark:border-amber-300/20 shrink-0 whitespace-nowrap sm:order-1">
           <Sparkles className="w-3 h-3" />
           <span>Free Trial</span>
         </span>
-        <div className="text-xs sm:text-sm min-w-0">
-          <span className="font-semibold text-stone-900 dark:text-stone-100">
-            You&apos;re on the Free Trial{daysText}
-          </span>
-          <span className="hidden md:inline text-stone-600 dark:text-stone-300">
-            {' '}— Upgrade anytime for higher encrypted storage capacity &amp; priority speeds.
-          </span>
-          <span className="md:hidden block text-[11px] text-stone-600 dark:text-stone-400 mt-0.5">
-            Upgrade anytime for higher storage &amp; priority speeds.
-          </span>
-        </div>
-      </div>
 
-      {/* Right: Action Buttons (Upgrade Plan + Dismiss) */}
-      <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
-        <Link
-          to="/pricing"
-          className="inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs bg-stone-800 hover:bg-stone-700 text-amber-100 border border-amber-300/20 dark:bg-[#2a2825] dark:hover:bg-[#34312d] dark:text-amber-200/90 dark:border-amber-300/20 font-medium shadow-none active:scale-95 transition-colors whitespace-nowrap cursor-pointer"
-        >
-          <span>Upgrade Plan</span>
-          <ArrowRight className="w-3.5 h-3.5" />
-        </Link>
         <button
           type="button"
           onClick={handleDismiss}
-          className="p-1 rounded-md text-stone-400 hover:text-stone-700 hover:bg-stone-200/60 dark:text-stone-500 dark:hover:text-stone-200 dark:hover:bg-white/5 transition-colors cursor-pointer shrink-0"
+          className="p-1 rounded-md text-stone-400 hover:text-stone-700 hover:bg-stone-200/60 dark:text-stone-500 dark:hover:text-stone-200 dark:hover:bg-white/5 transition-colors cursor-pointer shrink-0 sm:order-last"
           aria-label="Dismiss banner"
           title="Dismiss for this session"
         >
           <X className="w-4 h-4" />
         </button>
       </div>
+
+      {/* Copy Block: Full-width on mobile (< sm), flex-1 on desktop */}
+      <div className="w-full sm:flex-1 sm:min-w-0 sm:order-2 text-xs sm:text-sm">
+        <span className="font-semibold text-stone-900 dark:text-stone-100 text-sm leading-snug block sm:inline">
+          You&apos;re on the Free Trial{daysText}
+        </span>
+        <span className="hidden md:inline text-stone-600 dark:text-stone-300">
+          {' '}— Upgrade anytime for higher encrypted storage capacity &amp; priority speeds.
+        </span>
+        <span className="md:hidden block text-xs leading-relaxed text-stone-600 dark:text-stone-400 mt-0.5">
+          Upgrade anytime for higher storage &amp; priority speeds.
+        </span>
+      </div>
+
+      {/* Action Button: Full-width on mobile (< sm), compact on desktop */}
+      <Link
+        to="/pricing"
+        className="w-full sm:w-auto py-2 sm:py-1.5 px-3.5 rounded-lg text-xs bg-stone-800 hover:bg-stone-700 text-amber-100 border border-amber-300/20 dark:bg-[#2a2825] dark:hover:bg-[#34312d] dark:text-amber-200/90 dark:border-amber-300/20 font-medium shadow-none active:scale-95 transition-colors whitespace-nowrap cursor-pointer flex items-center justify-center gap-1.5 shrink-0 sm:order-3"
+      >
+        <span>Upgrade Plan</span>
+        <ArrowRight className="w-3.5 h-3.5" />
+      </Link>
     </div>
   );
 }
