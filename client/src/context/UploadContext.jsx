@@ -308,17 +308,14 @@ export function UploadProvider({ children }) {
       } else if (anyHashing) {
         setGlobalSpeed('Scanning file...');
       } else if (lastActiveSpeedRef.current > 0) {
-        // Keep active rolling speed or indicate preparing next part during part signing pauses
-        if (deltaBytes === 0 && deltaSec >= 1.2) {
-          setGlobalSpeed('Preparing next part...');
-        } else {
-          const speed = lastActiveSpeedRef.current;
-          const speedStr =
-            speed >= 1024 * 1024
-              ? `${(speed / (1024 * 1024)).toFixed(1)} MB/s`
-              : `${Math.round(speed / 1024)} KB/s`;
-          setGlobalSpeed(speedStr);
-        }
+        const speed = lastActiveSpeedRef.current;
+        const speedStr =
+          speed >= 1024 * 1024
+            ? `${(speed / (1024 * 1024)).toFixed(1)} MB/s`
+            : `${Math.round(speed / 1024)} KB/s`;
+        setGlobalSpeed(speedStr);
+      } else {
+        setGlobalSpeed('Uploading...');
       }
     }
   }, []);
@@ -567,7 +564,7 @@ export function UploadProvider({ children }) {
       throw new Error('Upload cancelled');
     }
 
-    updateItem(id, { status: 'uploading', progress: 5, uploadedBytes: 0, statusLabel: 'Starting upload...' });
+    updateItem(id, { status: 'uploading', progress: 0, uploadedBytes: 0, statusLabel: 'Starting...' });
 
     let initRes = null;
     let thumbnail = null;
@@ -644,26 +641,35 @@ export function UploadProvider({ children }) {
       throw new Error('Upload cancelled');
     }
 
-    let completedPartsBytes = 0;
+    let completedBytes = 0;
     const inFlightBytesRef = { current: {} };
     const completedParts = new Array(partUrls.length);
-    let nextPartIdx = 0;
 
     let lastProgressTime = 0;
     const syncAggregateProgress = () => {
-      if (isAborted) return;
+      if (isAborted || abortController.signal.aborted) return;
       const inFlightTotal = Object.values(inFlightBytesRef.current).reduce((a, b) => a + (b || 0), 0);
-      const totalUploadedBytes = Math.min(file.size, completedPartsBytes + inFlightTotal);
-      const percent = Math.min(95, Math.max(5, Math.round(5 + (totalUploadedBytes / file.size) * 90)));
+      const totalUploadedBytes = Math.min(file.size, completedBytes + inFlightTotal);
+      const percent = file.size > 0 ? Math.min(99, Math.round((totalUploadedBytes / file.size) * 100)) : 0;
       const now = Date.now();
-      if (now - lastProgressTime >= 250 || percent >= 95 || (lastProgressTime === 0 && totalUploadedBytes > 0)) {
+      if (now - lastProgressTime >= 200 || percent >= 99 || (lastProgressTime === 0 && totalUploadedBytes > 0)) {
         lastProgressTime = now;
-        updateItem(id, { progress: percent, uploadedBytes: totalUploadedBytes, statusLabel: null });
+        updateItem(id, {
+          progress: percent,
+          uploadedBytes: totalUploadedBytes,
+          statusLabel: null,
+        });
         trackByteSpeedTick();
       }
     };
 
+    const onPartProgress = (partNumber, loaded) => {
+      inFlightBytesRef.current[partNumber] = loaded;
+      syncAggregateProgress();
+    };
+
     const uploadSinglePartWithRetry = async (partMeta, index) => {
+      const partNumber = partMeta.partNumber || index + 1;
       const start = index * effectivePartSize;
       const end = Math.min(start + effectivePartSize, file.size);
       const partBytes = end - start;
@@ -693,13 +699,13 @@ export function UploadProvider({ children }) {
           if (!targetUrl) {
             const signRes = await axios.post(
               `${API_BASE_URL || ''}/api/files/multipart/sign-part`,
-              { s3Key, uploadId, partNumber: index + 1 },
+              { s3Key, uploadId, partNumber },
               { headers, signal: abortController.signal }
             );
             targetUrl = signRes.data?.uploadUrl || signRes.data?.signedUrl;
           }
 
-          inFlightBytesRef.current[index] = 0;
+          inFlightBytesRef.current[partNumber] = 0;
 
           // Native XMLHttpRequest provides zero-copy streaming and true real-time onprogress byte ticks
           const eTag = await new Promise((resolve, reject) => {
@@ -719,11 +725,11 @@ export function UploadProvider({ children }) {
 
             abortController.signal.addEventListener('abort', abortHandler, { once: true });
 
+            // Attach xhr.upload.onprogress BEFORE calling xhr.send()
             xhr.upload.onprogress = (e) => {
               if (isAborted || abortController.signal.aborted || batchCancelledRef.current || cancelledIdsRef.current.has(id)) return;
               if (e.lengthComputable) {
-                inFlightBytesRef.current[index] = e.loaded;
-                syncAggregateProgress();
+                onPartProgress(partNumber, e.loaded);
               }
             };
 
@@ -763,13 +769,13 @@ export function UploadProvider({ children }) {
             xhr.send(bodyToSend);
           });
 
-          completedPartsBytes += partBytes;
-          delete inFlightBytesRef.current[index];
-          completedParts[index] = { PartNumber: partMeta.partNumber, ETag: eTag };
+          completedBytes += partBytes;
+          delete inFlightBytesRef.current[partNumber];
+          completedParts[index] = { PartNumber: partNumber, ETag: eTag };
           syncAggregateProgress();
           return;
         } catch (err) {
-          delete inFlightBytesRef.current[index];
+          delete inFlightBytesRef.current[partNumber];
           syncAggregateProgress();
 
           if (
@@ -818,20 +824,20 @@ export function UploadProvider({ children }) {
     };
 
     try {
-      // 2. True Continuous 4-Worker Pipeline (No Batch Barriers)
-      const runWorkers = async () => {
-        const workerConcurrency = Math.min(MULTIPART_WORKERS, partUrls.length);
-        const workers = Array.from({ length: workerConcurrency }, async () => {
-          while (!isAborted && !abortController.signal.aborted && nextPartIdx < partUrls.length) {
-            const currentIdx = nextPartIdx++;
-            await uploadSinglePartWithRetry(partUrls[currentIdx], currentIdx);
-          }
-        });
-        await Promise.all(workers);
-      };
+      // 2. Strict 4-Worker Concurrency Pool (Never more than 4 chunk PUT requests in flight at once)
+      const CONCURRENCY = 4;
+      const workerCount = Math.min(CONCURRENCY, partUrls.length);
+      let cursor = 0;
+      const workers = Array.from({ length: workerCount }, async () => {
+        while (!isAborted && !abortController.signal.aborted && cursor < partUrls.length) {
+          const idx = cursor++;
+          if (idx >= partUrls.length) break;
+          await uploadSinglePartWithRetry(partUrls[idx], idx);
+        }
+      });
+      await Promise.all(workers);
 
       const hashPromise = computeFileSHA256(file);
-      await runWorkers();
       const sha256 = await Promise.race([
         hashPromise,
         new Promise((resolve) => setTimeout(() => resolve(null), 500)),
@@ -915,15 +921,16 @@ export function UploadProvider({ children }) {
             if (controller.signal.aborted || batchCancelledRef.current) return;
             if (progressEvent.total) {
               const percent = Math.min(
-                95,
-                Math.max(5, Math.round(5 + (progressEvent.loaded / progressEvent.total) * 90))
+                99,
+                Math.round((progressEvent.loaded / progressEvent.total) * 100)
               );
               const now = Date.now();
-              if (now - lastSingleProgressTime >= 150 || percent >= 95) {
+              if (now - lastSingleProgressTime >= 200 || percent >= 99 || (lastSingleProgressTime === 0 && progressEvent.loaded > 0)) {
                 lastSingleProgressTime = now;
                 updateItem(id, {
                   progress: percent,
                   uploadedBytes: progressEvent.loaded,
+                  statusLabel: null,
                 });
                 trackByteSpeedTick();
               }
@@ -1082,7 +1089,7 @@ export function UploadProvider({ children }) {
           throw mpErr;
         }
       } else {
-        updateItem(id, { status: 'uploading', progress: 5, uploadedBytes: 0 });
+        updateItem(id, { status: 'uploading', progress: 0, uploadedBytes: 0, statusLabel: 'Starting...' });
 
         // Parallelize thumbnail generation and ticket retrieval
         let ticket;
@@ -1169,7 +1176,7 @@ export function UploadProvider({ children }) {
         }
 
         if (batchCancelledRef.current || controller.signal.aborted) return;
-        updateItem(id, { status: 'uploading', progress: 5 });
+        updateItem(id, { status: 'uploading', progress: 0, statusLabel: 'Starting...' });
 
         const hashPromise = computeFileSHA256(uploadFile);
 
@@ -1809,7 +1816,7 @@ export const HeaderUploadButton = () => {
                           (item.statusLabel ||
                             (item.uploadedBytes > 0
                               ? `${formatBytes(item.uploadedBytes || 0)} of ${formatBytes(item.file?.size || item.size)}`
-                              : `${formatBytes(item.file?.size || item.size)} • Starting upload...`))}
+                              : `${formatBytes(item.file?.size || item.size)} • Starting...`))}
                         {item.status === 'hashing' && `${formatBytes(item.file?.size || item.size)} • Preparing`}
                         {item.status === 'finalizing' && `${formatBytes(item.file?.size || item.size)} • Inspecting security`}
                         {item.status === 'queued' && `${formatBytes(item.file?.size || item.size)} • Queued`}
