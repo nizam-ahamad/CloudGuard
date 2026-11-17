@@ -217,18 +217,18 @@ export const StorageMeter = ({ storageStats: propStats, fetchStorageStats }) => 
         : '...'));
 
   return (
-    <div className="flex items-center gap-3 bg-zinc-900/60 border border-zinc-800/80 rounded-2xl p-4">
-      <div className="relative w-12 h-12 flex items-center justify-center">
+    <div className="flex items-center gap-3 sm:gap-4 bg-zinc-900/60 border border-zinc-800/80 rounded-2xl p-3 sm:p-5">
+      <div className="relative w-12 h-12 sm:w-16 sm:h-16 flex items-center justify-center shrink-0">
         {/* Percentage meter ring */}
         <span className="text-xs font-semibold text-zinc-200">
           {storageStats ? `${percentage}%` : '...'}
         </span>
       </div>
       <div>
-        <p className="text-xs font-medium uppercase tracking-wider text-zinc-400">
+        <p className="text-[11px] sm:text-xs font-medium uppercase tracking-wider text-zinc-400">
           Storage Used
         </p>
-        <p className="text-sm font-semibold text-zinc-100">
+        <p className="text-xs sm:text-sm font-semibold text-zinc-100">
           {storageStats
             ? `${formatBytes(storageStats.storageUsed || storageStats.used || storageStats.usedBytes || 0)} / ${formatBytes(storageStats.storageLimit || storageStats.limit || storageStats.totalLimitBytes || 5368709120)}`
             : 'Loading...'}
@@ -641,7 +641,7 @@ export const Dashboard = (props) => {
       </div>
 
       {/* Mobile Compact Upload Bar (Visible only on mobile) */}
-      <div className="flex sm:hidden items-center gap-2 mb-4">
+      <div className="flex sm:hidden items-center gap-2 mb-3 sm:mb-4">
         <div ref={mobileUploadMenuRef} className="relative inline-block flex-1">
           <button
             type="button"

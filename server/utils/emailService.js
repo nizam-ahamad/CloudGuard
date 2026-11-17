@@ -92,8 +92,8 @@ function buildCloudGuardEmail({ title, badge, contentHtml, ctaText, ctaUrl, isUr
                 <td>
                   <span style="font-size: 22px; font-weight: 800; letter-spacing: -0.5px; color: #0f172a;">CloudGuard</span>
                 </td>
-                <td align="right">
-                  <span style="display: inline-block; padding: 4px 10px; font-size: 11px; font-weight: 700; color: ${accentColor}; background: ${badgeBg}; border: 1px solid ${badgeBorder}; border-radius: 6px; text-transform: uppercase; letter-spacing: 0.5px;">
+                <td align="right" style="white-space: nowrap;">
+                  <span style="display: inline-block; padding: 6px 10px; font-size: 11px; font-weight: 700; color: ${accentColor}; background: ${badgeBg}; border: 1px solid ${badgeBorder}; border-radius: 6px; text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap;">
                     ${badge || 'SECURITY NOTICE'}
                   </span>
                 </td>

@@ -2917,9 +2917,9 @@ function App() {
 
       {/* TopAppBar */}
       <header className={`fixed top-0 right-0 w-full z-30 transition-all duration-300 ease-in-out select-none ${isCollapsed ? 'md:w-[calc(100%-80px)]' : 'md:w-[calc(100%-256px)]'}`}>
-        <div className="bg-white/95 dark:bg-neutral-950/95 backdrop-blur-md h-16 border-b border-neutral-200/80 dark:border-neutral-800/80 flex justify-between items-center px-3 sm:px-6">
+        <div className="bg-white/95 dark:bg-neutral-950/95 backdrop-blur-md h-16 border-b border-neutral-200/80 dark:border-neutral-800/80 flex justify-between items-center px-2.5 sm:px-6">
           {/* 1. Left: Hamburger & Brand Title */}
-          <div className="flex items-center gap-2 sm:gap-3 min-w-0 shrink-0">
+          <div className="flex items-center gap-1.5 sm:gap-3 min-w-0 shrink-0">
             <button
               type="button"
               onClick={() => setIsSidebarOpen(!isSidebarOpen)}
@@ -2939,10 +2939,10 @@ function App() {
               }}
               role="button"
               tabIndex={0}
-              className="flex items-center gap-2 sm:gap-2.5 cursor-pointer select-none shrink-0 md:hidden"
+              className="flex items-center gap-1.5 sm:gap-2.5 cursor-pointer select-none shrink-0 md:hidden"
             >
-              <CloudGuardLogo className="w-12 h-12 sm:w-12 sm:h-12 shrink-0 transition-transform active:scale-95"/>
-              <span className="text-lg sm:text-xl font-bold tracking-tight text-neutral-900 dark:text-white">
+              <CloudGuardLogo className="w-8 h-8 sm:w-12 sm:h-12 shrink-0 transition-transform active:scale-95"/>
+              <span className="text-base sm:text-xl font-bold tracking-tight text-neutral-900 dark:text-white">
                 CloudGuard
               </span>
             </div>
@@ -2971,12 +2971,12 @@ function App() {
           </div>
 
           {/* 3. Right: Header Action Group (Strictly in-flow flex items, zero absolute positioning) */}
-          <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
+          <div className="flex items-center gap-1 sm:gap-3 shrink-0">
             {/* Mobile Search Toggle Button */}
             <button
               type="button"
               onClick={() => setIsMobileSearchOpen((prev) => !prev)}
-              className="md:hidden p-2 rounded-xl text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:text-white dark:hover:bg-neutral-800 transition-colors cursor-pointer"
+              className="md:hidden p-1.5 sm:p-2 rounded-xl text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:text-white dark:hover:bg-neutral-800 transition-colors cursor-pointer"
               aria-label="Toggle Search"
               title="Search files and folders"
             >
@@ -2997,7 +2997,7 @@ function App() {
             <button
               type="button"
               onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-              className="relative p-2 rounded-lg text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
+              className="relative p-1.5 sm:p-2 rounded-lg text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
               aria-label="Toggle theme"
               title="Toggle theme"
             >
@@ -3104,26 +3104,26 @@ function App() {
         ) : (
           <>
         {/* Page Title */}
-        <div className="mb-stack-lg flex flex-col md:flex-row md:justify-between md:items-end gap-4">
+        <div className="mb-3 sm:mb-stack-lg flex flex-col md:flex-row md:justify-between md:items-end gap-2.5 sm:gap-4">
           <div>
-            <h2 className="font-headline-lg-mobile md:font-headline-lg text-headline-lg-mobile md:text-headline-lg font-bold text-on-surface dark:text-[#e3e3e3] mb-2">My Files</h2>
-            <p className="font-body-md text-body-md text-on-surface-variant dark:text-zinc-400">Manage and secure your digital vault.</p>
+            <h2 className="font-headline-lg-mobile md:font-headline-lg text-headline-lg-mobile md:text-headline-lg font-bold text-on-surface dark:text-[#e3e3e3] mb-1 sm:mb-2">My Files</h2>
+            <p className="text-xs sm:font-body-md sm:text-body-md text-on-surface-variant dark:text-zinc-400">Manage and secure your digital vault.</p>
           </div>
-          <div className="flex items-center gap-4 bg-white dark:bg-[#1e1f20] p-4 rounded-xl border border-outline-variant dark:border-zinc-800/50 shadow-sm w-fit dark:text-zinc-300">
-            <div className="relative w-12 h-12">
+          <div className="flex items-center gap-3 sm:gap-4 bg-white dark:bg-[#1e1f20] p-3 sm:p-5 rounded-xl border border-outline-variant dark:border-zinc-800/50 shadow-sm w-fit dark:text-zinc-300">
+            <div className="relative w-12 h-12 sm:w-16 sm:h-16 shrink-0">
               <svg className="w-full h-full transform -rotate-90" viewBox="0 0 36 36">
                 <path className="text-surface-dim" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" strokeWidth="3"></path>
                 <path className="text-secondary" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" strokeDasharray={`${storageStats ? Math.min(((storageStats.storageUsed || storageStats.usedBytes || storageStats.used || 0) / (storageStats.storageLimit || storageStats.totalLimitBytes || storageStats.limit || defaultStorageLimit)) * 100, 100) : 0}, 100`} strokeWidth="3"></path>
               </svg>
-              <div className="absolute inset-0 flex items-center justify-center font-label-md text-[10px] font-bold text-on-surface dark:text-[#c4c7c5]">
+              <div className="absolute inset-0 flex items-center justify-center font-label-md text-[10px] sm:text-xs font-bold text-on-surface dark:text-[#c4c7c5]">
                 {storageStats
                   ? `${Math.min(100, Math.round(((storageStats.storageUsed || storageStats.usedBytes || storageStats.used || 0) / (storageStats.storageLimit || storageStats.totalLimitBytes || storageStats.limit || defaultStorageLimit)) * 100))}%`
                   : '...'}
               </div>
             </div>
             <div>
-              <p className="font-label-md text-label-md text-on-surface-variant dark:text-[#c4c7c5] uppercase tracking-wider">Storage Used</p>
-              <p className="font-body-md text-body-md font-medium dark:text-[#e3e3e3]">
+              <p className="font-label-md text-[11px] sm:text-label-md text-on-surface-variant dark:text-[#c4c7c5] uppercase tracking-wider">Storage Used</p>
+              <p className="text-xs sm:font-body-md sm:text-body-md font-medium dark:text-[#e3e3e3]">
                 {storageStats
                   ? `${formatBytes(storageStats.storageUsed || storageStats.usedBytes || storageStats.used || 0)} / ${formatBytes(storageStats.storageLimit || storageStats.totalLimitBytes || storageStats.limit || defaultStorageLimit, 0)}`
                   : 'Loading...'}
@@ -3134,7 +3134,7 @@ function App() {
 
         {/* Dropzone */}
         {viewMode === 'all' && (
-          <section className="mb-stack-lg">
+          <section className="mb-3 sm:mb-stack-lg">
             <input 
               type="file" 
               ref={fileInputRef} 
@@ -3223,7 +3223,7 @@ function App() {
             </div>
 
             {/* Mobile Compact Upload Bar (Visible only on mobile) */}
-            <div className="flex sm:hidden items-center gap-2 mb-4">
+            <div className="flex sm:hidden items-center gap-2 mb-3 sm:mb-4">
               <div ref={mobileUploadMenuRef} className="relative inline-block flex-1">
                 <button
                   type="button"
@@ -3706,8 +3706,8 @@ function App() {
             </div>
           )}
 
-          <div className="bg-white dark:bg-[#1e1f20] rounded-xl border border-neutral-200 dark:border-zinc-800/50 shadow-sm dark:text-zinc-300">
-            <div className="md:overflow-x-auto custom-scrollbar w-full pb-32">
+          <div className="bg-white dark:bg-[#1e1f20] rounded-xl border border-neutral-200 dark:border-zinc-800/50 shadow-sm dark:text-zinc-300 min-h-0">
+            <div className="md:overflow-x-auto custom-scrollbar w-full pb-4 sm:pb-32">
               <table className="w-full text-left md:border-collapse block md:table md:min-w-[800px]">
                 <thead className="hidden md:table-header-group">
                   <tr className="border-b border-neutral-200 dark:border-zinc-800/50 bg-neutral-50/80 dark:bg-[#1e1f20] text-neutral-500 dark:text-neutral-400 text-xs font-semibold uppercase tracking-wider">
@@ -3806,7 +3806,7 @@ function App() {
                       onClick={() => file.isFolder ? setCurrentDirectory(file.diskName || file.name) : handlePreview(file)}
                       onMouseEnter={() => !file.isFolder && prefetchAccessUrl(file._id, token)}
                       onTouchStart={() => !file.isFolder && prefetchAccessUrl(file._id, token)}
-                      className={`flex flex-wrap md:table-row items-center py-3 px-4 md:p-0 hover:bg-surface-bright dark:hover:bg-zinc-800/70 dark:text-zinc-300 transition-colors group md:h-14 ${
+                      className={`flex flex-wrap md:table-row items-center py-2.5 sm:py-3 px-3 sm:px-4 md:p-0 hover:bg-surface-bright dark:hover:bg-zinc-800/70 dark:text-zinc-300 transition-colors group md:h-14 min-h-0 ${
                         selectedFileIds.includes(String(file._id)) ? 'bg-neutral-100 dark:bg-zinc-800/60' : ''
                       } ${file.isFolder || (!file.isMalicious && file.status !== 'Malicious' && file.status !== 'malware' && file.securityStatus !== 'threat_purged') ? 'cursor-pointer' : ''}`}
                     >
@@ -3838,10 +3838,10 @@ function App() {
                           </div>
                           <div className="flex flex-col min-w-0 flex-1">
                             <span className="font-medium truncate max-w-full md:max-w-[250px]" title={file.name}>{file.name}</span>
-                            <div className="md:hidden flex items-center gap-2 text-xs text-gray-500 dark:text-zinc-400 mt-0.5">
-                              <span>{file.date}</span>
-                              <span>•</span>
-                              <span>{formatSize(file.size)}</span>
+                            <div className="md:hidden flex items-center gap-1.5 sm:gap-2 text-[11px] sm:text-xs text-gray-500 dark:text-zinc-400 mt-0.5 whitespace-nowrap min-w-0">
+                              <span className="whitespace-nowrap">{file.date}</span>
+                              <span className="shrink-0">•</span>
+                              <span className="whitespace-nowrap">{formatSize(file.size)}</span>
                             </div>
                           </div>
                         </div>
