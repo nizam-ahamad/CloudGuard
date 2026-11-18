@@ -14,6 +14,7 @@ export function HeicPreviewImage({ src, alt, className, fallbackUrl, thumbnailUr
   useEffect(() => {
     let isMounted = true;
     let objectUrl = null;
+    const abortController = new AbortController();
 
     async function decodeHeic() {
       if (!src) {
@@ -25,25 +26,22 @@ export function HeicPreviewImage({ src, alt, className, fallbackUrl, thumbnailUr
       setHasError(false);
 
       try {
-        const resp = await fetch(src);
+        const resp = await fetch(src, { signal: abortController.signal });
         if (!resp.ok) throw new Error(`HTTP error ${resp.status}`);
         const arrayBuffer = await resp.arrayBuffer();
-        const blob = new Blob([arrayBuffer], { type: 'image/heic' });
-
-        const { default: heic2any } = await import('heic2any');
-        const converted = await heic2any({
-          blob,
-          toType: 'image/jpeg',
-          quality: 0.9,
-        });
-
-        const jpegBlob = Array.isArray(converted) ? converted[0] : converted;
         if (!isMounted) return;
 
-        objectUrl = URL.createObjectURL(jpegBlob);
+        const { decodeHeicToBlob } = await import('../utils/heicDecoder');
+        const decodedBlob = await decodeHeicToBlob(arrayBuffer, 0.92);
+        if (!isMounted) return;
+
+        objectUrl = URL.createObjectURL(decodedBlob);
         setBlobUrl(objectUrl);
       } catch (err) {
-        console.warn('[HEIC Preview] Conversion failed:', err);
+        if (err.name === 'AbortError') {
+          return;
+        }
+        console.warn('[HEIC Preview] Decoding failed:', err);
         if (isMounted) setHasError(true);
       } finally {
         if (isMounted) setIsLoading(false);
@@ -54,22 +52,32 @@ export function HeicPreviewImage({ src, alt, className, fallbackUrl, thumbnailUr
 
     return () => {
       isMounted = false;
+      abortController.abort();
       if (objectUrl) {
         URL.revokeObjectURL(objectUrl);
       }
     };
   }, [src]);
 
+  const effectiveFallback = fallbackUrl || thumbnailUrl;
+
   if (isLoading) {
     return (
-      <div className="flex flex-col items-center justify-center p-8 gap-3 text-neutral-400 min-h-[200px]">
-        <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-        <span className="text-xs font-medium">Decoding HEIC image...</span>
+      <div className="relative flex items-center justify-center max-h-[80vh] w-full min-h-[200px]">
+        {effectiveFallback && !/\.(heic|heif)(\?|$)/i.test(effectiveFallback) && (
+          <img
+            src={effectiveFallback}
+            alt={alt}
+            className={`${className} filter blur-[2px] opacity-70`}
+          />
+        )}
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/20 rounded-lg">
+          <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+          <span className="text-xs font-medium text-white/90 drop-shadow">Decoding full-resolution HEIC...</span>
+        </div>
       </div>
     );
   }
-
-  const effectiveFallback = fallbackUrl || thumbnailUrl;
 
   if (hasError || !blobUrl) {
     if (effectiveFallback && !/\.(heic|heif)(\?|$)/i.test(effectiveFallback)) {

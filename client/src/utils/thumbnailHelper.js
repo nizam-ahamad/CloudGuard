@@ -26,19 +26,15 @@ export const isHeicFile = (fileOrName) => {
 export async function generateMediaThumbnail(file, maxDimension = 320, quality = 0.7) {
   if (!file) return null;
 
-  // 1. HEIC / HEIF detection & lazy conversion via heic2any
+  // 1. HEIC / HEIF detection & lazy conversion via decodeHeicToBlob
   const isHeic = isHeicFile(file);
   let imageSource = file;
 
   if (isHeic) {
     try {
-      const { default: heic2any } = await import('heic2any');
-      const converted = await heic2any({
-        blob: file,
-        toType: 'image/jpeg',
-        quality: 0.85,
-      });
-      imageSource = Array.isArray(converted) ? converted[0] : converted;
+      const { decodeHeicToBlob } = await import('./heicDecoder');
+      const converted = await decodeHeicToBlob(file, 0.85);
+      imageSource = converted;
     } catch (err) {
       console.warn('[Thumbnail] HEIC decoding failed on upload:', err);
       return null;
