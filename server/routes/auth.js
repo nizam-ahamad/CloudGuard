@@ -33,6 +33,34 @@ const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 // Cryptographically secure 6-digit OTP generator (prevents PRNG state reconstruction)
 const generateOtp = () => crypto.randomInt(100000, 1000000).toString();
 
+// Strict allowlist of verified permanent consumer email domains (blocks disposable/temporary providers)
+const ALLOWED_EMAIL_DOMAINS = new Set([
+  'gmail.com',
+  'googlemail.com',
+  'outlook.com',
+  'outlook.in',
+  'hotmail.com',
+  'live.com',
+  'msn.com',
+  'yahoo.com',
+  'yahoo.co.in',
+  'yahoo.in',
+  'ymail.com',
+  'rocketmail.com',
+  'icloud.com',
+  'me.com',
+  'mac.com',
+  'rediffmail.com',
+  'rediff.com',
+  'proton.me',
+  'protonmail.com',
+  'zoho.com',
+  'zohomail.in',
+  'fastmail.com',
+  'gmx.com',
+  'aol.com',
+]);
+
 // User verification middleware for authenticated routes (e.g. PUT /password)
 const verifyToken = async (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1] || req.query.token;
@@ -97,6 +125,11 @@ router.post('/google', async (req, res) => {
       }
       if (!user.isVerified) {
         user.isVerified = true;
+        user.unverifiedExpiresAt = undefined;
+        modified = true;
+      }
+      if (user.unverifiedExpiresAt) {
+        user.unverifiedExpiresAt = undefined;
         modified = true;
       }
       if (modified) await user.save();
@@ -189,6 +222,15 @@ router.post('/register', authLimiter, async (req, res) => {
     if (normalizedEmail.length > 120) return res.status(400).json({ error: 'Email cannot exceed 120 characters' });
     if (password.length > 72) return res.status(400).json({ error: 'Password cannot exceed 72 characters' });
 
+    // Strict permanent consumer email domain validation
+    const domain = normalizedEmail.split('@')[1]?.toLowerCase();
+    if (!domain || !ALLOWED_EMAIL_DOMAINS.has(domain)) {
+      return res.status(400).json({
+        error: 'Disposable or unsupported email domains are not allowed. Please use Gmail, Outlook, Yahoo, iCloud, Rediffmail, Proton, or Zoho.',
+        message: 'Disposable or unsupported email domains are not allowed. Please use Gmail, Outlook, Yahoo, iCloud, Rediffmail, Proton, or Zoho.',
+      });
+    }
+
     // Statutory DPDP Act 2023 Consent & Age-Gating Verification
     if (!consentGiven || !isAdultConfirmed) {
       return res.status(400).json({
@@ -207,13 +249,14 @@ router.post('/register', authLimiter, async (req, res) => {
       if (existingUser.isVerified) {
         return res.status(409).json({ error: 'An account with this email already exists. Please log in.' });
       }
-      // If user exists but wasn't verified, regenerate OTP and update password
+      // If user exists but wasn't verified, regenerate OTP, refresh 1-hour TTL, and update password
       const salt = await bcrypt.genSalt(10);
       existingUser.password = await bcrypt.hash(password, salt);
       existingUser.name = trimmedName;
       existingUser.otp = generateOtp();
       existingUser.otpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
       existingUser.otpAttempts = 0;
+      existingUser.unverifiedExpiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour TTL
       existingUser.consentGiven = true;
       existingUser.isAdultConfirmed = true;
       existingUser.consentTimestamp = new Date();
@@ -244,6 +287,7 @@ router.post('/register', authLimiter, async (req, res) => {
       password: hashedPassword,
       authProvider: 'local',
       isVerified: false,
+      unverifiedExpiresAt: new Date(Date.now() + 60 * 60 * 1000), // 1 hour TTL
       otp,
       otpExpires: new Date(Date.now() + 10 * 60 * 1000),
       otpAttempts: 0,
@@ -338,6 +382,7 @@ router.post('/verify-activation-otp', otpLimiter, async (req, res) => {
 
     // Activate account
     user.isVerified = true;
+    user.unverifiedExpiresAt = undefined;
     user.otp = null;
     user.otpExpires = null;
     user.otpAttempts = 0;
@@ -452,6 +497,7 @@ router.post('/verify-otp', otpLimiter, async (req, res) => {
     }
 
     user.isVerified = true;
+    user.unverifiedExpiresAt = undefined;
     user.otp = null;
     user.otpExpires = null;
     user.otpAttempts = 0;
@@ -517,6 +563,15 @@ router.post('/resend-otp', otpLimiter, async (req, res) => {
     const normalizedEmail = email.toLowerCase().trim();
     if (!normalizedEmail) return res.status(400).json({ error: 'Email is required' });
 
+    // Strict permanent consumer email domain validation
+    const domain = normalizedEmail.split('@')[1]?.toLowerCase();
+    if (!domain || !ALLOWED_EMAIL_DOMAINS.has(domain)) {
+      return res.status(400).json({
+        error: 'Disposable or unsupported email domains are not allowed. Please use Gmail, Outlook, Yahoo, iCloud, Rediffmail, Proton, or Zoho.',
+        message: 'Disposable or unsupported email domains are not allowed. Please use Gmail, Outlook, Yahoo, iCloud, Rediffmail, Proton, or Zoho.',
+      });
+    }
+
     const user = await User.findOne({ email: normalizedEmail });
     if (!user) return res.status(404).json({ error: 'Account not found' });
 
@@ -527,6 +582,8 @@ router.post('/resend-otp', otpLimiter, async (req, res) => {
     if (type === 'reset') {
       user.resetPasswordToken = otp;
       user.resetPasswordExpire = user.otpExpires;
+    } else if (!user.isVerified) {
+      user.unverifiedExpiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour TTL
     }
     await user.save();
 
@@ -590,6 +647,7 @@ router.post('/login', authLimiter, async (req, res) => {
       user.otp = otp;
       user.otpExpires = new Date(Date.now() + 10 * 60 * 1000);
       user.otpAttempts = 0;
+      user.unverifiedExpiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour TTL
       await user.save();
 
       sendActivationOtp(user.email, otp, user.name);
@@ -740,6 +798,7 @@ router.post('/reset-password', otpLimiter, async (req, res) => {
     user.resetPasswordExpire = null;
     user.otpAttempts = 0;
     user.isVerified = true; // Setting password verifies account
+    user.unverifiedExpiresAt = undefined;
     await user.save();
 
     return res.status(200).json({ message: 'Password reset successfully. You can now log in.' });
@@ -796,6 +855,7 @@ router.put('/reset-password/:token', otpLimiter, async (req, res) => {
     user.resetPasswordExpire = null;
     user.otpAttempts = 0;
     user.isVerified = true;
+    user.unverifiedExpiresAt = undefined;
     await user.save();
 
     return res.status(200).json({ message: 'Password reset successfully. You can now log in.' });

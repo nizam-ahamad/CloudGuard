@@ -38,6 +38,10 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    unverifiedExpiresAt: {
+      type: Date,
+      default: undefined,
+    },
     otp: {
       type: String,
       default: null,
@@ -163,5 +167,7 @@ const userSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+userSchema.index({ unverifiedExpiresAt: 1 }, { expireAfterSeconds: 0 });
 
 module.exports = mongoose.models.User || mongoose.model('User', userSchema);

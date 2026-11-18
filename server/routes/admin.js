@@ -96,7 +96,7 @@ router.use(requireAdmin);
 router.get('/overview', async (req, res) => {
   try {
     const [users, paidPayments, refundedPayments] = await Promise.all([
-      User.find({}).select('-password -resetPasswordToken -resetPasswordExpire').sort({ createdAt: -1 }).lean(),
+      User.find({ isVerified: { $ne: false } }).select('-password -resetPasswordToken -resetPasswordExpire').sort({ createdAt: -1 }).lean(),
       Payment.find({ status: 'PAID' }).sort({ createdAt: -1 }).lean(),
       Payment.find({ status: 'REFUNDED' }).select('userId customerDetails.email').lean()
     ]);
