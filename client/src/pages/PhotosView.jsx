@@ -1166,7 +1166,7 @@ export default function PhotosView({ token: propToken }) {
                     src={fullMediaUrl || currentPreviewItem.accessUrl || currentPreviewItem.url}
                     alt={currentPreviewItem.name}
                     className="max-h-[80vh] max-w-full object-contain rounded-lg shadow-2xl transition-opacity duration-300"
-                    fallbackUrl={currentPreviewItem.thumbnailUrl}
+                    fallbackUrl={currentPreviewItem.thumbnailUrl || currentPreviewItem.thumbnail}
                   />
                 ) : (
                   <>

@@ -6,7 +6,7 @@ import { Loader2 } from 'lucide-react';
  * Fetches the HEIC blob, converts it client-side to a JPEG object URL using heic2any,
  * manages loading state with a spinner, and revokes the object URL on cleanup.
  */
-export function HeicPreviewImage({ src, alt, className, fallbackUrl }) {
+export function HeicPreviewImage({ src, alt, className, fallbackUrl, thumbnailUrl }) {
   const [blobUrl, setBlobUrl] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
@@ -27,7 +27,8 @@ export function HeicPreviewImage({ src, alt, className, fallbackUrl }) {
       try {
         const resp = await fetch(src);
         if (!resp.ok) throw new Error(`HTTP error ${resp.status}`);
-        const blob = await resp.blob();
+        const arrayBuffer = await resp.arrayBuffer();
+        const blob = new Blob([arrayBuffer], { type: 'image/heic' });
 
         const { default: heic2any } = await import('heic2any');
         const converted = await heic2any({
@@ -68,9 +69,11 @@ export function HeicPreviewImage({ src, alt, className, fallbackUrl }) {
     );
   }
 
+  const effectiveFallback = fallbackUrl || thumbnailUrl;
+
   if (hasError || !blobUrl) {
-    if (fallbackUrl && !/\.(heic|heif)$/i.test(fallbackUrl)) {
-      return <img src={fallbackUrl} alt={alt} className={className} />;
+    if (effectiveFallback && !/\.(heic|heif)(\?|$)/i.test(effectiveFallback)) {
+      return <img src={effectiveFallback} alt={alt} className={className} />;
     }
     return (
       <div className="flex flex-col items-center justify-center p-8 gap-3 text-neutral-500 dark:text-neutral-400">
@@ -165,7 +168,7 @@ export default function FilePreviewModal({
               src={previewUrl}
               alt={previewFile.name}
               className="max-w-full max-h-[70vh] object-contain shadow-sm rounded"
-              fallbackUrl={previewFile.thumbnailUrl}
+              fallbackUrl={previewFile.thumbnailUrl || previewFile.thumbnail}
             />
           ) : ['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'].includes(fileExt) ? (
             <img src={previewUrl} alt={previewFile.name} className="max-w-full max-h-[70vh] object-contain shadow-sm rounded" />
