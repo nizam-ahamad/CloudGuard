@@ -1,4 +1,5 @@
 const express = require('express');
+const mongoose = require('mongoose');
 const axios = require('axios');
 const PDFDocument = require('pdfkit');
 const auth = require('../middleware/auth');
@@ -308,13 +309,10 @@ router.post('/create-order', auth, async (req, res) => {
       }
     });
 
-    // Pre-create pending payment record so it is tracked immediately
+    // Pre-create pending payment record so it is tracked immediately (omitting invoiceNumber until confirmed PAID)
     try {
-      const totalPaymentsCount = await Payment.countDocuments();
-      const invoiceNumber = `CG-INV-${new Date().getFullYear()}-${String(totalPaymentsCount + 1).padStart(4, '0')}`;
       await Payment.create({
         userId: user._id,
-        invoiceNumber,
         orderId: response.data.order_id,
         planId,
         planName: `${PLAN_CATALOG[planId]?.name || planId} (${storageGB} GB)`,
@@ -351,6 +349,25 @@ router.post('/create-order', auth, async (req, res) => {
 });
 
 /**
+ * Helper to generate a unique sequential invoice number: CG-INV-YYYY-XXXX
+ */
+async function generateUniqueInvoiceNumber() {
+  const year = new Date().getFullYear();
+  let count = await Payment.countDocuments({
+    status: 'PAID',
+    invoiceNumber: { $exists: true, $ne: null }
+  });
+  let candidate = `CG-INV-${year}-${String(count + 1).padStart(4, '0')}`;
+  let exists = await Payment.exists({ invoiceNumber: candidate });
+  while (exists) {
+    count++;
+    candidate = `CG-INV-${year}-${String(count + 1).padStart(4, '0')}`;
+    exists = await Payment.exists({ invoiceNumber: candidate });
+  }
+  return candidate;
+}
+
+/**
  * Idempotent order fulfillment helper
  * Guarantees that even with concurrent verify and webhook calls,
  * subscription is extended exactly once using atomic Payment status transition.
@@ -385,6 +402,10 @@ async function fulfillCashfreeOrder(orderId, orderDetails = null, clientOrigin =
   // 1. Check if already claimed and paid
   let paymentRecord = await Payment.findOne({ orderId });
   if (paymentRecord && paymentRecord.status === 'PAID') {
+    if (!paymentRecord.invoiceNumber && Number(paymentRecord.amount || 0) > 0) {
+      paymentRecord.invoiceNumber = await generateUniqueInvoiceNumber();
+      await paymentRecord.save();
+    }
     const user = await User.findById(paymentRecord.userId);
     return {
       success: true,
@@ -409,11 +430,8 @@ async function fulfillCashfreeOrder(orderId, orderDetails = null, clientOrigin =
 
   if (!paymentRecord) {
     try {
-      const totalPaymentsCount = await Payment.countDocuments();
-      const invoiceNumber = `CG-INV-${new Date().getFullYear()}-${String(totalPaymentsCount + 1).padStart(4, '0')}`;
       paymentRecord = await Payment.create({
         userId,
-        invoiceNumber,
         orderId,
         paymentId: order.cf_order_id ? String(order.cf_order_id) : orderId,
         planId,
@@ -440,16 +458,25 @@ async function fulfillCashfreeOrder(orderId, orderDetails = null, clientOrigin =
   }
 
   // 3. Atomically claim the payment. Only the FIRST caller matching status !== 'PAID' wins!
+  const orderAmount = Number(order.order_amount || paymentRecord?.amount || 0);
+  let invoiceNumber = paymentRecord?.invoiceNumber;
+  if (!invoiceNumber && order.order_status === 'PAID' && orderAmount > 0) {
+    invoiceNumber = await generateUniqueInvoiceNumber();
+  }
+
+  const updatePayload = {
+    status: 'PAID',
+    paymentId: order.cf_order_id ? String(order.cf_order_id) : orderId,
+    planName: lineItemTitle,
+    paidAt: new Date()
+  };
+  if (invoiceNumber) {
+    updatePayload.invoiceNumber = invoiceNumber;
+  }
+
   const claimedPayment = await Payment.findOneAndUpdate(
     { orderId, status: { $ne: 'PAID' } },
-    {
-      $set: {
-        status: 'PAID',
-        paymentId: order.cf_order_id ? String(order.cf_order_id) : orderId,
-        planName: lineItemTitle,
-        paidAt: new Date()
-      }
-    },
+    { $set: updatePayload },
     { new: true }
   );
 
@@ -826,13 +853,37 @@ router.post('/reactivate-subscription', auth, async (req, res) => {
  */
 router.get('/history', auth, async (req, res) => {
   try {
-    const userId = req.user?.id || req.user?._id;
-    const history = await Payment.find({ userId })
+    const userId = req.user?._id || req.user?.id;
+    const history = await Payment.find({
+      userId,
+      status: 'PAID',
+      amount: { $gt: 0 }
+    })
       .sort({ createdAt: -1 })
       .lean();
     return res.json({ success: true, history });
   } catch (err) {
     return res.status(500).json({ error: 'Failed to retrieve billing history' });
+  }
+});
+
+/**
+ * GET /api/payments/invoices
+ * Invoices list alias for /history
+ */
+router.get('/invoices', auth, async (req, res) => {
+  try {
+    const userId = req.user?._id || req.user?.id;
+    const history = await Payment.find({
+      userId,
+      status: 'PAID',
+      amount: { $gt: 0 }
+    })
+      .sort({ createdAt: -1 })
+      .lean();
+    return res.json({ success: true, invoices: history, history });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to retrieve invoices' });
   }
 });
 
@@ -853,6 +904,29 @@ function sanitizePdfText(str) {
 }
 
 /**
+ * GET /api/payments/invoices/:id/download
+ * Alias for downloading an invoice by orderId or document ID
+ */
+router.get('/invoices/:id/download', async (req, res) => {
+  try {
+    const { id } = req.params;
+    let payment = null;
+    if (mongoose.Types.ObjectId.isValid(id)) {
+      payment = await Payment.findById(id).select('orderId status amount');
+    }
+    if (!payment) {
+      payment = await Payment.findOne({ orderId: id }).select('orderId status amount');
+    }
+    if (!payment || payment.status !== 'PAID' || Number(payment.amount || 0) <= 0) {
+      return res.status(404).send('Invoice is only available for completed payments');
+    }
+    return res.redirect(`/api/payments/invoice/${payment.orderId}`);
+  } catch (err) {
+    return res.status(500).send('Failed to process invoice download');
+  }
+});
+
+/**
  * GET /api/payments/invoice/:orderId
  * Generates an official, print-ready Bill of Supply (Invoice) as a binary vector PDF
  */
@@ -860,7 +934,14 @@ router.get('/invoice/:orderId', async (req, res) => {
   try {
     const { orderId } = req.params;
     const payment = await Payment.findOne({ orderId }).populate('userId', 'name email');
-    if (!payment) return res.status(404).send('Invoice not found');
+    if (!payment || payment.status !== 'PAID' || Number(payment.amount || 0) <= 0) {
+      return res.status(404).send('Invoice is only available for completed payments');
+    }
+
+    if (!payment.invoiceNumber) {
+      payment.invoiceNumber = await generateUniqueInvoiceNumber();
+      await payment.save();
+    }
 
     const invoiceDate = new Date(payment.createdAt).toLocaleDateString('en-IN', {
       day: 'numeric',

@@ -9,7 +9,7 @@ const paymentSchema = new mongoose.Schema({
   },
   invoiceNumber: {
     type: String,
-    required: true,
+    sparse: true,
     unique: true
   },
   orderId: {
