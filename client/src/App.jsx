@@ -9,6 +9,7 @@ import { useToast } from './context/ToastContext';
 import MoveModal from './components/MoveModal';
 import FolderDetailsModal from './components/FolderDetailsModal';
 import FileDetailsModal from './components/FileDetailsModal';
+import FilePreviewModal from './components/FilePreviewModal';
 import DeleteConfirmModal from './components/DeleteConfirmModal';
 import ProfileSettings from './components/ProfileSettings';
 import CookieConsent from './components/CookieConsent';
@@ -4121,99 +4122,13 @@ function App() {
       />
 
       {/* Preview Modal */}
-      {previewFile && (() => {
-        const isAudio = Boolean(
-          previewFile?.mimeType?.startsWith('audio/') ||
-          previewFile?.mimetype?.startsWith('audio/') ||
-          /\.(mp3|wav|ogg|m4a|aac|flac)$/i.test(previewFile?.name || '')
-        );
-        const fileExt = (previewFile.type || (previewFile.name || '').split('.').pop() || '').toLowerCase();
-
-        return !isAudio && ['mp4', 'webm', 'ogg', 'mov', 'mkv'].includes(fileExt) ? (
-          <div className="fixed inset-0 z-50 flex flex-col bg-black/95 backdrop-blur-md">
-            <div className="flex items-center justify-between p-4 bg-transparent text-white w-full">
-              <div className="flex items-center gap-3">
-                <span className="material-symbols-outlined text-white">movie</span>
-                <h3 className="font-title-md text-title-md font-medium truncate">{previewFile.name}</h3>
-              </div>
-              <div className="flex items-center gap-2">
-                <button onClick={() => handleDownload(previewFile)} className="p-2 text-white/80 hover:bg-white/10 rounded-full transition-colors flex items-center">
-                  <span className="material-symbols-outlined">download</span>
-                </button>
-                <button onClick={closePreview} className="p-2 text-white/80 hover:bg-white/10 rounded-full transition-colors">
-                  <span className="material-symbols-outlined">close</span>
-                </button>
-              </div>
-            </div>
-            <div className="flex-1 overflow-hidden flex items-center justify-center p-4 w-full max-w-5xl mx-auto">
-              <video
-                src={previewUrl || previewFile.s3Url || previewFile.url || previewFile.downloadUrl}
-                controls
-                autoPlay
-                playsInline
-                preload="auto"
-                className="max-w-full max-h-[80vh] rounded-lg object-contain shadow-2xl bg-black"
-              >
-                Your browser does not support the video tag.
-              </video>
-            </div>
-          </div>
-        ) : (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-            <div className="bg-white dark:bg-[#18181b] rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden border border-neutral-200 dark:border-neutral-800 text-neutral-900 dark:text-neutral-100">
-              <div className="flex items-center justify-between p-4 border-b border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900/60">
-                <h3 className="font-title-lg text-neutral-900 dark:text-white font-semibold truncate pr-4">{previewFile.name}</h3>
-                <div className="flex items-center gap-2">
-                  <button 
-                    onClick={() => handleDownload(previewFile)}
-                    className="bg-primary text-on-primary hover:bg-primary/90 transition-colors p-2 rounded-lg flex items-center justify-center"
-                    title="Download File"
-                  >
-                    <span className="material-symbols-outlined">download</span>
-                  </button>
-                  <button onClick={closePreview} className="p-2 text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white hover:bg-neutral-200 dark:hover:bg-neutral-800 rounded-full transition-colors">
-                    <span className="material-symbols-outlined">close</span>
-                  </button>
-                </div>
-              </div>
-              <div className="flex-1 overflow-auto bg-neutral-100 dark:bg-neutral-950 p-4 flex items-center justify-center">
-                {(fileExt === 'png' || fileExt === 'jpg' || fileExt === 'jpeg') ? (
-                  <img src={previewUrl} alt={previewFile.name} className="max-w-full max-h-[70vh] object-contain shadow-sm rounded" />
-                ) : fileExt === 'pdf' ? (
-                  <iframe src={previewUrl} className="w-full h-[70vh] border-0 rounded" title="PDF Preview" />
-                ) : (fileExt === 'txt' || fileExt === 'md') ? (
-                  <pre className="w-full h-full text-left bg-white dark:bg-[#121212] text-neutral-900 dark:text-neutral-100 p-6 rounded-lg overflow-auto text-sm font-mono whitespace-pre-wrap shadow-inner border border-neutral-200 dark:border-neutral-800">
-                    {previewText || "Loading..."}
-                  </pre>
-                ) : (isAudio && previewUrl) ? (
-                  <div className="w-full max-w-md bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl p-6 sm:p-8 shadow-xl flex flex-col items-center text-center space-y-4">
-                    <div className="w-16 h-16 rounded-full bg-primary/10 text-primary flex items-center justify-center">
-                      <span className="material-symbols-outlined text-3xl">music_note</span>
-                    </div>
-                    <div className="max-w-full px-2">
-                      <h4 className="text-base sm:text-lg font-semibold text-neutral-900 dark:text-white truncate" title={previewFile.name}>
-                        {previewFile.name}
-                      </h4>
-                    </div>
-                    <audio
-                      controls
-                      autoPlay
-                      preload="metadata"
-                      src={previewUrl}
-                      className="w-full max-w-md"
-                    />
-                  </div>
-                ) : (
-                  <div className="text-neutral-500 dark:text-neutral-400 flex flex-col items-center gap-3">
-                    <span className="material-symbols-outlined text-4xl">visibility_off</span>
-                    <p>Preview not available for this file type.</p>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        );
-      })()}
+      <FilePreviewModal
+        previewFile={previewFile}
+        previewUrl={previewUrl}
+        previewText={previewText}
+        closePreview={closePreview}
+        handleDownload={handleDownload}
+      />
 
       {/* Delete Confirmation Modal */}
       <DeleteConfirmModal

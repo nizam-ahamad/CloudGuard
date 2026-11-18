@@ -22,6 +22,8 @@ import CentralizedFloatingBar from '../components/FloatingBar';
 import DeleteConfirmModal from '../components/DeleteConfirmModal';
 import { API_BASE_URL } from '../config';
 import { getCachedAccessUrl, fetchAccessUrl, prefetchAccessUrl } from '../utils/accessUrlCache';
+import { isHeicFile } from '../utils/thumbnailHelper';
+import { HeicPreviewImage } from '../components/FilePreviewModal';
 
 // --------------------------------------------------------------------------
 // MODULE-LEVEL CACHES: Persist across tab switching to prevent network refetching
@@ -1159,30 +1161,41 @@ export default function PhotosView({ token: propToken }) {
               )
             ) : (
               <div className="relative flex items-center justify-center max-h-[80vh] w-full">
-                {/* Instant thumbnail / preview display so modal opens with zero delay */}
-                {(currentPreviewItem.thumbnailUrl || currentPreviewItem.accessUrl || currentPreviewItem.url) && (
-                  <img
-                    src={currentPreviewItem.thumbnailUrl || currentPreviewItem.accessUrl || currentPreviewItem.url}
+                {isHeicFile(currentPreviewItem) ? (
+                  <HeicPreviewImage
+                    src={fullMediaUrl || currentPreviewItem.accessUrl || currentPreviewItem.url}
                     alt={currentPreviewItem.name}
-                    className={`max-h-[80vh] max-w-full object-contain rounded-lg shadow-2xl transition-opacity duration-300 ${
-                      fullMediaUrl ? 'opacity-0 absolute' : 'opacity-100'
-                    }`}
+                    className="max-h-[80vh] max-w-full object-contain rounded-lg shadow-2xl transition-opacity duration-300"
+                    fallbackUrl={currentPreviewItem.thumbnailUrl}
                   />
-                )}
-                {/* High-res original once loaded */}
-                {fullMediaUrl && (
-                  <img
-                    key={fullMediaUrl}
-                    src={fullMediaUrl}
-                    alt={currentPreviewItem.name}
-                    className="max-h-[80vh] max-w-full object-contain rounded-lg shadow-2xl transition-opacity duration-300 opacity-100"
-                  />
-                )}
-                {loadingFullMedia && !fullMediaUrl && (
-                  <div className="absolute bottom-4 right-4 bg-black/75 backdrop-blur-md px-3 py-1.5 rounded-full flex items-center gap-2 text-white text-xs border border-white/10 shadow-lg">
-                    <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-400" />
-                    <span>Loading high resolution...</span>
-                  </div>
+                ) : (
+                  <>
+                    {/* Instant thumbnail / preview display so modal opens with zero delay */}
+                    {(currentPreviewItem.thumbnailUrl || currentPreviewItem.accessUrl || currentPreviewItem.url) && (
+                      <img
+                        src={currentPreviewItem.thumbnailUrl || currentPreviewItem.accessUrl || currentPreviewItem.url}
+                        alt={currentPreviewItem.name}
+                        className={`max-h-[80vh] max-w-full object-contain rounded-lg shadow-2xl transition-opacity duration-300 ${
+                          fullMediaUrl ? 'opacity-0 absolute' : 'opacity-100'
+                        }`}
+                      />
+                    )}
+                    {/* High-res original once loaded */}
+                    {fullMediaUrl && (
+                      <img
+                        key={fullMediaUrl}
+                        src={fullMediaUrl}
+                        alt={currentPreviewItem.name}
+                        className="max-h-[80vh] max-w-full object-contain rounded-lg shadow-2xl transition-opacity duration-300 opacity-100"
+                      />
+                    )}
+                    {loadingFullMedia && !fullMediaUrl && (
+                      <div className="absolute bottom-4 right-4 bg-black/75 backdrop-blur-md px-3 py-1.5 rounded-full flex items-center gap-2 text-white text-xs border border-white/10 shadow-lg">
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-400" />
+                        <span>Loading high resolution...</span>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             )}

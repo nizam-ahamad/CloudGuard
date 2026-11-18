@@ -3,13 +3,52 @@
  * Generates compact, upright JPEG thumbnails (< 40 KB, max 320px)
  * Optimized for Retina displays and high-resolution photo/video galleries.
  */
+/**
+ * Helper to identify HEIC / HEIF files by MIME type or file extension
+ */
+export const isHeicFile = (fileOrName) => {
+  if (!fileOrName) return false;
+  if (typeof fileOrName === 'string') {
+    return /\.(heic|heif)$/i.test(fileOrName);
+  }
+  return Boolean(
+    fileOrName.type === 'image/heic' ||
+    fileOrName.type === 'image/heif' ||
+    /\.(heic|heif)$/i.test(fileOrName.name || '')
+  );
+};
+
+/**
+ * CloudGuard High-DPI Thumbnail Engine with Automatic EXIF Orientation
+ * Generates compact, upright JPEG/WebP thumbnails (< 40 KB, max 320px)
+ * Optimized for Retina displays and high-resolution photo/video galleries.
+ */
 export async function generateMediaThumbnail(file, maxDimension = 320, quality = 0.7) {
   if (!file) return null;
 
-  // 1. Image Thumbnail Extraction with Automatic EXIF Orientation
-  if (file.type?.startsWith('image/')) {
+  // 1. HEIC / HEIF detection & lazy conversion via heic2any
+  const isHeic = isHeicFile(file);
+  let imageSource = file;
+
+  if (isHeic) {
     try {
-      const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+      const { default: heic2any } = await import('heic2any');
+      const converted = await heic2any({
+        blob: file,
+        toType: 'image/jpeg',
+        quality: 0.85,
+      });
+      imageSource = Array.isArray(converted) ? converted[0] : converted;
+    } catch (err) {
+      console.warn('[Thumbnail] HEIC decoding failed on upload:', err);
+      return null;
+    }
+  }
+
+  // 2. Image Thumbnail Extraction with Automatic EXIF Orientation
+  if (isHeic || file.type?.startsWith('image/')) {
+    try {
+      const bitmap = await createImageBitmap(imageSource, { imageOrientation: 'from-image' });
       let { width, height } = bitmap;
 
       if (width > height) {
@@ -71,7 +110,7 @@ export async function generateMediaThumbnail(file, maxDimension = 320, quality =
           img.src = ev.target.result;
         };
         reader.onerror = () => resolve(null);
-        reader.readAsDataURL(file);
+        reader.readAsDataURL(imageSource);
       });
     }
   }
