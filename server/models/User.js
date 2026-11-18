@@ -38,6 +38,10 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    tokenVersion: {
+      type: Number,
+      default: 0,
+    },
     unverifiedExpiresAt: {
       type: Date,
       default: undefined,

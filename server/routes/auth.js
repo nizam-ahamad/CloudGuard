@@ -62,17 +62,7 @@ const ALLOWED_EMAIL_DOMAINS = new Set([
 ]);
 
 // User verification middleware for authenticated routes (e.g. PUT /password)
-const verifyToken = async (req, res, next) => {
-  const token = req.headers.authorization?.split(' ')[1] || req.query.token;
-  if (!token) return res.status(401).json({ error: 'Access denied. Please log in.' });
-  try {
-    const verified = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
-    req.user = verified;
-    next();
-  } catch (err) {
-    return res.status(401).json({ error: 'Invalid or expired token.' });
-  }
-};
+const verifyToken = authMiddleware;
 
 // Formatter for consistent user response
 const formatUserResponse = (user) => ({
@@ -195,7 +185,14 @@ router.post('/google', async (req, res) => {
     }
 
     const token = jwt.sign(
-      { id: user._id, _id: user._id, email: user.email, name: user.name, isAdmin: user.isAdmin || false },
+      {
+        id: user._id,
+        _id: user._id,
+        email: user.email,
+        name: user.name,
+        isAdmin: user.isAdmin || false,
+        tokenVersion: user.tokenVersion || 0,
+      },
       process.env.JWT_SECRET,
       { expiresIn: '7d' }
     );
@@ -424,7 +421,14 @@ router.post('/verify-activation-otp', otpLimiter, async (req, res) => {
     sendWelcomeEmail(user.email, user.name);
 
     const token = jwt.sign(
-      { id: user._id, _id: user._id, email: user.email, name: user.name, isAdmin: user.isAdmin || false },
+      {
+        id: user._id,
+        _id: user._id,
+        email: user.email,
+        name: user.name,
+        isAdmin: user.isAdmin || false,
+        tokenVersion: user.tokenVersion || 0,
+      },
       process.env.JWT_SECRET,
       { expiresIn: '7d' }
     );
@@ -538,7 +542,14 @@ router.post('/verify-otp', otpLimiter, async (req, res) => {
     sendWelcomeEmail(user.email, user.name);
 
     const token = jwt.sign(
-      { id: user._id, _id: user._id, email: user.email, name: user.name, isAdmin: user.isAdmin || false },
+      {
+        id: user._id,
+        _id: user._id,
+        email: user.email,
+        name: user.name,
+        isAdmin: user.isAdmin || false,
+        tokenVersion: user.tokenVersion || 0,
+      },
       process.env.JWT_SECRET,
       { expiresIn: '7d' }
     );
@@ -667,7 +678,14 @@ router.post('/login', authLimiter, async (req, res) => {
 
     // Generate JWT Session Token
     const token = jwt.sign(
-      { id: user._id, _id: user._id, email: user.email, name: user.name, isAdmin: user.isAdmin || false },
+      {
+        id: user._id,
+        _id: user._id,
+        email: user.email,
+        name: user.name,
+        isAdmin: user.isAdmin || false,
+        tokenVersion: user.tokenVersion || 0,
+      },
       process.env.JWT_SECRET || 'cloudguard_fallback_secret',
       { expiresIn: '7d' }
     );
@@ -693,6 +711,22 @@ router.post('/login', authLimiter, async (req, res) => {
   } catch (err) {
     console.error('[Auth Error] Server error during login:', err);
     return res.status(500).json({ error: 'Internal server error during login' });
+  }
+});
+
+// ==========================================
+// 4b. LOGOUT -> REVOKES ALL SESSIONS
+// ==========================================
+router.post('/logout', authMiddleware, async (req, res) => {
+  try {
+    const rawUserId = req.user?._id || req.user?.id || req.user?.userId;
+    if (rawUserId) {
+      await User.updateOne({ _id: rawUserId }, { $inc: { tokenVersion: 1 } });
+    }
+    return res.status(200).json({ success: true, message: 'Logged out successfully' });
+  } catch (err) {
+    console.error('Logout Error:', err);
+    return res.status(500).json({ error: 'Failed to logout' });
   }
 });
 
@@ -799,6 +833,7 @@ router.post('/reset-password', otpLimiter, async (req, res) => {
     user.otpAttempts = 0;
     user.isVerified = true; // Setting password verifies account
     user.unverifiedExpiresAt = undefined;
+    user.tokenVersion = (user.tokenVersion || 0) + 1;
     await user.save();
 
     return res.status(200).json({ message: 'Password reset successfully. You can now log in.' });
@@ -856,6 +891,7 @@ router.put('/reset-password/:token', otpLimiter, async (req, res) => {
     user.otpAttempts = 0;
     user.isVerified = true;
     user.unverifiedExpiresAt = undefined;
+    user.tokenVersion = (user.tokenVersion || 0) + 1;
     await user.save();
 
     return res.status(200).json({ message: 'Password reset successfully. You can now log in.' });
@@ -908,6 +944,57 @@ router.put('/password', verifyToken, async (req, res) => {
 
     user.password = hashedPassword;
     user.authProvider = user.googleId ? 'hybrid' : 'local';
+    user.tokenVersion = (user.tokenVersion || 0) + 1;
+    await user.save();
+
+    return res.status(200).json({ message: 'Password updated successfully', hasPassword: true });
+  } catch (err) {
+    console.error('Password update error:', err);
+    return res.status(500).json({ error: err.message || 'Failed to update password' });
+  }
+});
+
+// Alias: POST /change-password
+router.post('/change-password', verifyToken, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body || {};
+    if (!newPassword) {
+      return res.status(400).json({ error: 'New password is required' });
+    }
+    if (typeof newPassword === 'string' && newPassword.length > 72) {
+      return res.status(400).json({ error: 'New password cannot exceed 72 characters' });
+    }
+    if (currentPassword && typeof currentPassword === 'string' && currentPassword.length > 72) {
+      return res.status(400).json({ error: 'Current password cannot exceed 72 characters' });
+    }
+
+    const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/;
+    if (!passwordRegex.test(newPassword)) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters long and contain at least 1 letter and 1 number' });
+    }
+
+    const userId = req.user.id || req.user._id;
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    if (user.password) {
+      if (!currentPassword) {
+        return res.status(400).json({ error: 'Current password is required' });
+      }
+      const validPass = await bcrypt.compare(currentPassword, user.password);
+      if (!validPass) {
+        return res.status(400).json({ error: 'Invalid current password' });
+      }
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(newPassword, salt);
+
+    user.password = hashedPassword;
+    user.authProvider = user.googleId ? 'hybrid' : 'local';
+    user.tokenVersion = (user.tokenVersion || 0) + 1;
     await user.save();
 
     return res.status(200).json({ message: 'Password updated successfully', hasPassword: true });
