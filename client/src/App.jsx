@@ -15,6 +15,7 @@ import ProfileSettings from './components/ProfileSettings';
 import CookieConsent from './components/CookieConsent';
 import QuotaUpgradeModal from './components/QuotaUpgradeModal';
 import BinView from './components/BinView';
+import FileGridCard from './components/FileGridCard';
 import LandingPage from './pages/LandingPage';
 import AuthPage from './pages/AuthPage';
 import PrivacyPolicy from './pages/PrivacyPolicy';
@@ -3308,40 +3309,40 @@ function App() {
               </h3>
             </div>
             <div className="flex items-center justify-between sm:justify-end gap-2 shrink-0">
-              {viewMode !== 'recent' && (
-                <div className="flex items-center gap-2 sm:gap-4 w-full sm:w-auto justify-between sm:justify-end">
-                  {/* Grid / List Mode Segmented Toggle (Matches PhotosView) */}
-                  <div className="flex items-center bg-neutral-100 dark:bg-neutral-800/80 p-0.5 rounded-lg border border-neutral-200 dark:border-neutral-700/60 select-none">
-                    {/* Grid View Button */}
-                    <button
-                      type="button"
-                      onClick={() => handleSetFolderView('grid')}
-                      className={`p-1.5 rounded-md transition-all cursor-pointer ${
-                        folderView === 'grid'
-                          ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-white shadow-sm'
-                          : 'text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white'
-                      }`}
-                      title="Grid view"
-                      aria-label="Grid view"
-                    >
-                      <LayoutGrid className="w-4 h-4" />
-                    </button>
+              <div className="flex items-center gap-2 sm:gap-4 w-full sm:w-auto justify-between sm:justify-end">
+                {/* Grid / List Mode Segmented Toggle (Matches PhotosView) */}
+                <div className="flex items-center bg-neutral-100 dark:bg-neutral-800/80 p-0.5 rounded-lg border border-neutral-200 dark:border-neutral-700/60 select-none">
+                  {/* Grid View Button */}
+                  <button
+                    type="button"
+                    onClick={() => handleSetFolderView('grid')}
+                    className={`p-1.5 rounded-md transition-all cursor-pointer ${
+                      folderView === 'grid'
+                        ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-white shadow-sm'
+                        : 'text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white'
+                    }`}
+                    title="Grid view"
+                    aria-label="Grid view"
+                  >
+                    <LayoutGrid className="w-4 h-4" />
+                  </button>
 
-                    {/* List View Button */}
-                    <button
-                      type="button"
-                      onClick={() => handleSetFolderView('list')}
-                      className={`p-1.5 rounded-md transition-all cursor-pointer ${
-                        folderView === 'list'
-                          ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-white shadow-sm'
-                          : 'text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white'
-                      }`}
-                      title="List view"
-                      aria-label="List view"
-                    >
-                      <List className="w-4 h-4" />
-                    </button>
-                  </div>
+                  {/* List View Button */}
+                  <button
+                    type="button"
+                    onClick={() => handleSetFolderView('list')}
+                    className={`p-1.5 rounded-md transition-all cursor-pointer ${
+                      folderView === 'list'
+                        ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-white shadow-sm'
+                        : 'text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white'
+                    }`}
+                    title="List view"
+                    aria-label="List view"
+                  >
+                    <List className="w-4 h-4" />
+                  </button>
+                </div>
+                {viewMode !== 'recent' && (
                   <div className="relative inline-block" ref={sortDropdownRef}>
                     <button 
                       type="button"
@@ -3431,8 +3432,8 @@ function App() {
                       </div>
                     )}
                   </div>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           </div>
 
@@ -3712,7 +3713,68 @@ function App() {
             </div>
           )}
 
-          <div className="bg-white dark:bg-[#1e1f20] rounded-xl border border-neutral-200 dark:border-zinc-800/50 shadow-sm dark:text-zinc-300 min-h-0">
+          {folderView === 'grid' ? (
+            filteredFiles.length === 0 ? (
+              <div className="bg-white dark:bg-[#1e1f20] rounded-xl border border-neutral-200 dark:border-zinc-800/50 shadow-sm p-8 sm:p-16 text-center select-none min-h-0">
+                {files.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center">
+                    <div className="w-12 h-12 rounded-2xl bg-neutral-100 dark:bg-neutral-800/60 border border-neutral-200/60 dark:border-neutral-700/40 flex items-center justify-center text-neutral-400 dark:text-neutral-500 mb-3">
+                      <FileText className="w-6 h-6 stroke-[1.5]"/>
+                    </div>
+                    <p className="text-sm font-medium text-neutral-600 dark:text-neutral-300">
+                      No files uploaded yet
+                    </p>
+                    <p className="text-xs text-neutral-400 dark:text-neutral-500 mt-1 max-w-xs">
+                      Upload files or drag and drop documents into this folder to get started.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center">
+                    <div className="w-12 h-12 rounded-2xl bg-neutral-100 dark:bg-neutral-800/60 border border-neutral-200/60 dark:border-neutral-700/40 flex items-center justify-center text-neutral-400 dark:text-neutral-500 mb-3">
+                      <Search className="w-6 h-6 stroke-[1.5]"/>
+                    </div>
+                    <p className="text-sm font-medium text-neutral-600 dark:text-neutral-300">
+                      No files match your search
+                    </p>
+                    <p className="text-xs text-neutral-400 dark:text-neutral-500 mt-1 max-w-xs">
+                      Try searching for a different keyword or file extension.
+                    </p>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 pb-4 sm:pb-32">
+                {filteredFiles.map((file, index) => (
+                  <ErrorBoundary key={file?._id || file?.id || Math.random()}>
+                    <FileGridCard
+                      file={file}
+                      index={index}
+                      totalFiles={filteredFiles.length}
+                      isSelected={selectedFileIds.includes(String(file._id))}
+                      isSelectionActive={isSelectionActive}
+                      onToggleSelect={toggleFileSelect}
+                      onPreview={handlePreview}
+                      onDownload={handleDownload}
+                      onMove={openMoveModal}
+                      onRename={(f) => {
+                        setFileToRename(f);
+                        setNewRenameFileName(f.name);
+                        setShowRenameFileModal(true);
+                      }}
+                      onDetails={(f) => setFileDetailsTarget(f)}
+                      onDelete={(f) => setFileToDelete(f)}
+                      activeMenuId={activeMenuId}
+                      setActiveMenuId={setActiveMenuId}
+                      formatSize={formatSize}
+                      token={token}
+                      prefetchAccessUrl={prefetchAccessUrl}
+                    />
+                  </ErrorBoundary>
+                ))}
+              </div>
+            )
+          ) : (
+            <div className="bg-white dark:bg-[#1e1f20] rounded-xl border border-neutral-200 dark:border-zinc-800/50 shadow-sm dark:text-zinc-300 min-h-0">
             <div className="md:overflow-x-auto custom-scrollbar w-full pb-4 sm:pb-32">
               <table className="w-full text-left md:border-collapse block md:table md:min-w-[800px]">
                 <thead className="hidden md:table-header-group">
@@ -3839,8 +3901,28 @@ function App() {
                       </td>
                       <td className="flex-1 min-w-0 block md:table-cell md:py-3 md:px-6">
                         <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded flex items-center justify-center shrink-0 bg-surface-dim text-on-surface-variant">
-                            <span className="material-symbols-outlined text-sm">{getIconForType(file.type)}</span>
+                          <div className="w-8 h-8 rounded flex items-center justify-center shrink-0 bg-surface-dim text-on-surface-variant overflow-hidden">
+                            {(file.thumbnailUrl || file.thumbnail || file.accessUrl || file.url) ? (
+                              <img
+                                src={file.thumbnailUrl || file.thumbnail || file.accessUrl || file.url}
+                                alt=""
+                                className="w-full h-full object-cover rounded"
+                                loading="lazy"
+                                decoding="async"
+                                onError={(e) => {
+                                  e.currentTarget.style.display = 'none';
+                                  if (e.currentTarget.nextElementSibling) {
+                                    e.currentTarget.nextElementSibling.style.display = 'inline-block';
+                                  }
+                                }}
+                              />
+                            ) : null}
+                            <span 
+                              className="material-symbols-outlined text-sm"
+                              style={{ display: (file.thumbnailUrl || file.thumbnail || file.accessUrl || file.url) ? 'none' : 'inline-block' }}
+                            >
+                              {getIconForType(file.type)}
+                            </span>
                           </div>
                           <div className="flex flex-col min-w-0 flex-1">
                             <span className="font-medium truncate max-w-full md:max-w-[250px]" title={file.name}>{file.name}</span>
@@ -3943,6 +4025,7 @@ function App() {
               </table>
             </div>
           </div>
+        )}
 
           {/* Load More Button Container */}
           {(viewMode === 'recent' || new URLSearchParams(window.location.search).get('tab') === 'recent') && hasMoreRecent && (
