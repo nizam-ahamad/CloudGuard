@@ -268,10 +268,11 @@ export default function FileGridCard({
             e.stopPropagation();
             setActiveMenuId && setActiveMenuId(isMenuOpen ? null : menuKey);
           }}
-          className="p-1.5 rounded-lg text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 dark:text-neutral-500 dark:hover:text-neutral-200 dark:hover:bg-neutral-800/80 transition-colors flex-shrink-0 cursor-pointer"
+          className="p-1.5 rounded-lg bg-black/80 hover:bg-black text-white shadow-md backdrop-blur-sm border border-white/15 transition-all flex items-center justify-center shrink-0 cursor-pointer opacity-100"
           title="More options"
+          aria-label="More options"
         >
-          <MoreVertical size={16} />
+          <MoreVertical size={16} className="text-white stroke-[2.5]" />
         </button>
 
         {isMenuOpen && (

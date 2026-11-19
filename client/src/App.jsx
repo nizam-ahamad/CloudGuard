@@ -3508,14 +3508,16 @@ function App() {
                           className="absolute top-2.5 right-2.5 shrink-0 z-20"
                         >
                           <button 
+                            type="button"
                             onClick={(e) => { 
                               e.stopPropagation(); 
                               setActiveFolderMenuId(activeFolderMenuId === folder._id ? null : folder._id); 
                             }}
-                            className="p-1.5 rounded-lg text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 dark:text-neutral-500 dark:hover:text-neutral-200 dark:hover:bg-neutral-800/80 transition-colors flex-shrink-0 cursor-pointer"
+                            className="p-1.5 rounded-lg bg-black/80 hover:bg-black text-white shadow-md backdrop-blur-sm border border-white/15 transition-all flex items-center justify-center shrink-0 cursor-pointer opacity-100"
                             title="More options"
+                            aria-label="More options"
                           >
-                            <MoreVertical size={16} />
+                            <MoreVertical size={16} className="text-white stroke-[2.5]" />
                           </button>
 
                           {activeFolderMenuId === folder._id && (
@@ -3638,14 +3640,16 @@ function App() {
                           className="shrink-0 ml-3 flex items-center relative"
                         >
                           <button
+                            type="button"
                             onClick={(e) => {
                               e.stopPropagation();
                               setActiveFolderMenuId(activeFolderMenuId === folder._id ? null : folder._id);
                             }}
-                            className="p-1.5 rounded-lg text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 dark:text-neutral-500 dark:hover:text-neutral-200 dark:hover:bg-neutral-800/80 transition-colors cursor-pointer"
+                            className="p-1.5 rounded-lg bg-slate-200/80 dark:bg-black/70 text-slate-900 dark:text-white hover:bg-slate-300 dark:hover:bg-black transition-colors cursor-pointer border border-slate-300/60 dark:border-white/10 shadow-xs flex items-center justify-center shrink-0 opacity-100"
                             title="More options"
+                            aria-label="More options"
                           >
-                            <MoreVertical size={16}/>
+                            <MoreVertical size={16} className="stroke-[2.5]"/>
                           </button>
 
                           {activeFolderMenuId === folder._id && (
@@ -3717,7 +3721,7 @@ function App() {
 
           {folderView === 'grid' ? (
             filteredFiles.length === 0 ? (
-              <div className="bg-white dark:bg-[#1e1f20] rounded-xl border border-neutral-200 dark:border-zinc-800/50 shadow-sm p-8 sm:p-16 text-center select-none min-h-0">
+              <div className="bg-white dark:bg-[#1e1f20] rounded-xl border border-neutral-200 dark:border-zinc-800/50 shadow-sm p-8 sm:p-16 text-center select-none">
                 {files.length === 0 ? (
                   <div className="flex flex-col items-center justify-center">
                     <div className="w-12 h-12 rounded-2xl bg-neutral-100 dark:bg-neutral-800/60 border border-neutral-200/60 dark:border-neutral-700/40 flex items-center justify-center text-neutral-400 dark:text-neutral-500 mb-3">
@@ -3776,8 +3780,8 @@ function App() {
               </div>
             )
           ) : (
-            <div className="bg-white dark:bg-[#1e1f20] rounded-xl border border-neutral-200 dark:border-zinc-800/50 shadow-sm dark:text-zinc-300 min-h-0">
-            <div className="md:overflow-x-auto custom-scrollbar w-full pb-4 sm:pb-32">
+            <div className="bg-white dark:bg-[#1e1f20] rounded-xl border border-neutral-200 dark:border-zinc-800/50 shadow-sm dark:text-zinc-300 overflow-visible">
+            <div className="overflow-x-auto overflow-y-visible w-full pb-4 sm:pb-32">
               <table className="w-full text-left md:border-collapse block md:table md:min-w-[800px]">
                 <thead className="hidden md:table-header-group">
                   <tr className="border-b border-neutral-200 dark:border-zinc-800/50 bg-neutral-50/80 dark:bg-[#1e1f20] text-neutral-500 dark:text-neutral-400 text-xs font-semibold uppercase tracking-wider">
@@ -3966,10 +3970,13 @@ function App() {
                       <td className="block md:table-cell ml-2 md:ml-0 md:py-3 md:px-6 md:text-right relative">
                         <div className="flex relative justify-end">
                           <button
+                            type="button"
                             onClick={(e) => { e.stopPropagation(); setActiveMenuId(activeMenuId === (file._id || file.id) ? null : (file._id || file.id)); }}
-                            className="p-1 text-neutral-500 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-neutral-700 rounded transition-colors"
+                            className="p-1.5 rounded-lg bg-slate-200/80 dark:bg-black/70 text-slate-900 dark:text-white hover:bg-slate-300 dark:hover:bg-black transition-colors cursor-pointer border border-slate-300/60 dark:border-white/10 shadow-xs flex items-center justify-center shrink-0 opacity-100"
+                            title="More options"
+                            aria-label="More options"
                           >
-                            <MoreVertical size={20} />
+                            <MoreVertical size={18} className="stroke-[2.5]" />
                           </button>
                           
                           <div className={`absolute right-0 w-44 bg-white dark:bg-[#1e1f20] rounded-xl shadow-xl border border-neutral-200 dark:border-zinc-800 z-[60] overflow-hidden flex flex-col py-1 transition-all duration-200 ease-out ${index >= filteredFiles.length - 2 && filteredFiles.length > 3 ? 'bottom-full mb-2 origin-bottom-right' : 'top-full mt-2 origin-top-right'} ${activeMenuId === (file._id || file.id) ? 'opacity-100 scale-100 pointer-events-auto' : 'opacity-0 scale-95 pointer-events-none'}`}>
