@@ -1,0 +1,419 @@
+/**
+ * CloudGuard - Client-Side Card Preview Generator
+ *
+ * Provides lazy, viewport-gated, bounded-LRU preview generation for grid cards:
+ * - PDF page 1 thumbnail rendered onto canvas via pdfjs-dist
+ * - Text / CSV / Code / Markdown real text snippet (first 2 KB via Range request)
+ * - Video frame snapshot for videos missing thumbnails (metadata-only fetch + immediate teardown)
+ *
+ * Guarantees:
+ * - Zero EC2 server load (100% client-side in browser)
+ * - Max 2 concurrent preview jobs (prevents mobile CPU/GPU stutter)
+ * - 60-item bounded LRU cache with automatic blob: URL revocation
+ * - In-flight Promise deduplication
+ */
+
+import { fetchAccessUrl, getCachedAccessUrl } from './accessUrlCache';
+
+const MAX_CARD_PREVIEWS = 60;
+const MAX_CONCURRENT_JOBS = 2;
+
+// Module-level LRU cache: fileId -> { type: 'image' | 'text' | 'none', url?, snippet?, isBlob?, isPdf?, isVideo? }
+const previewCache = new Map();
+
+// In-flight promises to deduplicate simultaneous requests for the same file
+const inFlightPromises = new Map();
+
+// Concurrency queue
+let activeJobs = 0;
+const jobQueue = [];
+
+function enqueueJob(fn) {
+  return new Promise((resolve, reject) => {
+    jobQueue.push({ fn, resolve, reject });
+    processNextJob();
+  });
+}
+
+function processNextJob() {
+  if (activeJobs >= MAX_CONCURRENT_JOBS || jobQueue.length === 0) return;
+  const { fn, resolve, reject } = jobQueue.shift();
+  activeJobs++;
+  fn()
+    .then(resolve)
+    .catch(reject)
+    .finally(() => {
+      activeJobs--;
+      processNextJob();
+    });
+}
+
+/**
+ * Returns cached preview result if available, refreshing its LRU order.
+ */
+export function getCachedCardPreview(fileId) {
+  if (!fileId) return null;
+  const key = String(fileId);
+  if (!previewCache.has(key)) return null;
+  const val = previewCache.get(key);
+  // Refresh order in Map
+  previewCache.delete(key);
+  previewCache.set(key, val);
+  return val;
+}
+
+/**
+ * Stores preview result into LRU cache, evicting oldest item if full.
+ */
+function setCachedCardPreview(fileId, data) {
+  if (!fileId || !data) return;
+  const key = String(fileId);
+
+  if (previewCache.has(key)) {
+    const existing = previewCache.get(key);
+    if (existing && existing !== data && existing.isBlob && existing.url?.startsWith('blob:')) {
+      try {
+        URL.revokeObjectURL(existing.url);
+      } catch (e) {
+        // ignore
+      }
+    }
+    previewCache.delete(key);
+  } else if (previewCache.size >= MAX_CARD_PREVIEWS) {
+    const oldestKey = previewCache.keys().next().value;
+    if (oldestKey) {
+      const evicted = previewCache.get(oldestKey);
+      if (evicted && evicted.isBlob && evicted.url?.startsWith('blob:')) {
+        try {
+          URL.revokeObjectURL(evicted.url);
+        } catch (e) {
+          // ignore
+        }
+      }
+      previewCache.delete(oldestKey);
+    }
+  }
+
+  previewCache.set(key, data);
+}
+
+// Lazy pdfjs module loader
+let pdfjsPromise = null;
+async function getPdfjs() {
+  if (!pdfjsPromise) {
+    pdfjsPromise = (async () => {
+      const pdfjs = await import('pdfjs-dist');
+      if (pdfjs.GlobalWorkerOptions && !pdfjs.GlobalWorkerOptions.workerSrc) {
+        try {
+          // Use bundled worker URL for Vite
+          pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+            'pdfjs-dist/build/pdf.worker.min.mjs',
+            import.meta.url
+          ).toString();
+        } catch (err) {
+          console.warn('[cardPreviewGenerator] Could not set pdf.workerSrc:', err);
+        }
+      }
+      return pdfjs;
+    })();
+  }
+  return pdfjsPromise;
+}
+
+/**
+ * Checks file type categories
+ */
+export function getFileCategory(fileName = '', mimeType = '') {
+  const ext = (fileName.split('.').pop() || '').toLowerCase();
+  const mime = (mimeType || '').toLowerCase();
+
+  if (ext === 'pdf' || mime.includes('pdf')) {
+    return 'pdf';
+  }
+
+  const textExts = [
+    'txt', 'csv', 'tsv', 'md', 'markdown', 'json', 'xml', 'log',
+    'yml', 'yaml', 'js', 'jsx', 'ts', 'tsx', 'py', 'html', 'css',
+    'scss', 'sql', 'sh', 'java', 'c', 'cpp', 'cs', 'php', 'rb', 'go', 'rs',
+  ];
+  if (textExts.includes(ext) || mime.startsWith('text/') || mime.includes('json') || mime.includes('xml')) {
+    return 'text';
+  }
+
+  const videoExts = ['mp4', 'mkv', 'mov', 'avi', 'webm', 'wmv', 'flv', 'm4v', '3gp'];
+  if (videoExts.includes(ext) || mime.startsWith('video/')) {
+    return 'video';
+  }
+
+  const imageExts = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg', 'heic', 'heif', 'bmp', 'tiff', 'avif'];
+  if (imageExts.includes(ext) || mime.startsWith('image/')) {
+    return 'image';
+  }
+
+  return 'other';
+}
+
+/**
+ * 1. Text/Code/Data preview: Read up to first 2048 bytes via Range request
+ */
+async function generateTextSnippet(accessUrl) {
+  try {
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timeoutId = setTimeout(() => controller?.abort(), 6000);
+
+    const res = await fetch(accessUrl, {
+      headers: { Range: 'bytes=0-2048' },
+      signal: controller?.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (!res.ok && res.status !== 206) return null;
+
+    let text = '';
+    if (res.body && typeof res.body.getReader === 'function') {
+      const reader = res.body.getReader();
+      const chunks = [];
+      let totalBytes = 0;
+
+      while (totalBytes < 2048) {
+        const { done, value } = await reader.read();
+        if (done || !value) break;
+        chunks.push(value);
+        totalBytes += value.length;
+        if (totalBytes >= 2048) {
+          reader.cancel().catch(() => {});
+          break;
+        }
+      }
+
+      const combined = new Uint8Array(totalBytes);
+      let offset = 0;
+      for (const chunk of chunks) {
+        const slice = chunk.subarray(0, Math.min(chunk.length, totalBytes - offset));
+        combined.set(slice, offset);
+        offset += slice.length;
+        if (offset >= totalBytes) break;
+      }
+
+      text = new TextDecoder('utf-8', { fatal: false }).decode(combined);
+    } else {
+      text = await res.text();
+    }
+
+    if (!text || !text.trim()) return null;
+
+    // Extract first 10 lines
+    const lines = text.split(/\r?\n/).slice(0, 10);
+    const snippet = lines.join('\n').trim();
+
+    return snippet ? { type: 'text', snippet } : null;
+  } catch (err) {
+    return null;
+  }
+}
+
+/**
+ * 2. PDF Page 1 Thumbnail: Render Page 1 to canvas using pdfjs-dist
+ */
+async function generatePdfThumbnail(accessUrl) {
+  try {
+    const pdfjs = await getPdfjs();
+    const loadingTask = pdfjs.getDocument({
+      url: accessUrl,
+      disableAutoFetch: true,
+      disableRange: false,
+      disableStream: false,
+    });
+
+    const pdf = await loadingTask.promise;
+    const page = await pdf.getPage(1);
+    const unscaledViewport = page.getViewport({ scale: 1 });
+
+    const targetWidth = 320;
+    const scale = Math.min(2.0, targetWidth / (unscaledViewport.width || targetWidth));
+    const viewport = page.getViewport({ scale });
+
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(viewport.width);
+    canvas.height = Math.round(viewport.height);
+    const ctx = canvas.getContext('2d', { alpha: false });
+
+    await page.render({
+      canvasContext: ctx,
+      viewport: viewport,
+    }).promise;
+
+    const blob = await new Promise((resolve) => {
+      canvas.toBlob((b) => resolve(b), 'image/webp', 0.8);
+    });
+
+    try {
+      page.cleanup();
+      pdf.destroy();
+    } catch (e) {
+      // ignore
+    }
+
+    if (!blob) return null;
+    const blobUrl = URL.createObjectURL(blob);
+    return { type: 'image', url: blobUrl, isBlob: true, isPdf: true };
+  } catch (err) {
+    console.warn('[cardPreviewGenerator] PDF thumbnail generation failed:', err?.message || err);
+    return null;
+  }
+}
+
+/**
+ * 3. Video Snapshot: Capture a single frame from video metadata without downloading full file
+ */
+function generateVideoSnapshot(accessUrl) {
+  return new Promise((resolve) => {
+    const video = document.createElement('video');
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = 'metadata';
+    video.crossOrigin = 'anonymous';
+
+    let isDone = false;
+    const timeoutId = setTimeout(() => {
+      cleanup();
+      resolve(null);
+    }, 7000);
+
+    function cleanup() {
+      if (isDone) return;
+      isDone = true;
+      clearTimeout(timeoutId);
+      video.onloadedmetadata = null;
+      video.onseeked = null;
+      video.onerror = null;
+      try {
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    video.onerror = () => {
+      cleanup();
+      resolve(null);
+    };
+
+    video.onloadedmetadata = () => {
+      const duration = video.duration || 1;
+      const targetTime = Math.min(1.0, duration > 0 ? duration * 0.1 : 0.5);
+      video.currentTime = targetTime;
+    };
+
+    video.onseeked = () => {
+      try {
+        const width = video.videoWidth || 320;
+        const height = video.videoHeight || 240;
+        const targetWidth = 320;
+        const scale = targetWidth / width;
+        const targetHeight = Math.round(height * scale);
+
+        const canvas = document.createElement('canvas');
+        canvas.width = targetWidth;
+        canvas.height = targetHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0, targetWidth, targetHeight);
+
+        canvas.toBlob((blob) => {
+          cleanup();
+          if (blob) {
+            const url = URL.createObjectURL(blob);
+            resolve({ type: 'image', url, isBlob: true, isVideo: true });
+          } else {
+            resolve(null);
+          }
+        }, 'image/webp', 0.8);
+      } catch (err) {
+        cleanup();
+        resolve(null);
+      }
+    };
+
+    video.src = accessUrl;
+  });
+}
+
+/**
+ * Main public entrypoint:
+ * Generates or retrieves a cached card preview for the given file.
+ */
+export async function generateCardPreview(file, token) {
+  if (!file) return null;
+  const fileId = file._id || file.id;
+  if (!fileId) return null;
+  const key = String(fileId);
+
+  // 1. Check LRU Cache
+  const cached = getCachedCardPreview(key);
+  if (cached) return cached;
+
+  // 2. In-flight Promise deduplication
+  if (inFlightPromises.has(key)) {
+    return inFlightPromises.get(key);
+  }
+
+  // 3. Determine if eligible for client-side preview
+  const category = getFileCategory(file.name || file.originalName || '', file.mimeType || file.mimetype || '');
+  if (category === 'other') {
+    const noneResult = { type: 'none' };
+    setCachedCardPreview(key, noneResult);
+    return noneResult;
+  }
+
+  // Check file size limit for PDFs (skip if > 25MB to prevent memory issues)
+  if (category === 'pdf' && file.size && file.size > 25 * 1024 * 1024) {
+    const noneResult = { type: 'none' };
+    setCachedCardPreview(key, noneResult);
+    return noneResult;
+  }
+
+  const promise = (async () => {
+    try {
+      // Obtain secure signed access URL
+      const accessUrl = await fetchAccessUrl(key, token);
+      if (!accessUrl) {
+        const noneResult = { type: 'none' };
+        setCachedCardPreview(key, noneResult);
+        return noneResult;
+      }
+
+      // Enqueue job with concurrency cap
+      const result = await enqueueJob(async () => {
+        if (category === 'pdf') {
+          return await generatePdfThumbnail(accessUrl);
+        }
+        if (category === 'text') {
+          return await generateTextSnippet(accessUrl);
+        }
+        if (category === 'video') {
+          return await generateVideoSnapshot(accessUrl);
+        }
+        if (category === 'image') {
+          return { type: 'image', url: accessUrl, isBlob: false };
+        }
+        return null;
+      });
+
+      const finalResult = result || { type: 'none' };
+      setCachedCardPreview(key, finalResult);
+      return finalResult;
+    } catch (err) {
+      console.warn(`[cardPreviewGenerator] Failed generating preview for ${key}:`, err);
+      const noneResult = { type: 'none' };
+      setCachedCardPreview(key, noneResult);
+      return noneResult;
+    } finally {
+      inFlightPromises.delete(key);
+    }
+  })();
+
+  inFlightPromises.set(key, promise);
+  return promise;
+}

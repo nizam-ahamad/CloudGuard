@@ -17,6 +17,7 @@
     "jszip": "^3.10.2",
     "libheif-js": "^1.23.5",
     "lucide-react": "^1.48.0",
+    "pdfjs-dist": "^6.5.438",
     "plyr": "^3.8.5",
     "plyr-react": "^6.0.0",
     "react": "^19.2.8",

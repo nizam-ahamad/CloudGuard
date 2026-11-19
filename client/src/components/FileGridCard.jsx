@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Check, MoreVertical, FolderInput, Pencil, Info, Trash2, Play } from 'lucide-react';
+import { generateCardPreview, getCachedCardPreview } from '../utils/cardPreviewGenerator';
 
 /**
  * Returns extension, badge label, and color theme for Google Drive-style document cards.
@@ -57,7 +58,7 @@ function getDocumentCardMeta(fileName = '', mimeType = '') {
 }
 
 /**
- * Google Drive-Style Document Preview Sheet
+ * Google Drive-Style Document Preview Sheet (Instant skeleton / fallback)
  * Renders a crisp styled document card with corner fold, colored type badge, and mock text skeleton lines.
  */
 function DocumentSheetCard({ ext, badgeText, badgeColor }) {
@@ -89,6 +90,34 @@ function DocumentSheetCard({ ext, badgeText, badgeColor }) {
 }
 
 /**
+ * Real Text / Code / CSV Snippet Preview Sheet
+ */
+function TextSnippetSheetCard({ ext, badgeText, badgeColor, snippet }) {
+  return (
+    <div className="w-24 sm:w-28 h-28 sm:h-32 bg-white dark:bg-[#1c1d20] rounded-md shadow-sm border border-neutral-200/90 dark:border-neutral-700/80 p-2 flex flex-col justify-between transition-transform duration-200 group-hover:scale-105 group-hover:shadow-md select-none overflow-hidden relative">
+      {/* Sheet Header */}
+      <div className="flex items-center justify-between mb-1 shrink-0">
+        <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider leading-none uppercase ${badgeColor}`}>
+          {badgeText}
+        </span>
+        <div className="w-2 h-2 rounded-bl bg-neutral-200 dark:bg-neutral-700/80" />
+      </div>
+
+      {/* Real Text Snippet */}
+      <div className="flex-1 overflow-hidden font-mono text-[8px] sm:text-[8.5px] leading-[11px] sm:leading-[12px] text-neutral-600 dark:text-neutral-300 select-none whitespace-pre-wrap break-all line-clamp-[7] opacity-90 my-auto">
+        {snippet}
+      </div>
+
+      {/* Sheet Footer */}
+      <div className="flex items-center justify-between pt-1 border-t border-neutral-100 dark:border-neutral-800 shrink-0 mt-auto">
+        <div className="h-1 w-8 bg-neutral-200 dark:bg-neutral-700/60 rounded-full" />
+        <span className="text-[9px] font-mono text-neutral-400 dark:text-neutral-500 uppercase">{ext || 'txt'}</span>
+      </div>
+    </div>
+  );
+}
+
+/**
  * Reusable File Grid Card for My Files and Recents
  */
 export default function FileGridCard({
@@ -110,18 +139,29 @@ export default function FileGridCard({
   token,
   prefetchAccessUrl,
 }) {
+  const cardRef = useRef(null);
+  const [isInView, setIsInView] = useState(false);
   const [imgError, setImgError] = useState(false);
 
-  const menuKey = file?._id || file?.id;
+  const fileId = file?._id || file?.id;
+  const menuKey = fileId;
   const isMenuOpen = activeMenuId === menuKey;
+
+  // Read cache synchronously on initial render for instant zero-flash rendering
+  const [dynamicPreview, setDynamicPreview] = useState(() => getCachedCardPreview(fileId));
 
   const isVideo =
     (file.mimeType && file.mimeType.startsWith('video/')) ||
     (file.mimetype && file.mimetype.startsWith('video/')) ||
     /\.(mp4|mkv|mov|avi|webm|wmv|flv|m4v|3gp)$/i.test(file.name || file.originalName || '');
 
+  const isPdf =
+    (file.mimeType && file.mimeType.includes('pdf')) ||
+    (file.mimetype && file.mimetype.includes('pdf')) ||
+    /\.pdf$/i.test(file.name || file.originalName || '');
+
   const displayThumbnail = file.thumbnailUrl || file.thumbnail || file.accessUrl || file.url;
-  const canShowThumbnail = Boolean(displayThumbnail && !imgError);
+  const hasDirectThumbnail = Boolean(displayThumbnail && !imgError);
 
   const { ext, badgeText, badgeColor } = getDocumentCardMeta(
     file.name || file.originalName || '',
@@ -131,8 +171,62 @@ export default function FileGridCard({
   const isRightColumn = (index % 5 >= 3) || (index % 2 === 1);
   const isBottomRow = index >= totalFiles - 2 && totalFiles > 3;
 
+  // Viewport gating via IntersectionObserver (rootMargin: 200px)
+  useEffect(() => {
+    if (isInView) return;
+    const el = cardRef.current;
+    if (!el) return;
+
+    if (typeof IntersectionObserver === 'undefined') {
+      setIsInView(true);
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry && entry.isIntersecting) {
+          setIsInView(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: '200px' }
+    );
+
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [isInView]);
+
+  // Trigger preview generation only when visible and thumbnail is missing
+  useEffect(() => {
+    if (!isInView || !fileId) return;
+
+    // Direct thumbnail already works; no client-side decode needed
+    if (hasDirectThumbnail) return;
+
+    const cached = getCachedCardPreview(fileId);
+    if (cached) {
+      setDynamicPreview(cached);
+      return;
+    }
+
+    let isMounted = true;
+    generateCardPreview(file, token)
+      .then((res) => {
+        if (isMounted && res) {
+          setDynamicPreview(res);
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isInView, fileId, file, token, hasDirectThumbnail]);
+
   return (
     <div
+      ref={cardRef}
       onClick={() => onPreview && onPreview(file)}
       onMouseEnter={() => prefetchAccessUrl && prefetchAccessUrl(file._id, token)}
       onTouchStart={() => prefetchAccessUrl && prefetchAccessUrl(file._id, token)}
@@ -271,9 +365,9 @@ export default function FileGridCard({
         )}
       </div>
 
-      {/* Hero Preview Body (Thumbnail image or Document Sheet) */}
+      {/* Hero Preview Body (Direct Thumbnail, Dynamic Image/PDF/Video, Dynamic Text Snippet, or Stylized Skeleton) */}
       <div className="w-full h-32 sm:h-36 rounded-lg overflow-hidden bg-neutral-100 dark:bg-neutral-800/50 flex items-center justify-center relative mb-2.5 border border-neutral-200/60 dark:border-neutral-800/60">
-        {canShowThumbnail ? (
+        {hasDirectThumbnail ? (
           <>
             <img
               src={displayThumbnail}
@@ -291,6 +385,42 @@ export default function FileGridCard({
               </div>
             )}
           </>
+        ) : dynamicPreview?.type === 'image' && dynamicPreview.url && !imgError ? (
+          <>
+            <img
+              src={dynamicPreview.url}
+              alt={file.name}
+              loading="lazy"
+              decoding="async"
+              onError={() => setImgError(true)}
+              className={`w-full h-full ${
+                dynamicPreview.isPdf || isPdf ? 'object-cover object-top' : 'object-cover'
+              } transition-transform duration-200 group-hover:scale-105`}
+            />
+            {/* Top-Left Corner Badge for PDFs */}
+            {(dynamicPreview.isPdf || isPdf) && (
+              <div className="absolute top-2 left-2 z-10 pointer-events-none">
+                <span className="px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider leading-none uppercase bg-red-500 text-white shadow-sm">
+                  PDF
+                </span>
+              </div>
+            )}
+            {/* Play Button Overlay for Videos */}
+            {(dynamicPreview.isVideo || isVideo) && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/20 pointer-events-none">
+                <div className="w-8 h-8 rounded-full bg-black/60 backdrop-blur-sm flex items-center justify-center text-white shadow-md">
+                  <Play className="w-4 h-4 fill-white translate-x-0.5" />
+                </div>
+              </div>
+            )}
+          </>
+        ) : dynamicPreview?.type === 'text' && dynamicPreview.snippet ? (
+          <TextSnippetSheetCard
+            ext={ext}
+            badgeText={badgeText}
+            badgeColor={badgeColor}
+            snippet={dynamicPreview.snippet}
+          />
         ) : (
           <DocumentSheetCard ext={ext} badgeText={badgeText} badgeColor={badgeColor} />
         )}
