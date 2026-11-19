@@ -121,7 +121,7 @@ export async function getOrFetchSignedUrl(file, signal) {
  * deduplicating concurrent in-flight requests so neighbor preloading
  * seamlessly hands off to active viewing with zero duplicate work.
  */
-export async function getOrDecodeHeic(file, signedUrl, signal) {
+export async function getOrDecodeHeic(file, signedUrl, signal, options = {}) {
   const fileId = String(file?._id || file?.id || file?.s3Key || '');
   if (!fileId && !signedUrl) return null;
 
@@ -153,7 +153,11 @@ export async function getOrDecodeHeic(file, signedUrl, signal) {
       const arrayBuffer = await resp.arrayBuffer();
 
       const { decodeHeicToBlob } = await import('../utils/heicDecoder');
-      const decodedBlob = await decodeHeicToBlob(arrayBuffer, 0.86);
+      const decodedBlob = await decodeHeicToBlob(arrayBuffer, 0.85, {
+        priority: options.priority || 'high',
+        signal,
+        maxDimension: options.maxDimension !== undefined ? options.maxDimension : 2048,
+      });
 
       const objectUrl = URL.createObjectURL(decodedBlob);
 
@@ -222,7 +226,7 @@ export async function preloadMediaItem(file, getSignedUrlFn, signal) {
     // 3. For .heic / .heif, fetch + decode via decodeHeicToBlob into previewLruCache
     // (deduplicated via inFlightPromises so clicking > mid-preload awaits the same promise instead of decoding twice)
     if (isHeic) {
-      await getOrDecodeHeic(file, signedUrl, signal);
+      await getOrDecodeHeic(file, signedUrl, signal, { priority: 'low', maxDimension: 2048 });
       return;
     }
 
@@ -252,7 +256,7 @@ export async function preloadNeighborFile(file, signal) {
  * Lazy HEIC/HEIF Decoder & Renderer with LRU Caching
  * Leverages bounded LRU cache for 0ms transitions across slides with zero loading spinner flash.
  */
-export function HeicPreviewImage({ fileId, src, alt, className, fallbackUrl, thumbnailUrl, file }) {
+export function HeicPreviewImage({ fileId, src, alt, className, fallbackUrl, thumbnailUrl, file, onLoad }) {
   const targetFile = file || { _id: fileId, name: alt };
   const resolvedId = String(fileId || file?._id || file?.id || (src ? src.split('?')[0] : ''));
 
@@ -273,6 +277,7 @@ export function HeicPreviewImage({ fileId, src, alt, className, fallbackUrl, thu
         }
         setIsLoading(false);
         setHasError(false);
+        if (onLoad) onLoad(cached.decodedBlobUrl);
         return;
       }
     }
@@ -280,6 +285,7 @@ export function HeicPreviewImage({ fileId, src, alt, className, fallbackUrl, thu
     if (!src && !resolvedId) {
       setIsLoading(false);
       setHasError(true);
+      if (onLoad) onLoad(null);
       return;
     }
 
@@ -291,16 +297,21 @@ export function HeicPreviewImage({ fileId, src, alt, className, fallbackUrl, thu
       setHasError(false);
 
       try {
-        const objectUrl = await getOrDecodeHeic(targetFile, src, abortController.signal);
+        const objectUrl = await getOrDecodeHeic(targetFile, src, abortController.signal, {
+          priority: 'high',
+          maxDimension: 2048,
+        });
         if (!isMounted) return;
 
         if (objectUrl) {
           setBlobUrl(objectUrl);
           setIsLoading(false);
           setHasError(false);
+          if (onLoad) onLoad(objectUrl);
         } else {
           setHasError(true);
           setIsLoading(false);
+          if (onLoad) onLoad(null);
         }
       } catch (err) {
         if (err.name === 'AbortError') {
@@ -310,6 +321,7 @@ export function HeicPreviewImage({ fileId, src, alt, className, fallbackUrl, thu
         if (isMounted) {
           setHasError(true);
           setIsLoading(false);
+          if (onLoad) onLoad(null);
         }
       }
     }
@@ -322,7 +334,7 @@ export function HeicPreviewImage({ fileId, src, alt, className, fallbackUrl, thu
       // decodedBlobUrl is preserved in the 25-item LRU cache for 0ms back-and-forth navigation,
       // and is revoked only when evicted from previewLruCache.
     };
-  }, [resolvedId, src]);
+  }, [resolvedId, src, onLoad]);
 
   const effectiveFallback = fallbackUrl || thumbnailUrl;
 
@@ -357,6 +369,44 @@ export function HeicPreviewImage({ fileId, src, alt, className, fallbackUrl, thu
   }
 
   return <img src={blobUrl} alt={alt} className={className} />;
+}
+
+/**
+ * Abortable video preview component that immediately halts network buffering and
+ * detaches media streams when navigating slides or unmounting.
+ */
+export function PreviewVideo({ src, className, ...props }) {
+  const videoRef = React.useRef(null);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    return () => {
+      if (video) {
+        try {
+          video.pause();
+          video.removeAttribute('src');
+          video.load();
+        } catch (e) {
+          // ignore
+        }
+      }
+    };
+  }, [src]);
+
+  return (
+    <video
+      ref={videoRef}
+      src={src}
+      controls
+      autoPlay
+      playsInline
+      preload="auto"
+      className={className}
+      {...props}
+    >
+      Your browser does not support the video tag.
+    </video>
+  );
 }
 
 export default function FilePreviewModal({
@@ -435,12 +485,30 @@ export default function FilePreviewModal({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [hasPrev, hasNext, handlePrev, handleNext, closePreview]);
 
+  // File type detection
+  const [activeHeicLoadedId, setActiveHeicLoadedId] = useState(null);
+  const fileExt = (previewFile.type || (previewFile.name || '').split('.').pop() || '').toLowerCase();
+  const isHeic = fileExt === 'heic' || fileExt === 'heif' || previewFile?.mimeType === 'image/heic' || previewFile?.mimeType === 'image/heif';
+  const isAudio = Boolean(
+    previewFile?.mimeType?.startsWith('audio/') ||
+    previewFile?.mimetype?.startsWith('audio/') ||
+    /\.(mp3|wav|ogg|m4a|aac|flac)$/i.test(previewFile?.name || '')
+  );
+
+  // Reset active HEIC loaded state on file switch
+  useEffect(() => {
+    setActiveHeicLoadedId(null);
+  }, [fileId]);
+
   // Safe Neighbor Preloading (index + 1 and index - 1)
-  // Only after active slide finishes loading (!loadingActive), schedule 250ms debounced background warm-up
-  const loadingActive = !effectiveUrl && !cachedEntry?.decodedBlobUrl;
+  // Gated strictly on !isActiveSlideBusy (so neighbor preloading never competes with active slide)
+  // Schedules a 600ms debounced background warm-up after active slide finishes loading and decoding
+  const isActiveSlideBusy = isHeic
+    ? (!cachedEntry?.decodedBlobUrl && activeHeicLoadedId !== fileId)
+    : !effectiveUrl;
 
   useEffect(() => {
-    if (!previewFile || loadingActive || !hasItems || activeIdx < 0) return;
+    if (!previewFile || isActiveSlideBusy || !hasItems || activeIdx < 0) return;
 
     const nextFile = activeIdx + 1 < items.length ? items[activeIdx + 1] : null;
     const prevFile = activeIdx - 1 >= 0 ? items[activeIdx - 1] : null;
@@ -454,21 +522,13 @@ export default function FilePreviewModal({
       if (prevFile) {
         preloadNeighborFile(prevFile, abortController.signal);
       }
-    }, 250);
+    }, 600);
 
     return () => {
       clearTimeout(timeoutId);
       abortController.abort();
     };
-  }, [previewFile, loadingActive, hasItems, activeIdx, items]);
-
-  const isAudio = Boolean(
-    previewFile?.mimeType?.startsWith('audio/') ||
-    previewFile?.mimetype?.startsWith('audio/') ||
-    /\.(mp3|wav|ogg|m4a|aac|flac)$/i.test(previewFile?.name || '')
-  );
-  const fileExt = (previewFile.type || (previewFile.name || '').split('.').pop() || '').toLowerCase();
-  const isHeic = fileExt === 'heic' || fileExt === 'heif' || previewFile?.mimeType === 'image/heic' || previewFile?.mimeType === 'image/heif';
+  }, [previewFile, isActiveSlideBusy, hasItems, activeIdx, items]);
 
   return !isAudio && ['mp4', 'webm', 'ogg', 'mov', 'mkv'].includes(fileExt) ? (
     <div className="fixed inset-0 z-50 flex flex-col bg-black/95 backdrop-blur-md">
@@ -510,17 +570,11 @@ export default function FilePreviewModal({
           </button>
         )}
         {effectiveUrl ? (
-          <video
+          <PreviewVideo
             key={effectiveUrl}
             src={effectiveUrl}
-            controls
-            autoPlay
-            playsInline
-            preload="auto"
             className="max-w-full max-h-[80vh] rounded-lg object-contain shadow-2xl bg-black"
-          >
-            Your browser does not support the video tag.
-          </video>
+          />
         ) : (
           <div className="flex flex-col items-center justify-center gap-2 text-white/80 min-h-[200px]">
             <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
@@ -590,6 +644,7 @@ export default function FilePreviewModal({
               fileId={fileId}
               className="max-w-full max-h-[70vh] object-contain shadow-sm rounded"
               fallbackUrl={previewFile.thumbnailUrl || previewFile.thumbnail}
+              onLoad={() => setActiveHeicLoadedId(fileId)}
             />
           ) : ['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'].includes(fileExt) ? (
             effectiveUrl ? (

@@ -23,7 +23,7 @@ import DeleteConfirmModal from '../components/DeleteConfirmModal';
 import { API_BASE_URL } from '../config';
 import { getCachedAccessUrl, fetchAccessUrl, prefetchAccessUrl } from '../utils/accessUrlCache';
 import { isHeicFile } from '../utils/thumbnailHelper';
-import { HeicPreviewImage, preloadMediaItem, getCachedPreviewEntry, putCachedPreviewEntry } from '../components/FilePreviewModal';
+import { HeicPreviewImage, preloadMediaItem, getCachedPreviewEntry, putCachedPreviewEntry, PreviewVideo } from '../components/FilePreviewModal';
 
 // --------------------------------------------------------------------------
 // MODULE-LEVEL CACHES: Persist across tab switching to prevent network refetching
@@ -321,12 +321,14 @@ export default function PhotosView({ token: propToken }) {
   const mediaItems = mediaList;
   const [fullMediaUrl, setFullMediaUrl] = useState(null);
   const [loadingFullMedia, setLoadingFullMedia] = useState(false);
+  const [activeHeicLoadedId, setActiveHeicLoadedId] = useState(null);
   const setOriginalUrl = setFullMediaUrl;
   const setLoadingOriginal = setLoadingFullMedia;
 
   const closePreview = useCallback(() => {
     setPreviewIndex(null);
     setFullMediaUrl(null);
+    setActiveHeicLoadedId(null);
     activeLoadIdRef.current = null;
   }, []);
 
@@ -397,6 +399,7 @@ export default function PhotosView({ token: propToken }) {
     const currentIndex = mediaList.findIndex((m) => m._id === currentPreviewItem._id);
     const nextIndex = (currentIndex + 1) % mediaList.length;
     const nextItem = mediaList[nextIndex];
+    setActiveHeicLoadedId(null);
     setPreviewIndex(nextIndex);
     loadMediaUrl(nextItem);
   }, [currentPreviewItem, mediaList, loadMediaUrl]);
@@ -406,6 +409,7 @@ export default function PhotosView({ token: propToken }) {
     const currentIndex = mediaList.findIndex((m) => m._id === currentPreviewItem._id);
     const prevIndex = (currentIndex - 1 + mediaList.length) % mediaList.length;
     const prevItem = mediaList[prevIndex];
+    setActiveHeicLoadedId(null);
     setPreviewIndex(prevIndex);
     loadMediaUrl(prevItem);
   }, [currentPreviewItem, mediaList, loadMediaUrl]);
@@ -414,10 +418,14 @@ export default function PhotosView({ token: propToken }) {
   const navigatePrev = handlePrev;
 
   // 3b. Safe Neighbor Preloading (index ± 1) for Photos Lightbox
-  // Once the active lightbox item is open and ready, schedules a 250ms debounced warm-up
+  // Only after active lightbox item finishes loading and decoding (!isLightboxBusy), schedules a 600ms debounced warm-up
   // with AbortController cleanup on slide change or modal close
+  const isHeic = currentPreviewItem ? isHeicFile(currentPreviewItem) : false;
+  const cachedLru = currentPreviewItem ? getCachedPreviewEntry(currentPreviewItem._id) : null;
+  const isLightboxBusy = loadingFullMedia || (isHeic ? (!cachedLru?.decodedBlobUrl && activeHeicLoadedId !== currentPreviewItem._id) : (!fullMediaUrl && !currentPreviewItem?.url));
+
   useEffect(() => {
-    if (previewIndex === null || !currentPreviewItem || mediaList.length === 0) {
+    if (previewIndex === null || !currentPreviewItem || mediaList.length === 0 || isLightboxBusy) {
       return;
     }
 
@@ -437,17 +445,18 @@ export default function PhotosView({ token: propToken }) {
       if (prevIndex >= 0) {
         preloadMediaItem(mediaList[prevIndex], getSignedUrl, abortController.signal);
       }
-    }, 250);
+    }, 600);
 
     return () => {
       clearTimeout(timer);
       abortController.abort();
     };
-  }, [previewIndex, currentPreviewItem, mediaList, propToken]);
+  }, [previewIndex, currentPreviewItem, mediaList, propToken, isLightboxBusy]);
 
   // 4. Grid card click handler
   const openPreview = useCallback((item, index = null) => {
     if (!item) return;
+    setActiveHeicLoadedId(null);
     const targetIndex = index !== null && index >= 0 
       ? index 
       : mediaList.findIndex((m) => m._id === item._id);
@@ -1172,13 +1181,9 @@ export default function PhotosView({ token: propToken }) {
           <div className="max-w-5xl max-h-[82vh] w-full flex items-center justify-center p-2">
             {(currentPreviewItem.mediaType === 'video' || currentPreviewItem.mimeType?.startsWith('video/') || currentPreviewItem.name?.match(/\.(mp4|webm|mov|mkv)$/i)) ? (
               (fullMediaUrl || currentPreviewItem.url) ? (
-                <video
+                <PreviewVideo
                   key={fullMediaUrl || currentPreviewItem.url}
                   src={fullMediaUrl || currentPreviewItem.url}
-                  controls
-                  autoPlay
-                  playsInline
-                  preload="auto"
                   className="max-h-[80vh] w-auto max-w-full rounded-lg shadow-2xl bg-black"
                 />
               ) : (
@@ -1207,6 +1212,7 @@ export default function PhotosView({ token: propToken }) {
                     alt={currentPreviewItem.name}
                     className="max-h-[80vh] max-w-full object-contain rounded-lg shadow-2xl transition-opacity duration-300"
                     fallbackUrl={currentPreviewItem.thumbnailUrl || currentPreviewItem.thumbnail}
+                    onLoad={() => setActiveHeicLoadedId(currentPreviewItem._id)}
                   />
                 ) : (
                   <>

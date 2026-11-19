@@ -1,108 +1,341 @@
 /**
- * CloudGuard - Client-Side WebAssembly HEIC / HEIF Decoder
+ * CloudGuard - Client-Side WebAssembly HEIC / HEIF Decoder Manager
  *
- * Uses modern libheif-js (WebAssembly libheif v1.17+) to decode modern
- * iOS 17/18 10-bit .heic and .heif images at full native resolution
- * 100% on the user's device with zero server/EC2 load.
+ * Dispatches HEIC/HEIF decoding to a dedicated background Web Worker
+ * running libheif-js (WebAssembly libheif v1.17+) off the main UI thread.
+ *
+ * Features:
+ * - Off-thread decoding: Eliminates UI click lag and scrolling stutter.
+ * - Single-worker priority queue: Visible photo ('high') jumps ahead of
+ *   background preloads ('low') so preloading never starves the active slide.
+ * - AbortSignal cancellation: Slide changes immediately abort in-flight work.
+ * - 25-second watchdog: Hung or malformed WebAssembly decodes are terminated safely.
+ * - Max dimension capping: 2048px max edge reduces memory footprint on mobile devices.
  */
 
-let libheifInstance = null;
+let worker = null;
+let currentTaskId = 0;
+let activeTask = null;
+const queue = [];
 
-async function getLibheif() {
-  if (libheifInstance) return libheifInstance;
-  const mod = await import('libheif-js/wasm-bundle');
-  const libheif = mod.default || mod;
-  libheifInstance = typeof libheif === 'function' ? libheif() : libheif;
-  return libheifInstance;
+function getWorker() {
+  if (!worker) {
+    worker = new Worker(new URL('../workers/heicWorker.js', import.meta.url), {
+      type: 'module',
+    });
+    worker.onmessage = handleWorkerMessage;
+    worker.onerror = handleWorkerError;
+  }
+  return worker;
+}
+
+function terminateWorker() {
+  if (worker) {
+    try {
+      worker.terminate();
+    } catch (e) {
+      // ignore
+    }
+    worker = null;
+  }
+}
+
+async function handleWorkerMessage(e) {
+  const { id, success, blob, raw, error } = e.data || {};
+  if (!activeTask || activeTask.id !== id) {
+    return;
+  }
+
+  const task = activeTask;
+  activeTask = null;
+
+  if (task.timeoutId) {
+    clearTimeout(task.timeoutId);
+  }
+  if (task.signalCleanup) {
+    task.signalCleanup();
+  }
+
+  if (task.signal?.aborted) {
+    task.reject(new DOMException('Aborted', 'AbortError'));
+    processQueue();
+    return;
+  }
+
+  if (!success) {
+    task.reject(new Error(error || 'HEIC decode failed in worker'));
+    processQueue();
+    return;
+  }
+
+  if (blob) {
+    task.resolve(blob);
+    processQueue();
+    return;
+  }
+
+  if (raw) {
+    try {
+      const convertedBlob = await rawToBlob(raw, task.quality);
+      task.resolve(convertedBlob);
+    } catch (err) {
+      task.reject(err);
+    }
+    processQueue();
+    return;
+  }
+
+  task.reject(new Error('Unknown response from HEIC worker'));
+  processQueue();
+}
+
+function handleWorkerError(err) {
+  console.error('[heicDecoder] Worker error:', err);
+  if (activeTask) {
+    const task = activeTask;
+    activeTask = null;
+    if (task.timeoutId) clearTimeout(task.timeoutId);
+    if (task.signalCleanup) task.signalCleanup();
+    task.reject(new Error(err?.message || 'HEIC worker encountered an error'));
+  }
+  terminateWorker();
+  processQueue();
+}
+
+function processQueue() {
+  // Enforce single active decode in worker so CPU is never overwhelmed
+  if (activeTask) {
+    return;
+  }
+
+  if (queue.length === 0) {
+    return;
+  }
+
+  // Pop next non-aborted task
+  while (queue.length > 0) {
+    const nextTask = queue.shift();
+    if (nextTask.signal?.aborted) {
+      if (nextTask.signalCleanup) nextTask.signalCleanup();
+      nextTask.reject(new DOMException('Aborted', 'AbortError'));
+      continue;
+    }
+    activeTask = nextTask;
+    break;
+  }
+
+  if (!activeTask) return;
+
+  const w = getWorker();
+  const currentRunningId = activeTask.id;
+
+  // 25-second safety watchdog
+  activeTask.timeoutId = setTimeout(() => {
+    if (activeTask && activeTask.id === currentRunningId) {
+      console.warn(`[heicDecoder] Decode task ${currentRunningId} timed out after 25s`);
+      const task = activeTask;
+      activeTask = null;
+      if (task.signalCleanup) task.signalCleanup();
+      task.reject(new Error('HEIC decoding timed out after 25s'));
+      terminateWorker();
+      processQueue();
+    }
+  }, 25000);
+
+  // If active task's signal aborts while in-flight:
+  if (activeTask.signal) {
+    const onAbort = () => {
+      if (activeTask && activeTask.id === currentRunningId) {
+        clearTimeout(activeTask.timeoutId);
+        const task = activeTask;
+        activeTask = null;
+        if (task.signalCleanup) task.signalCleanup();
+        task.reject(new DOMException('Aborted', 'AbortError'));
+        terminateWorker(); // Terminate worker immediately to halt CPU consumption
+        processQueue();
+      }
+    };
+    activeTask.signal.addEventListener('abort', onAbort, { once: true });
+    activeTask.signalCleanup = () => {
+      activeTask?.signal?.removeEventListener('abort', onAbort);
+    };
+  }
+
+  // Dispatch message with transferable ArrayBuffer
+  try {
+    w.postMessage(
+      {
+        id: activeTask.id,
+        buffer: activeTask.buffer,
+        maxDimension: activeTask.maxDimension,
+        quality: activeTask.quality,
+      },
+      [activeTask.buffer]
+    );
+  } catch (err) {
+    // If transfer fails (e.g. detached), fallback to regular postMessage
+    try {
+      w.postMessage({
+        id: activeTask.id,
+        buffer: activeTask.buffer,
+        maxDimension: activeTask.maxDimension,
+        quality: activeTask.quality,
+      });
+    } catch (postErr) {
+      if (activeTask.timeoutId) clearTimeout(activeTask.timeoutId);
+      if (activeTask.signalCleanup) activeTask.signalCleanup();
+      const task = activeTask;
+      activeTask = null;
+      task.reject(postErr);
+      processQueue();
+    }
+  }
 }
 
 /**
- * Decodes a HEIC/HEIF Blob, File, ArrayBuffer, or Uint8Array to a full-resolution WebP (or fallback JPEG) Blob.
- *
- * @param {Blob|File|ArrayBuffer|Uint8Array} inputBlobOrBuffer - Input HEIC data
- * @param {number} quality - Output quality (0.0 to 1.0, default 0.86)
- * @returns {Promise<Blob>} Full-resolution WebP/JPEG Blob
+ * Fallback to DOM canvas when OffscreenCanvas is unavailable in worker.
  */
-export async function decodeHeicToBlob(inputBlobOrBuffer, quality = 0.86) {
-  if (!inputBlobOrBuffer) {
-    throw new Error('No input provided to decodeHeicToBlob');
+async function rawToBlob(raw, quality) {
+  const { data, width, height, targetWidth, targetHeight } = raw;
+  const srcCanvas = document.createElement('canvas');
+  srcCanvas.width = width;
+  srcCanvas.height = height;
+  const srcCtx = srcCanvas.getContext('2d');
+  if (!srcCtx) throw new Error('Could not get 2D canvas context for HEIC raw data');
+
+  const imgData = srcCtx.createImageData(width, height);
+  imgData.data.set(new Uint8ClampedArray(data));
+  srcCtx.putImageData(imgData, 0, 0);
+
+  let outputCanvas = srcCanvas;
+  if (targetWidth !== width || targetHeight !== height) {
+    outputCanvas = document.createElement('canvas');
+    outputCanvas.width = targetWidth;
+    outputCanvas.height = targetHeight;
+    const outCtx = outputCanvas.getContext('2d');
+    if (!outCtx) throw new Error('Could not get 2D context for scaling canvas');
+    outCtx.drawImage(srcCanvas, 0, 0, targetWidth, targetHeight);
   }
 
-  // 1. Convert input to Uint8Array
-  let uint8Array;
-  if (inputBlobOrBuffer instanceof Uint8Array) {
-    uint8Array = inputBlobOrBuffer;
-  } else if (inputBlobOrBuffer instanceof ArrayBuffer) {
-    uint8Array = new Uint8Array(inputBlobOrBuffer);
-  } else if (typeof inputBlobOrBuffer.arrayBuffer === 'function') {
-    const arrayBuffer = await inputBlobOrBuffer.arrayBuffer();
-    uint8Array = new Uint8Array(arrayBuffer);
-  } else {
-    throw new Error('Unsupported input type for HEIC decoding');
-  }
-
-  // 2. Dynamically instantiate WebAssembly libheif decoder
-  const libheif = await getLibheif();
-  const decoder = new libheif.HeifDecoder();
-  const images = decoder.decode(uint8Array);
-
-  if (!images || images.length === 0) {
-    throw new Error('No images found in HEIF container');
-  }
-
-  const image = images[0];
-  const width = image.get_width();
-  const height = image.get_height();
-
-  if (!width || !height) {
-    throw new Error(`Invalid HEIC image dimensions: ${width}x${height}`);
-  }
-
-  // 3. Render full native resolution onto an offscreen canvas
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-
-  const ctx = canvas.getContext('2d');
-  if (!ctx) {
-    throw new Error('Could not create 2D canvas context for HEIC rendering');
-  }
-
-  const imageData = ctx.createImageData(width, height);
-  await new Promise((resolve, reject) => {
-    image.display(imageData, (displayData) => {
-      if (displayData) {
-        resolve(displayData);
-      } else {
-        reject(new Error('HEIC display failed'));
-      }
-    });
-  });
-
-  ctx.putImageData(imageData, 0, 0);
-
-  // 4. Convert canvas to full-resolution WebP Blob with automatic JPEG fallback
   return new Promise((resolve, reject) => {
-    canvas.toBlob(
+    outputCanvas.toBlob(
       (blob) => {
         if (blob) {
-          return resolve(blob);
+          resolve(blob);
+        } else {
+          outputCanvas.toBlob(
+            (fallbackBlob) => {
+              if (fallbackBlob) {
+                resolve(fallbackBlob);
+              } else {
+                reject(new Error('Canvas toBlob failed for both webp and jpeg'));
+              }
+            },
+            'image/jpeg',
+            quality
+          );
         }
-        // Fallback to image/jpeg if WebP export returns null
-        canvas.toBlob(
-          (fallbackBlob) => {
-            if (fallbackBlob) {
-              resolve(fallbackBlob);
-            } else {
-              reject(new Error('Canvas toBlob failed for both webp and jpeg'));
-            }
-          },
-          'image/jpeg',
-          quality
-        );
       },
       'image/webp',
       quality
     );
+  });
+}
+
+/**
+ * Decodes a HEIC/HEIF Blob, File, ArrayBuffer, or Uint8Array to a WebP (or fallback JPEG) Blob
+ * capped at maxDimension (default 2048px).
+ *
+ * @param {Blob|File|ArrayBuffer|Uint8Array} inputBlobOrBuffer - Input HEIC data
+ * @param {number|Object} quality - Output quality (0.0 to 1.0, default 0.85) or options object
+ * @param {Object} [options] - Options: { priority: 'high'|'low', signal: AbortSignal, maxDimension: number }
+ * @returns {Promise<Blob>} Decoded WebP/JPEG Blob
+ */
+export async function decodeHeicToBlob(inputBlobOrBuffer, quality = 0.85, options = {}) {
+  if (!inputBlobOrBuffer) {
+    throw new Error('No input provided to decodeHeicToBlob');
+  }
+
+  let q = 0.85;
+  let opts = {};
+  if (typeof quality === 'object' && quality !== null) {
+    opts = quality;
+    q = opts.quality ?? 0.85;
+  } else {
+    q = typeof quality === 'number' ? quality : 0.85;
+    opts = options || {};
+  }
+
+  const priority = opts.priority || 'high';
+  const signal = opts.signal || null;
+  const maxDimension = opts.maxDimension !== undefined ? opts.maxDimension : 2048;
+
+  if (signal?.aborted) {
+    throw new DOMException('Aborted', 'AbortError');
+  }
+
+  // Convert input into an independent ArrayBuffer to avoid mutating caller state
+  let buffer;
+  if (typeof inputBlobOrBuffer.arrayBuffer === 'function') {
+    buffer = await inputBlobOrBuffer.arrayBuffer();
+  } else if (inputBlobOrBuffer instanceof ArrayBuffer) {
+    buffer = inputBlobOrBuffer.slice(0);
+  } else if (ArrayBuffer.isView(inputBlobOrBuffer)) {
+    buffer = inputBlobOrBuffer.buffer.slice(
+      inputBlobOrBuffer.byteOffset,
+      inputBlobOrBuffer.byteOffset + inputBlobOrBuffer.byteLength
+    );
+  } else {
+    throw new Error('Unsupported input type for HEIC decoding');
+  }
+
+  if (signal?.aborted) {
+    throw new DOMException('Aborted', 'AbortError');
+  }
+
+  return new Promise((resolve, reject) => {
+    const taskId = ++currentTaskId;
+    const task = {
+      id: taskId,
+      buffer,
+      maxDimension,
+      quality: q,
+      priority,
+      signal,
+      resolve,
+      reject,
+      timeoutId: null,
+      signalCleanup: null,
+    };
+
+    if (signal) {
+      const onSignalAbort = () => {
+        const idx = queue.indexOf(task);
+        if (idx !== -1) {
+          queue.splice(idx, 1);
+          signal.removeEventListener('abort', onSignalAbort);
+          reject(new DOMException('Aborted', 'AbortError'));
+        }
+      };
+      signal.addEventListener('abort', onSignalAbort, { once: true });
+      task.signalCleanup = () => {
+        signal.removeEventListener('abort', onSignalAbort);
+      };
+    }
+
+    // Priority insertion:
+    // 'high' priority tasks jump ahead of 'low' priority neighbor preloads
+    if (priority === 'high') {
+      const firstLowIdx = queue.findIndex((t) => t.priority === 'low');
+      if (firstLowIdx !== -1) {
+        queue.splice(firstLowIdx, 0, task);
+      } else {
+        queue.push(task);
+      }
+    } else {
+      queue.push(task);
+    }
+
+    processQueue();
   });
 }
