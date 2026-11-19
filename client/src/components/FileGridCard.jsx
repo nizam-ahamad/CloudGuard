@@ -118,68 +118,42 @@ function TextSnippetSheetCard({ ext, badgeText, badgeColor, snippet }) {
 }
 
 /**
- * Reusable File Grid Card for My Files and Recents
+ * Visual Hero Preview Body
+ * Viewport-gated, handles B2 thumbnails, dynamic previews (PDF/Text/Video), and document skeletons.
  */
-export default function FileGridCard({
-  file,
-  index = 0,
-  totalFiles = 1,
-  isSelected = false,
-  isSelectionActive = false,
-  onToggleSelect,
-  onPreview,
-  onDownload,
-  onMove,
-  onRename,
-  onDetails,
-  onDelete,
-  activeMenuId,
-  setActiveMenuId,
-  formatSize,
-  token,
-  prefetchAccessUrl,
-}) {
-  const cardRef = useRef(null);
+export function FileCardPreviewBody({ file, token }) {
+  const previewRef = useRef(null);
   const [isInView, setIsInView] = useState(false);
   const [imgError, setImgError] = useState(false);
 
   const fileId = file?._id || file?.id;
-  const menuKey = fileId;
-  const isMenuOpen = activeMenuId === menuKey;
-
-  // Direct lightweight B2 .webp thumbnail resolution (matches PhotosView.jsx)
-  const directThumbnail = file.thumbnailUrl || getMediaThumbnail(fileId) || file.thumbnail;
+  const directThumbnail = file?.thumbnailUrl || getMediaThumbnail(fileId) || file?.thumbnail;
   const hasDirectThumbnail = Boolean(directThumbnail && !imgError);
 
-  // Read cache synchronously on initial render for instant zero-flash rendering
   const [dynamicPreview, setDynamicPreview] = useState(() => getCachedCardPreview(fileId));
 
   const isVideo =
-    (file.mimeType && file.mimeType.startsWith('video/')) ||
-    (file.mimetype && file.mimetype.startsWith('video/')) ||
-    /\.(mp4|mkv|mov|avi|webm|wmv|flv|m4v|3gp)$/i.test(file.name || file.originalName || '');
+    (file?.mimeType && file.mimeType.startsWith('video/')) ||
+    (file?.mimetype && file.mimetype.startsWith('video/')) ||
+    /\.(mp4|mkv|mov|avi|webm|wmv|flv|m4v|3gp)$/i.test(file?.name || file?.originalName || '');
 
   const isPdf =
-    (file.mimeType && file.mimeType.includes('pdf')) ||
-    (file.mimetype && file.mimetype.includes('pdf')) ||
-    /\.pdf$/i.test(file.name || file.originalName || '');
+    (file?.mimeType && file.mimeType.includes('pdf')) ||
+    (file?.mimetype && file.mimetype.includes('pdf')) ||
+    /\.pdf$/i.test(file?.name || file?.originalName || '');
 
   const resolvedThumbnail =
     (hasDirectThumbnail ? directThumbnail : null) ||
     (dynamicPreview?.type === 'image' && !imgError ? dynamicPreview.url : null);
 
   const { ext, badgeText, badgeColor } = getDocumentCardMeta(
-    file.name || file.originalName || '',
-    file.mimeType || file.mimetype || ''
+    file?.name || file?.originalName || '',
+    file?.mimeType || file?.mimetype || ''
   );
 
-  const isRightColumn = (index % 5 >= 3) || (index % 2 === 1);
-  const isBottomRow = index >= totalFiles - 2 && totalFiles > 3;
-
-  // Viewport gating via IntersectionObserver (rootMargin: 200px)
   useEffect(() => {
     if (isInView) return;
-    const el = cardRef.current;
+    const el = previewRef.current;
     if (!el) return;
 
     if (typeof IntersectionObserver === 'undefined') {
@@ -202,12 +176,10 @@ export default function FileGridCard({
     return () => observer.disconnect();
   }, [isInView]);
 
-  // Trigger preview generation when visible in viewport
   useEffect(() => {
     if (!isInView || !fileId) return;
 
-    // Direct B2 thumbnail already available; no client decode needed
-    const existingThumb = file.thumbnailUrl || getMediaThumbnail(fileId) || file.thumbnail;
+    const existingThumb = file?.thumbnailUrl || getMediaThumbnail(fileId) || file?.thumbnail;
     if (existingThumb && !imgError) return;
 
     const cached = getCachedCardPreview(fileId);
@@ -232,13 +204,89 @@ export default function FileGridCard({
 
   return (
     <div
-      ref={cardRef}
+      ref={previewRef}
+      className="w-full h-32 sm:h-36 rounded-lg overflow-hidden bg-neutral-100 dark:bg-neutral-800/50 flex items-center justify-center relative mb-2.5 border border-neutral-200/60 dark:border-neutral-800/60"
+    >
+      {resolvedThumbnail ? (
+        <>
+          <img
+            src={resolvedThumbnail}
+            alt={file?.name || ''}
+            loading="lazy"
+            decoding="async"
+            onError={() => setImgError(true)}
+            className={`w-full h-full ${
+              dynamicPreview?.isPdf || isPdf ? 'object-cover object-top' : 'object-cover'
+            } transition-transform duration-200 group-hover:scale-105`}
+          />
+          {(dynamicPreview?.isPdf || isPdf) && (
+            <div className="absolute top-2 left-2 z-10 pointer-events-none">
+              <span className="px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider leading-none uppercase bg-red-500 text-white shadow-sm">
+                PDF
+              </span>
+            </div>
+          )}
+          {(dynamicPreview?.isVideo || isVideo) && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/20 pointer-events-none">
+              <div className="w-8 h-8 rounded-full bg-black/60 backdrop-blur-sm flex items-center justify-center text-white shadow-md">
+                <Play className="w-4 h-4 fill-white translate-x-0.5" />
+              </div>
+            </div>
+          )}
+        </>
+      ) : dynamicPreview?.type === 'text' && dynamicPreview.snippet ? (
+        <TextSnippetSheetCard
+          ext={ext}
+          badgeText={badgeText}
+          badgeColor={badgeColor}
+          snippet={dynamicPreview.snippet}
+        />
+      ) : (
+        <DocumentSheetCard ext={ext} badgeText={badgeText} badgeColor={badgeColor} />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Reusable File Grid Card for My Files and Recents
+ */
+export default function FileGridCard({
+  file,
+  index = 0,
+  totalFiles = 1,
+  isSelected = false,
+  isSelectionActive = false,
+  onToggleSelect,
+  onPreview,
+  onDownload,
+  onMove,
+  onRename,
+  onDetails,
+  onDelete,
+  activeMenuId,
+  setActiveMenuId,
+  formatSize,
+  token,
+  prefetchAccessUrl,
+}) {
+  const fileId = file?._id || file?.id;
+  const menuKey = fileId;
+  const isMenuOpen = activeMenuId === menuKey;
+
+  const isRightColumn = (index % 5 >= 3) || (index % 2 === 1);
+  const isBottomRow = index >= totalFiles - 2 && totalFiles > 3;
+
+  return (
+    <div
       onClick={() => onPreview && onPreview(file)}
       onMouseEnter={() => prefetchAccessUrl && prefetchAccessUrl(file._id, token)}
       onTouchStart={() => prefetchAccessUrl && prefetchAccessUrl(file._id, token)}
       className={`group relative flex flex-col justify-between p-3 rounded-xl border transition-all duration-150 cursor-pointer select-none ${
+        isMenuOpen ? 'z-50' : 'z-0'
+      } ${
         isSelected
-          ? 'bg-blue-50/80 border-blue-300 dark:bg-blue-950/30 dark:border-blue-700 ring-1 ring-blue-500/30'
+          ? 'bg-emerald-500/10 dark:bg-emerald-500/15 border-emerald-500 dark:border-emerald-500 ring-2 ring-emerald-500/40 shadow-md'
           : 'bg-white border-neutral-200 hover:bg-neutral-50/90 hover:border-neutral-300 shadow-sm dark:bg-neutral-900/60 dark:border-neutral-800/80 dark:hover:bg-neutral-800/50 dark:hover:border-neutral-700 dark:shadow-none'
       }`}
     >
@@ -250,14 +298,14 @@ export default function FileGridCard({
         }}
         className={`absolute top-2.5 left-2.5 z-10 w-5 h-5 rounded-md border flex items-center justify-center shrink-0 cursor-pointer transition-all ${
           isSelected
-            ? 'opacity-100 bg-white text-black border-white shadow-sm'
+            ? 'opacity-100 bg-emerald-500 border-emerald-500 text-white shadow-sm'
             : isSelectionActive
               ? 'opacity-100 md:opacity-50 md:hover:opacity-100 border-neutral-400 dark:border-neutral-500 bg-neutral-100 dark:bg-neutral-900/80'
               : 'opacity-100 md:opacity-0 md:group-hover:opacity-100 border-neutral-400 dark:border-neutral-500 bg-neutral-100 dark:bg-neutral-900/80 hover:border-neutral-900 dark:hover:border-white shadow-sm'
         }`}
         title={isSelected ? 'Deselect file' : 'Select file'}
       >
-        {isSelected && <Check className="w-3.5 h-3.5 stroke-[3] text-black" />}
+        {isSelected && <Check className="w-3.5 h-3.5 stroke-[3] text-white" />}
       </div>
 
       {/* Top-Right: Three Dots Action Menu */}
@@ -277,7 +325,7 @@ export default function FileGridCard({
 
         {isMenuOpen && (
           <div
-            className={`absolute w-44 sm:w-48 rounded-xl bg-white/95 dark:bg-[#18181b]/95 backdrop-blur-md border border-neutral-200 dark:border-neutral-800 shadow-2xl p-1.5 z-50 transform transition-all duration-150 ease-out animate-in fade-in zoom-in-95 ${
+            className={`absolute w-44 sm:w-48 rounded-xl bg-white/95 dark:bg-[#18181b]/95 backdrop-blur-md border border-neutral-200 dark:border-neutral-800 shadow-2xl p-1.5 z-[100] transform transition-all duration-150 ease-out animate-in fade-in zoom-in-95 ${
               isBottomRow ? 'bottom-full mb-1.5' : 'top-full mt-1.5'
             } ${
               isRightColumn
@@ -372,48 +420,8 @@ export default function FileGridCard({
         )}
       </div>
 
-      {/* Hero Preview Body (Direct B2 Thumbnail, Dynamic PDF/Video/Text, or Stylized Skeleton) */}
-      <div className="w-full h-32 sm:h-36 rounded-lg overflow-hidden bg-neutral-100 dark:bg-neutral-800/50 flex items-center justify-center relative mb-2.5 border border-neutral-200/60 dark:border-neutral-800/60">
-        {resolvedThumbnail ? (
-          <>
-            <img
-              src={resolvedThumbnail}
-              alt={file.name}
-              loading="lazy"
-              decoding="async"
-              onError={() => setImgError(true)}
-              className={`w-full h-full ${
-                dynamicPreview?.isPdf || isPdf ? 'object-cover object-top' : 'object-cover'
-              } transition-transform duration-200 group-hover:scale-105`}
-            />
-            {/* Top-Left Corner Badge for PDFs */}
-            {(dynamicPreview?.isPdf || isPdf) && (
-              <div className="absolute top-2 left-2 z-10 pointer-events-none">
-                <span className="px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider leading-none uppercase bg-red-500 text-white shadow-sm">
-                  PDF
-                </span>
-              </div>
-            )}
-            {/* Play Button Overlay for Videos */}
-            {(dynamicPreview?.isVideo || isVideo) && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black/20 pointer-events-none">
-                <div className="w-8 h-8 rounded-full bg-black/60 backdrop-blur-sm flex items-center justify-center text-white shadow-md">
-                  <Play className="w-4 h-4 fill-white translate-x-0.5" />
-                </div>
-              </div>
-            )}
-          </>
-        ) : dynamicPreview?.type === 'text' && dynamicPreview.snippet ? (
-          <TextSnippetSheetCard
-            ext={ext}
-            badgeText={badgeText}
-            badgeColor={badgeColor}
-            snippet={dynamicPreview.snippet}
-          />
-        ) : (
-          <DocumentSheetCard ext={ext} badgeText={badgeText} badgeColor={badgeColor} />
-        )}
-      </div>
+      {/* Hero Preview Body */}
+      <FileCardPreviewBody file={file} token={token} />
 
       {/* Card Footer: Metadata */}
       <div className="min-w-0">
@@ -448,3 +456,6 @@ export default function FileGridCard({
     </div>
   );
 }
+
+export { getDocumentCardMeta, DocumentSheetCard, TextSnippetSheetCard };
+

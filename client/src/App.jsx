@@ -3109,7 +3109,7 @@ function App() {
         ) : location.pathname === '/dashboard/photos' ? (
           <PhotosView token={token} />
         ) : viewMode === 'bin' || searchParams.get('view') === 'bin' || searchParams.get('tab') === 'bin' ? (
-          <BinView onStorageUpdate={fetchStorageStats} searchQuery={searchQuery} />
+          <BinView onStorageUpdate={fetchStorageStats} searchQuery={searchQuery} token={token} />
         ) : (
           <>
         {/* Page Title */}
@@ -3479,8 +3479,10 @@ function App() {
                         key={folder._id}
                         onClick={() => handleFolderClick(folder)}
                         className={`group relative flex flex-col justify-between p-4 rounded-xl border transition-all duration-150 cursor-pointer select-none min-h-[120px] ${
+                          activeFolderMenuId === folder._id ? 'z-50' : 'z-0'
+                        } ${
                           isSelected 
-                            ? 'bg-blue-50/80 border-blue-300 dark:bg-blue-950/30 dark:border-blue-700 ring-1 ring-blue-500/30' 
+                            ? 'bg-emerald-500/10 dark:bg-emerald-500/15 border-emerald-500 dark:border-emerald-500 ring-2 ring-emerald-500/40 shadow-md' 
                             : 'bg-white border-neutral-200 hover:bg-neutral-50/90 hover:border-neutral-300 shadow-sm dark:bg-neutral-900/60 dark:border-neutral-800/80 dark:hover:bg-neutral-800/50 dark:hover:border-neutral-700 dark:shadow-none'
                         }`}
                       >
@@ -3492,14 +3494,14 @@ function App() {
                           }}
                           className={`absolute top-3 left-3 z-10 w-5 h-5 rounded-md border flex items-center justify-center shrink-0 cursor-pointer transition-all ${
                             isSelected
-                              ? 'opacity-100 bg-white text-black border-white shadow-sm'
+                              ? 'opacity-100 bg-emerald-500 border-emerald-500 text-white shadow-sm'
                               : isSelectionActive
                                 ? 'opacity-100 md:opacity-50 md:hover:opacity-100 border-neutral-400 dark:border-neutral-500 bg-neutral-100 dark:bg-neutral-900/80'
                                 : 'opacity-100 md:opacity-0 md:group-hover:opacity-100 border-neutral-400 dark:border-neutral-500 bg-neutral-100 dark:bg-neutral-900/80 hover:border-neutral-900 dark:hover:border-white shadow-sm'
                           }`}
                           title={isSelected ? "Deselect folder" : "Select folder"}
                         >
-                          {isSelected && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                          {isSelected && <Check className="w-3.5 h-3.5 stroke-[3] text-white" />}
                         </div>
 
                         {/* Top-Right: Three Dots Action Menu */}
@@ -3522,7 +3524,7 @@ function App() {
 
                           {activeFolderMenuId === folder._id && (
                             <div
-                              className={`absolute top-full mt-1.5 w-44 sm:w-48 rounded-xl bg-white/95 dark:bg-[#18181b]/95 backdrop-blur-md border border-neutral-200 dark:border-neutral-800 shadow-2xl p-1.5 z-50 transform transition-all duration-150 ease-out ${
+                              className={`absolute top-full mt-1.5 w-44 sm:w-48 rounded-xl bg-white/95 dark:bg-[#18181b]/95 backdrop-blur-md border border-neutral-200 dark:border-neutral-800 shadow-2xl p-1.5 z-[100] transform transition-all duration-150 ease-out ${
                                 isRightColumn 
                                   ? 'right-0 sm:right-0 sm:left-auto origin-top-right' 
                                   : 'left-0 sm:left-auto sm:right-0 origin-top-left'
@@ -3600,8 +3602,10 @@ function App() {
                         key={folder._id}
                         onClick={() => handleFolderClick(folder)}
                         className={`group relative flex items-center justify-between px-4 py-3 rounded-xl border transition-all duration-150 cursor-pointer select-none mb-2 ${
+                          activeFolderMenuId === folder._id ? 'z-50' : 'z-0'
+                        } ${
                           isSelected 
-                            ? 'bg-blue-50/80 border-blue-300 dark:bg-blue-950/30 dark:border-blue-700 ring-1 ring-blue-500/30' 
+                            ? 'bg-emerald-500/10 dark:bg-emerald-500/15 border-emerald-500 dark:border-emerald-500 ring-2 ring-emerald-500/40' 
                             : 'bg-white border-neutral-200 hover:bg-neutral-50/90 hover:border-neutral-300 shadow-sm dark:bg-neutral-900/60 dark:border-neutral-800/80 dark:hover:bg-neutral-800/50 dark:hover:border-neutral-700 dark:shadow-none'
                         }`}
                       >
@@ -3615,14 +3619,14 @@ function App() {
                             }}
                             className={`w-5 h-5 rounded-md border flex items-center justify-center shrink-0 cursor-pointer transition-all ${
                               isSelected
-                                ? 'opacity-100 bg-white text-black border-white'
+                                ? 'opacity-100 bg-emerald-500 border-emerald-500 text-white shadow-sm'
                                 : isSelectionActive
                                   ? 'opacity-100 md:opacity-50 md:hover:opacity-100 border-neutral-400 dark:border-neutral-500 bg-neutral-100 dark:bg-neutral-900/80'
                                   : 'opacity-100 md:opacity-0 md:group-hover:opacity-100 border-neutral-400 dark:border-neutral-500 bg-neutral-100 dark:bg-neutral-900/80 hover:border-neutral-900 dark:hover:border-white'
                             }`}
                             title={isSelected ? "Deselect folder" : "Select folder"}
                           >
-                            {isSelected && <Check className="w-3.5 h-3.5 stroke-[3]"/>}
+                            {isSelected && <Check className="w-3.5 h-3.5 stroke-[3] text-white"/>}
                           </div>
 
                           {/* Folder Icon: ALWAYS VISIBLE */}
@@ -3653,7 +3657,7 @@ function App() {
                           </button>
 
                           {activeFolderMenuId === folder._id && (
-                            <div className="absolute right-0 top-full mt-1.5 w-44 sm:w-48 rounded-xl bg-white/95 dark:bg-[#18181b]/95 backdrop-blur-md border border-neutral-200 dark:border-neutral-800 shadow-2xl p-1.5 z-50 transform transition-all duration-150 ease-out origin-top-right animate-in fade-in zoom-in-95">
+                            <div className="absolute right-0 top-full mt-1.5 w-44 sm:w-48 rounded-xl bg-white/95 dark:bg-[#18181b]/95 backdrop-blur-md border border-neutral-200 dark:border-neutral-800 shadow-2xl p-1.5 z-[100] transform transition-all duration-150 ease-out origin-top-right animate-in fade-in zoom-in-95">
                               <button 
                                 onClick={(e) => { 
                                   e.stopPropagation(); 
@@ -3791,7 +3795,7 @@ function App() {
                           onClick={(e) => handleSelectAllFiles(e)}
                           className={`w-5 h-5 rounded border transition-all flex items-center justify-center cursor-pointer ${
                             isAllFilesSelected
-                              ? 'opacity-100 bg-white text-black border-white'
+                              ? 'opacity-100 bg-emerald-500 text-white border-emerald-500 shadow-sm'
                               : isSomeFilesSelected
                                 ? 'opacity-100 border-neutral-300 bg-neutral-900/90 text-white'
                                 : isSelectionActive
@@ -3800,7 +3804,7 @@ function App() {
                           }`}
                           title={isAllFilesSelected ? "Deselect all files" : "Select all files"}
                         >
-                          {isAllFilesSelected && <Check className="w-3.5 h-3.5 stroke-[3] text-black" />}
+                          {isAllFilesSelected && <Check className="w-3.5 h-3.5 stroke-[3] text-white" />}
                           {isSomeFilesSelected && <div className="w-2.5 h-0.5 bg-white rounded-full" />}
                         </div>
                       </div>
@@ -3881,7 +3885,9 @@ function App() {
                       onMouseEnter={() => !file.isFolder && prefetchAccessUrl(file._id, token)}
                       onTouchStart={() => !file.isFolder && prefetchAccessUrl(file._id, token)}
                       className={`flex flex-wrap md:table-row items-center py-2.5 sm:py-3 px-3 sm:px-4 md:p-0 hover:bg-surface-bright dark:hover:bg-zinc-800/70 dark:text-zinc-300 transition-colors group md:h-14 min-h-0 ${
-                        selectedFileIds.includes(String(file._id)) ? 'bg-neutral-100 dark:bg-zinc-800/60' : ''
+                        activeMenuId === (file._id || file.id) ? 'relative z-50' : 'relative z-0'
+                      } ${
+                        selectedFileIds.includes(String(file._id)) ? 'bg-emerald-500/10 dark:bg-emerald-500/15' : ''
                       } ${file.isFolder || (!file.isMalicious && file.status !== 'Malicious' && file.status !== 'malware' && file.securityStatus !== 'threat_purged') ? 'cursor-pointer' : ''}`}
                     >
                       <td className="w-12 text-center p-0 align-middle" onClick={(e) => e.stopPropagation()}>
@@ -3891,7 +3897,7 @@ function App() {
                               onClick={(e) => toggleFileSelect(file._id, e)}
                               className={`w-5 h-5 rounded border transition-all flex items-center justify-center cursor-pointer ${
                                 selectedFileIds.includes(String(file._id))
-                                  ? 'opacity-100 bg-white text-black border-white'
+                                  ? 'opacity-100 bg-emerald-500 text-white border-emerald-500 shadow-sm'
                                   : isSelectionActive
                                     ? 'opacity-100 md:opacity-40 md:hover:opacity-100 border-neutral-500 bg-neutral-900/80 hover:border-white'
                                     : 'opacity-100 md:opacity-0 md:group-hover:opacity-100 border-neutral-500 bg-neutral-900/80 hover:border-white'
@@ -3899,7 +3905,7 @@ function App() {
                               title={selectedFileIds.includes(String(file._id)) ? "Deselect file" : "Select file"}
                             >
                               {selectedFileIds.includes(String(file._id)) && (
-                                <Check className="w-3.5 h-3.5 stroke-[3] text-black" />
+                                <Check className="w-3.5 h-3.5 stroke-[3] text-white" />
                               )}
                             </div>
                           </div>
@@ -3979,7 +3985,7 @@ function App() {
                             <MoreVertical size={18} className="stroke-[2.5]" />
                           </button>
                           
-                          <div className={`absolute right-0 w-44 bg-white dark:bg-[#1e1f20] rounded-xl shadow-xl border border-neutral-200 dark:border-zinc-800 z-[60] overflow-hidden flex flex-col py-1 transition-all duration-200 ease-out ${index >= filteredFiles.length - 2 && filteredFiles.length > 3 ? 'bottom-full mb-2 origin-bottom-right' : 'top-full mt-2 origin-top-right'} ${activeMenuId === (file._id || file.id) ? 'opacity-100 scale-100 pointer-events-auto' : 'opacity-0 scale-95 pointer-events-none'}`}>
+                          <div className={`absolute right-0 w-44 bg-white dark:bg-[#1e1f20] rounded-xl shadow-xl border border-neutral-200 dark:border-zinc-800 z-[100] overflow-hidden flex flex-col py-1 transition-all duration-200 ease-out ${index >= filteredFiles.length - 2 && filteredFiles.length > 3 ? 'bottom-full mb-2 origin-bottom-right' : 'top-full mt-2 origin-top-right'} ${activeMenuId === (file._id || file.id) ? 'opacity-100 scale-100 pointer-events-auto' : 'opacity-0 scale-95 pointer-events-none'}`}>
                             {!file.isFolder && (
                               <button 
                                 onClick={(e) => { e.stopPropagation(); handlePreview(file); setActiveMenuId(null); }} 

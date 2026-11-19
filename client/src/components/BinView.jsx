@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { useToast } from '../context/ToastContext';
 import { API_BASE_URL } from '../config';
+import { FileCardPreviewBody } from './FileGridCard';
 
 function formatBytes(bytes) {
   const n = Number(bytes);
@@ -56,7 +57,8 @@ function getFileIcon(mimeType = '', fileName = '') {
   return File;
 }
 
-export default function BinView({ onStorageUpdate, searchQuery = '' }) {
+export default function BinView({ onStorageUpdate, searchQuery = '', token: propToken }) {
+  const token = propToken || (typeof window !== 'undefined' ? (localStorage.getItem('token') || sessionStorage.getItem('token')) : null);
   const appToast = useToast();
   const toast = useMemo(() => ({
     success: (msg, opts) => (appToast?.success ? appToast.success(msg, opts) : console.log('[Toast Success]', msg)),
@@ -502,14 +504,13 @@ export default function BinView({ onStorageUpdate, searchQuery = '' }) {
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
                 {filteredFiles.map((file) => {
                   const isSelected = selectedFileIds.includes(file._id);
-                  const Icon = getFileIcon(file.mimeType || file.mimetype, file.name);
                   const daysRemaining = file.daysRemaining ?? 30;
                   const daysAgo = file.deletedDaysAgo ?? 0;
 
                   return (
                     <div
                       key={file._id}
-                      className={`group relative p-3.5 rounded-2xl border transition-all select-none flex flex-col justify-between ${
+                      className={`group relative p-3 rounded-xl sm:rounded-2xl border transition-all select-none flex flex-col justify-between ${
                         isSelected
                           ? 'bg-emerald-500/10 dark:bg-emerald-500/15 border-emerald-500 dark:border-emerald-500 ring-2 ring-emerald-500/40 shadow-md'
                           : 'bg-white dark:bg-neutral-900 border-neutral-200 dark:border-neutral-800/80 hover:border-neutral-300 dark:hover:border-neutral-700 shadow-sm'
@@ -522,7 +523,7 @@ export default function BinView({ onStorageUpdate, searchQuery = '' }) {
                           e.stopPropagation();
                           handleToggleSelectFile(file._id);
                         }}
-                        className={`absolute top-3 left-3 z-10 w-5 h-5 rounded-md border flex items-center justify-center transition-all cursor-pointer ${
+                        className={`absolute top-2.5 left-2.5 z-10 w-5 h-5 rounded-md border flex items-center justify-center transition-all cursor-pointer ${
                           isSelected
                             ? 'opacity-100 bg-emerald-500 border-emerald-500 text-white shadow-sm'
                             : 'opacity-100 md:opacity-0 md:group-hover:opacity-100 border-neutral-400 dark:border-neutral-500 bg-neutral-100 dark:bg-neutral-900/80 hover:border-emerald-500 dark:hover:border-emerald-400 shadow-sm'
@@ -532,22 +533,21 @@ export default function BinView({ onStorageUpdate, searchQuery = '' }) {
                         {isSelected && <Check className="w-3.5 h-3.5 stroke-[3]" />}
                       </button>
 
-                      <div className="flex items-start gap-3 min-w-0 pl-7">
-                        <div className="w-8 h-8 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-500 flex items-center justify-center shrink-0">
-                          <Icon className="w-4 h-4" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-semibold text-neutral-900 dark:text-white truncate" title={file.name}>
-                            {file.name || file.originalName}
-                          </p>
-                          <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
-                            {formatBytes(file.size || 0)}
-                          </p>
-                        </div>
+                      {/* File Card Preview Body (Lightweight B2 Thumbnail, PDF, Video, Text, or Document Sheet) */}
+                      <FileCardPreviewBody file={file} token={token} />
+
+                      {/* File Name & Size */}
+                      <div className="min-w-0">
+                        <p className="text-xs sm:text-sm font-semibold text-neutral-900 dark:text-white truncate" title={file.name || file.originalName}>
+                          {file.name || file.originalName}
+                        </p>
+                        <p className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-0.5">
+                          {formatBytes(file.size || 0)}
+                        </p>
                       </div>
 
                       {/* Deletion Countdown & Quick Actions */}
-                      <div className="mt-3 pt-2.5 border-t border-neutral-100 dark:border-neutral-800 flex items-center justify-between text-xs">
+                      <div className="mt-2.5 pt-2 border-t border-neutral-100 dark:border-neutral-800 flex items-center justify-between text-xs">
                         <div className="flex items-center gap-1.5">
                           <span
                             className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold font-mono uppercase tracking-wider border ${
@@ -571,6 +571,7 @@ export default function BinView({ onStorageUpdate, searchQuery = '' }) {
                             disabled={actionLoading}
                             className="p-1.5 text-neutral-500 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition-colors cursor-pointer"
                             title="Restore file"
+                            aria-label="Restore file"
                           >
                             <RotateCcw className="w-3.5 h-3.5" />
                           </button>
@@ -580,6 +581,7 @@ export default function BinView({ onStorageUpdate, searchQuery = '' }) {
                             disabled={actionLoading}
                             className="p-1.5 text-neutral-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors cursor-pointer"
                             title="Delete forever"
+                            aria-label="Delete forever"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
