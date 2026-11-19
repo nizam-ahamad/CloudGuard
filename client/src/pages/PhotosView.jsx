@@ -23,7 +23,7 @@ import DeleteConfirmModal from '../components/DeleteConfirmModal';
 import { API_BASE_URL } from '../config';
 import { getCachedAccessUrl, fetchAccessUrl, prefetchAccessUrl } from '../utils/accessUrlCache';
 import { isHeicFile } from '../utils/thumbnailHelper';
-import { HeicPreviewImage, preloadMediaItem, getCachedPreviewEntry, putCachedPreviewEntry, PreviewVideo } from '../components/FilePreviewModal';
+import { HeicPreviewImage, preloadMediaItem, prefetchMediaUrl, getCachedPreviewEntry, putCachedPreviewEntry, PreviewVideo } from '../components/FilePreviewModal';
 
 // --------------------------------------------------------------------------
 // MODULE-LEVEL CACHES: Persist across tab switching to prevent network refetching
@@ -417,9 +417,43 @@ export default function PhotosView({ token: propToken }) {
   const navigateNext = handleNext;
   const navigatePrev = handlePrev;
 
-  // 3b. Safe Neighbor Preloading (index ± 1) for Photos Lightbox
-  // Only after active lightbox item finishes loading and decoding (!isLightboxBusy), schedules a 600ms debounced warm-up
-  // with AbortController cleanup on slide change or modal close
+  // Pre-warm HEIC WebAssembly worker when lightbox opens
+  useEffect(() => {
+    if (previewIndex !== null) {
+      import('../utils/heicDecoder')
+        .then((m) => m.warmupHeicWorker?.())
+        .catch(() => {});
+    }
+  }, [previewIndex]);
+
+  // 3a. Stage 1 (Immediate - 0ms delay): Pre-fetch signed /access URLs for index + 1, + 2, - 1
+  useEffect(() => {
+    if (previewIndex === null || !currentPreviewItem || mediaList.length === 0) {
+      return;
+    }
+
+    const next1 = previewIndex + 1 < mediaList.length ? mediaList[previewIndex + 1] : null;
+    const next2 = previewIndex + 2 < mediaList.length ? mediaList[previewIndex + 2] : null;
+    const prev1 = previewIndex - 1 >= 0 ? mediaList[previewIndex - 1] : null;
+    if (!next1 && !next2 && !prev1) return;
+
+    const abortController = new AbortController();
+    const getSignedUrl = (file) => {
+      const token = propToken || (typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null);
+      return fetchAccessUrl(file._id, token);
+    };
+
+    if (next1) prefetchMediaUrl(next1, getSignedUrl, abortController.signal);
+    if (next2) prefetchMediaUrl(next2, getSignedUrl, abortController.signal);
+    if (prev1) prefetchMediaUrl(prev1, getSignedUrl, abortController.signal);
+
+    return () => {
+      abortController.abort();
+    };
+  }, [previewIndex, currentPreviewItem, mediaList, propToken]);
+
+  // 3b. Stage 2 (150ms after active lightbox item settles):
+  // Pre-warm media and decode bitmaps in forward-first order (+1, then +2, then -1) with { priority: 'low' }
   const isHeic = currentPreviewItem ? isHeicFile(currentPreviewItem) : false;
   const cachedLru = currentPreviewItem ? getCachedPreviewEntry(currentPreviewItem._id) : null;
   const isLightboxBusy = loadingFullMedia || (isHeic ? (!cachedLru?.decodedBlobUrl && activeHeicLoadedId !== currentPreviewItem._id) : (!fullMediaUrl && !currentPreviewItem?.url));
@@ -429,23 +463,29 @@ export default function PhotosView({ token: propToken }) {
       return;
     }
 
+    const next1 = previewIndex + 1 < mediaList.length ? mediaList[previewIndex + 1] : null;
+    const next2 = previewIndex + 2 < mediaList.length ? mediaList[previewIndex + 2] : null;
+    const prev1 = previewIndex - 1 >= 0 ? mediaList[previewIndex - 1] : null;
+    if (!next1 && !next2 && !prev1) return;
+
     const abortController = new AbortController();
-    const timer = setTimeout(() => {
-      const nextIndex = previewIndex + 1 < mediaList.length ? previewIndex + 1 : -1;
-      const prevIndex = previewIndex - 1 >= 0 ? previewIndex - 1 : -1;
+    const getSignedUrl = (file) => {
+      const token = propToken || (typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null);
+      return fetchAccessUrl(file._id, token);
+    };
 
-      const getSignedUrl = (file) => {
-        const token = propToken || (typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null);
-        return fetchAccessUrl(file._id, token);
-      };
-
-      if (nextIndex >= 0) {
-        preloadMediaItem(mediaList[nextIndex], getSignedUrl, abortController.signal);
+    const timer = setTimeout(async () => {
+      // Prioritize forward slides: index + 1, then index + 2, then index - 1
+      if (next1 && !abortController.signal.aborted) {
+        await preloadMediaItem(next1, getSignedUrl, abortController.signal);
       }
-      if (prevIndex >= 0) {
-        preloadMediaItem(mediaList[prevIndex], getSignedUrl, abortController.signal);
+      if (next2 && !abortController.signal.aborted) {
+        await preloadMediaItem(next2, getSignedUrl, abortController.signal);
       }
-    }, 600);
+      if (prev1 && !abortController.signal.aborted) {
+        await preloadMediaItem(prev1, getSignedUrl, abortController.signal);
+      }
+    }, 150);
 
     return () => {
       clearTimeout(timer);

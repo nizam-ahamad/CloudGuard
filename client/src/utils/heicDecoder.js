@@ -54,7 +54,25 @@ function respawnWorker() {
   return getWorker();
 }
 
+/**
+ * Eagerly pre-warms the HEIC worker and pre-compiles the WebAssembly module
+ * so the first HEIC photo renders with zero WASM initialization latency.
+ */
+export function warmupHeicWorker() {
+  try {
+    const w = getWorker();
+    w.postMessage({ type: 'init' });
+  } catch (err) {
+    // Non-fatal if worker pre-warm fails
+  }
+}
+
 async function handleWorkerMessage(e) {
+  // Ignore worker warm-up acknowledgments
+  if (e.data?.ready !== undefined) {
+    return;
+  }
+
   const { id, success, blob, arrayBuffer, mimeType, raw, error } = e.data || {};
   if (!activeTask || activeTask.id !== id) {
     return;

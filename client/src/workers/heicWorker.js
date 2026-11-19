@@ -18,6 +18,16 @@ async function getLibheif() {
 }
 
 self.onmessage = async (e) => {
+  if (e.data?.type === 'init') {
+    try {
+      await getLibheif();
+      self.postMessage({ id: e.data.id, ready: true });
+    } catch (err) {
+      self.postMessage({ id: e.data.id, ready: false, error: err?.message });
+    }
+    return;
+  }
+
   const { id, buffer, maxDimension = 2048, quality = 0.85 } = e.data || {};
   let images = null;
   let origCanvas = null;

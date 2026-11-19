@@ -253,10 +253,17 @@ export async function preloadMediaItem(file, getSignedUrlFn, signal) {
       return;
     }
 
-    // 4. For standard images (jpg, jpeg, png, webp, gif), warm browser cache via Image()
+    // 4. For standard images (jpg, jpeg, png, webp, gif), warm browser cache and decode pixels off-screen via img.decode()
     if (isStandardImage) {
       const img = new Image();
       img.src = signedUrl;
+      if (typeof img.decode === 'function') {
+        try {
+          await img.decode();
+        } catch (_) {
+          // ignore decode errors for background preload
+        }
+      }
       return;
     }
 
@@ -265,6 +272,39 @@ export async function preloadMediaItem(file, getSignedUrlFn, signal) {
     if (err?.name !== 'AbortError') {
       console.warn(`[Preload] Safe warm-up skipped for ${file.name || fileId}:`, err?.message || err);
     }
+  }
+}
+
+/**
+ * Stage 1 (Immediate - 0ms delay): Eagerly fetches signed /access URLs for
+ * immediate neighbor files (index + 1, + 2, - 1) and populates LRU cache.
+ */
+export async function prefetchMediaUrl(file, getSignedUrlFn, signal) {
+  if (!file || signal?.aborted) return null;
+  const fileId = String(file._id || file.id || file.s3Key || '');
+  if (!fileId) return null;
+
+  const existing = getCachedPreviewEntry(fileId);
+  if (existing?.signedUrl && (Date.now() - existing.signedUrlFetchedAt < SIGNED_URL_TTL_MS)) {
+    return existing.signedUrl;
+  }
+
+  try {
+    let signedUrl;
+    if (typeof getSignedUrlFn === 'function') {
+      signedUrl = await getSignedUrlFn(file);
+    } else {
+      signedUrl = await getOrFetchSignedUrl(file, signal);
+    }
+    if (signedUrl) {
+      putCachedPreviewEntry(fileId, {
+        signedUrl,
+        signedUrlFetchedAt: Date.now(),
+      });
+    }
+    return signedUrl || null;
+  } catch (e) {
+    return null;
   }
 }
 
@@ -537,9 +577,35 @@ export default function FilePreviewModal({
     setActiveHeicLoadedId(null);
   }, [fileId]);
 
-  // Safe Neighbor Preloading (index + 1 and index - 1)
-  // Gated strictly on !isActiveSlideBusy (so neighbor preloading never competes with active slide)
-  // Schedules a 600ms debounced background warm-up after active slide finishes loading and decoding
+  // Eagerly pre-warm HEIC worker and WebAssembly module as soon as modal opens
+  useEffect(() => {
+    import('../utils/heicDecoder')
+      .then((m) => m.warmupHeicWorker?.())
+      .catch(() => {});
+  }, []);
+
+  // Stage 1 (Immediate - 0ms delay on active slide change):
+  // Pre-fetch lightweight signed /access URLs for index + 1, index + 2, and index - 1 immediately
+  useEffect(() => {
+    if (!previewFile || !hasItems || activeIdx < 0) return;
+
+    const next1 = activeIdx + 1 < items.length ? items[activeIdx + 1] : null;
+    const next2 = activeIdx + 2 < items.length ? items[activeIdx + 2] : null;
+    const prev1 = activeIdx - 1 >= 0 ? items[activeIdx - 1] : null;
+    if (!next1 && !next2 && !prev1) return;
+
+    const abortController = new AbortController();
+    if (next1) prefetchMediaUrl(next1, null, abortController.signal);
+    if (next2) prefetchMediaUrl(next2, null, abortController.signal);
+    if (prev1) prefetchMediaUrl(prev1, null, abortController.signal);
+
+    return () => {
+      abortController.abort();
+    };
+  }, [previewFile, hasItems, activeIdx, items]);
+
+  // Stage 2 (150ms after active slide finishes loading and decoding):
+  // Pre-warm media in forward-first order (index + 1, then + 2, then - 1) with { priority: 'low' }
   const isActiveSlideBusy = isHeic
     ? (!cachedEntry?.decodedBlobUrl && activeHeicLoadedId !== fileId)
     : !effectiveUrl;
@@ -547,19 +613,24 @@ export default function FilePreviewModal({
   useEffect(() => {
     if (!previewFile || isActiveSlideBusy || !hasItems || activeIdx < 0) return;
 
-    const nextFile = activeIdx + 1 < items.length ? items[activeIdx + 1] : null;
-    const prevFile = activeIdx - 1 >= 0 ? items[activeIdx - 1] : null;
-    if (!nextFile && !prevFile) return;
+    const next1 = activeIdx + 1 < items.length ? items[activeIdx + 1] : null;
+    const next2 = activeIdx + 2 < items.length ? items[activeIdx + 2] : null;
+    const prev1 = activeIdx - 1 >= 0 ? items[activeIdx - 1] : null;
+    if (!next1 && !next2 && !prev1) return;
 
     const abortController = new AbortController();
-    const timeoutId = setTimeout(() => {
-      if (nextFile) {
-        preloadNeighborFile(nextFile, abortController.signal);
+    const timeoutId = setTimeout(async () => {
+      // Prioritize forward slides: index + 1, then index + 2, then index - 1
+      if (next1 && !abortController.signal.aborted) {
+        await preloadNeighborFile(next1, abortController.signal);
       }
-      if (prevFile) {
-        preloadNeighborFile(prevFile, abortController.signal);
+      if (next2 && !abortController.signal.aborted) {
+        await preloadNeighborFile(next2, abortController.signal);
       }
-    }, 600);
+      if (prev1 && !abortController.signal.aborted) {
+        await preloadNeighborFile(prev1, abortController.signal);
+      }
+    }, 150);
 
     return () => {
       clearTimeout(timeoutId);
