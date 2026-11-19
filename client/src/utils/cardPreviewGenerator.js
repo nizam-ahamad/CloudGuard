@@ -2,21 +2,104 @@
  * CloudGuard - Client-Side Card Preview Generator
  *
  * Provides lazy, viewport-gated, bounded-LRU preview generation for grid cards:
+ * - Direct resolution of lightweight .webp thumbnails from Backblaze B2 (via /api/photos)
+ * - Strict Bandwidth Guardrail: Images NEVER download full-size multi-megabyte originals for thumbnails
  * - PDF page 1 thumbnail rendered onto canvas via pdfjs-dist
  * - Text / CSV / Code / Markdown real text snippet (first 2 KB via Range request)
- * - Video frame snapshot for videos missing thumbnails (metadata-only fetch + immediate teardown)
+ * - Video frame snapshot fallback for videos genuinely missing B2 thumbnails (metadata-only + immediate teardown)
  *
  * Guarantees:
  * - Zero EC2 server load (100% client-side in browser)
+ * - Zero new Backblaze B2 storage
  * - Max 2 concurrent preview jobs (prevents mobile CPU/GPU stutter)
  * - 60-item bounded LRU cache with automatic blob: URL revocation
  * - In-flight Promise deduplication
  */
 
-import { fetchAccessUrl, getCachedAccessUrl } from './accessUrlCache';
+import axios from 'axios';
+import { API_BASE_URL } from '../config';
+import { fetchAccessUrl } from './accessUrlCache';
 
 const MAX_CARD_PREVIEWS = 60;
 const MAX_CONCURRENT_JOBS = 2;
+const PHOTOS_CACHE_TTL = 10 * 60 * 1000; // 10 minutes fresh cache
+
+// Module-level thumbnail cache from /api/photos: fileId -> signed .webp thumbnailUrl
+const mediaThumbnailMap = new Map();
+let photosFetchPromise = null;
+let lastPhotosFetchTime = 0;
+
+/**
+ * Returns cached B2 .webp thumbnail URL for a file if available.
+ */
+export function getMediaThumbnail(fileId) {
+  if (!fileId) return null;
+  return mediaThumbnailMap.get(String(fileId)) || null;
+}
+
+/**
+ * Returns the entire media thumbnail map (for fast multi-lookup).
+ */
+export function getMediaThumbnailMap() {
+  return mediaThumbnailMap;
+}
+
+/**
+ * Clears the media thumbnail cache (e.g. after upload, rename, or delete).
+ */
+export function invalidateMediaThumbnailCache() {
+  mediaThumbnailMap.clear();
+  lastPhotosFetchTime = 0;
+  photosFetchPromise = null;
+}
+
+// Auto-invalidate when files are updated anywhere in the app
+if (typeof window !== 'undefined') {
+  window.addEventListener('cloudguard:files-updated', () => {
+    invalidateMediaThumbnailCache();
+  });
+}
+
+/**
+ * Loads media thumbnails for all user photos & videos from /api/photos.
+ * Coalesces concurrent calls into a single in-flight Promise.
+ */
+export async function loadMediaThumbnails(token) {
+  const now = Date.now();
+  if (mediaThumbnailMap.size > 0 && now - lastPhotosFetchTime < PHOTOS_CACHE_TTL) {
+    return mediaThumbnailMap;
+  }
+
+  if (photosFetchPromise) {
+    return photosFetchPromise;
+  }
+
+  photosFetchPromise = (async () => {
+    try {
+      const authToken = token || (typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null);
+      if (!authToken) return mediaThumbnailMap;
+
+      const res = await axios.get(`${API_BASE_URL}/api/photos`, {
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+
+      const list = Array.isArray(res.data) ? res.data : (res.data?.photos || []);
+      for (const item of list) {
+        if (item && item._id && item.thumbnailUrl) {
+          mediaThumbnailMap.set(String(item._id), item.thumbnailUrl);
+        }
+      }
+      lastPhotosFetchTime = Date.now();
+    } catch (err) {
+      console.warn('[cardPreviewGenerator] Could not load media thumbnails from /api/photos:', err?.message || err);
+    } finally {
+      photosFetchPromise = null;
+    }
+    return mediaThumbnailMap;
+  })();
+
+  return photosFetchPromise;
+}
 
 // Module-level LRU cache: fileId -> { type: 'image' | 'text' | 'none', url?, snippet?, isBlob?, isPdf?, isVideo? }
 const previewCache = new Map();
@@ -264,7 +347,7 @@ async function generatePdfThumbnail(accessUrl) {
 }
 
 /**
- * 3. Video Snapshot: Capture a single frame from video metadata without downloading full file
+ * 3. Video Snapshot Fallback: Capture a single frame from video metadata without downloading full file
  */
 function generateVideoSnapshot(accessUrl) {
   return new Promise((resolve) => {
@@ -359,7 +442,7 @@ export async function generateCardPreview(file, token) {
     return inFlightPromises.get(key);
   }
 
-  // 3. Determine if eligible for client-side preview
+  // 3. Determine file category
   const category = getFileCategory(file.name || file.originalName || '', file.mimeType || file.mimetype || '');
   if (category === 'other') {
     const noneResult = { type: 'none' };
@@ -376,7 +459,38 @@ export async function generateCardPreview(file, token) {
 
   const promise = (async () => {
     try {
-      // Obtain secure signed access URL
+      // 4. For Images and Videos: Check B2 lightweight .webp thumbnails first!
+      if (category === 'image' || category === 'video') {
+        let thumbUrl = file.thumbnailUrl || getMediaThumbnail(key);
+        if (!thumbUrl) {
+          await loadMediaThumbnails(token);
+          thumbUrl = getMediaThumbnail(key);
+        }
+
+        if (thumbUrl) {
+          const result = {
+            type: 'image',
+            url: thumbUrl,
+            isBlob: false,
+            isVideo: category === 'video',
+          };
+          setCachedCardPreview(key, result);
+          return result;
+        }
+
+        // STRICT BANDWIDTH GUARDRAIL:
+        // Never download full-resolution original image (3-6 MB) for a thumbnail.
+        // If an image has no pre-generated B2 thumbnail, return 'none' to show stylized placeholder card.
+        if (category === 'image') {
+          const noneResult = { type: 'none' };
+          setCachedCardPreview(key, noneResult);
+          return noneResult;
+        }
+
+        // For videos genuinely missing B2 thumbnail, fall through to lightweight metadata snapshot
+      }
+
+      // 5. For PDFs, Text, or videos without B2 thumbnail: obtain secure signed access URL
       const accessUrl = await fetchAccessUrl(key, token);
       if (!accessUrl) {
         const noneResult = { type: 'none' };
@@ -394,9 +508,6 @@ export async function generateCardPreview(file, token) {
         }
         if (category === 'video') {
           return await generateVideoSnapshot(accessUrl);
-        }
-        if (category === 'image') {
-          return { type: 'image', url: accessUrl, isBlob: false };
         }
         return null;
       });

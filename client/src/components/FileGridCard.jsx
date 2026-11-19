@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Check, MoreVertical, FolderInput, Pencil, Info, Trash2, Play } from 'lucide-react';
-import { generateCardPreview, getCachedCardPreview } from '../utils/cardPreviewGenerator';
+import { generateCardPreview, getCachedCardPreview, getMediaThumbnail } from '../utils/cardPreviewGenerator';
 
 /**
  * Returns extension, badge label, and color theme for Google Drive-style document cards.
@@ -147,6 +147,10 @@ export default function FileGridCard({
   const menuKey = fileId;
   const isMenuOpen = activeMenuId === menuKey;
 
+  // Direct lightweight B2 .webp thumbnail resolution (matches PhotosView.jsx)
+  const directThumbnail = file.thumbnailUrl || getMediaThumbnail(fileId) || file.thumbnail;
+  const hasDirectThumbnail = Boolean(directThumbnail && !imgError);
+
   // Read cache synchronously on initial render for instant zero-flash rendering
   const [dynamicPreview, setDynamicPreview] = useState(() => getCachedCardPreview(fileId));
 
@@ -160,8 +164,9 @@ export default function FileGridCard({
     (file.mimetype && file.mimetype.includes('pdf')) ||
     /\.pdf$/i.test(file.name || file.originalName || '');
 
-  const displayThumbnail = file.thumbnailUrl || file.thumbnail || file.accessUrl || file.url;
-  const hasDirectThumbnail = Boolean(displayThumbnail && !imgError);
+  const resolvedThumbnail =
+    (hasDirectThumbnail ? directThumbnail : null) ||
+    (dynamicPreview?.type === 'image' && !imgError ? dynamicPreview.url : null);
 
   const { ext, badgeText, badgeColor } = getDocumentCardMeta(
     file.name || file.originalName || '',
@@ -197,12 +202,13 @@ export default function FileGridCard({
     return () => observer.disconnect();
   }, [isInView]);
 
-  // Trigger preview generation only when visible and thumbnail is missing
+  // Trigger preview generation when visible in viewport
   useEffect(() => {
     if (!isInView || !fileId) return;
 
-    // Direct thumbnail already works; no client-side decode needed
-    if (hasDirectThumbnail) return;
+    // Direct B2 thumbnail already available; no client decode needed
+    const existingThumb = file.thumbnailUrl || getMediaThumbnail(fileId) || file.thumbnail;
+    if (existingThumb && !imgError) return;
 
     const cached = getCachedCardPreview(fileId);
     if (cached) {
@@ -222,7 +228,7 @@ export default function FileGridCard({
     return () => {
       isMounted = false;
     };
-  }, [isInView, fileId, file, token, hasDirectThumbnail]);
+  }, [isInView, fileId, file, token, imgError]);
 
   return (
     <div
@@ -365,40 +371,22 @@ export default function FileGridCard({
         )}
       </div>
 
-      {/* Hero Preview Body (Direct Thumbnail, Dynamic Image/PDF/Video, Dynamic Text Snippet, or Stylized Skeleton) */}
+      {/* Hero Preview Body (Direct B2 Thumbnail, Dynamic PDF/Video/Text, or Stylized Skeleton) */}
       <div className="w-full h-32 sm:h-36 rounded-lg overflow-hidden bg-neutral-100 dark:bg-neutral-800/50 flex items-center justify-center relative mb-2.5 border border-neutral-200/60 dark:border-neutral-800/60">
-        {hasDirectThumbnail ? (
+        {resolvedThumbnail ? (
           <>
             <img
-              src={displayThumbnail}
-              alt={file.name}
-              loading="lazy"
-              decoding="async"
-              onError={() => setImgError(true)}
-              className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-105"
-            />
-            {isVideo && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black/20 pointer-events-none">
-                <div className="w-8 h-8 rounded-full bg-black/60 backdrop-blur-sm flex items-center justify-center text-white shadow-md">
-                  <Play className="w-4 h-4 fill-white translate-x-0.5" />
-                </div>
-              </div>
-            )}
-          </>
-        ) : dynamicPreview?.type === 'image' && dynamicPreview.url && !imgError ? (
-          <>
-            <img
-              src={dynamicPreview.url}
+              src={resolvedThumbnail}
               alt={file.name}
               loading="lazy"
               decoding="async"
               onError={() => setImgError(true)}
               className={`w-full h-full ${
-                dynamicPreview.isPdf || isPdf ? 'object-cover object-top' : 'object-cover'
+                dynamicPreview?.isPdf || isPdf ? 'object-cover object-top' : 'object-cover'
               } transition-transform duration-200 group-hover:scale-105`}
             />
             {/* Top-Left Corner Badge for PDFs */}
-            {(dynamicPreview.isPdf || isPdf) && (
+            {(dynamicPreview?.isPdf || isPdf) && (
               <div className="absolute top-2 left-2 z-10 pointer-events-none">
                 <span className="px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider leading-none uppercase bg-red-500 text-white shadow-sm">
                   PDF
@@ -406,7 +394,7 @@ export default function FileGridCard({
               </div>
             )}
             {/* Play Button Overlay for Videos */}
-            {(dynamicPreview.isVideo || isVideo) && (
+            {(dynamicPreview?.isVideo || isVideo) && (
               <div className="absolute inset-0 flex items-center justify-center bg-black/20 pointer-events-none">
                 <div className="w-8 h-8 rounded-full bg-black/60 backdrop-blur-sm flex items-center justify-center text-white shadow-md">
                   <Play className="w-4 h-4 fill-white translate-x-0.5" />

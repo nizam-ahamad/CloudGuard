@@ -16,6 +16,7 @@ import CookieConsent from './components/CookieConsent';
 import QuotaUpgradeModal from './components/QuotaUpgradeModal';
 import BinView from './components/BinView';
 import FileGridCard from './components/FileGridCard';
+import { loadMediaThumbnails, getMediaThumbnail } from './utils/cardPreviewGenerator';
 import LandingPage from './pages/LandingPage';
 import AuthPage from './pages/AuthPage';
 import PrivacyPolicy from './pages/PrivacyPolicy';
@@ -1100,6 +1101,7 @@ function App() {
         setFiles(fileList);
         setHasMoreRecent(false);
       }
+      loadMediaThumbnails(authToken);
     } catch (err) {
       // Ignore canceled requests from AbortController
       if (axios.isCancel(err) || err.name === 'CanceledError' || err.name === 'AbortError' || err.code === 'ERR_CANCELED') {
@@ -3902,9 +3904,9 @@ function App() {
                       <td className="flex-1 min-w-0 block md:table-cell md:py-3 md:px-6">
                         <div className="flex items-center gap-3">
                           <div className="w-8 h-8 rounded flex items-center justify-center shrink-0 bg-surface-dim text-on-surface-variant overflow-hidden">
-                            {(file.thumbnailUrl || file.thumbnail || file.accessUrl || file.url) ? (
+                            {(file.thumbnailUrl || getMediaThumbnail(file._id) || file.thumbnail) ? (
                               <img
-                                src={file.thumbnailUrl || file.thumbnail || file.accessUrl || file.url}
+                                src={file.thumbnailUrl || getMediaThumbnail(file._id) || file.thumbnail}
                                 alt=""
                                 className="w-full h-full object-cover rounded"
                                 loading="lazy"
@@ -3919,7 +3921,7 @@ function App() {
                             ) : null}
                             <span 
                               className="material-symbols-outlined text-sm"
-                              style={{ display: (file.thumbnailUrl || file.thumbnail || file.accessUrl || file.url) ? 'none' : 'inline-block' }}
+                              style={{ display: (file.thumbnailUrl || getMediaThumbnail(file._id) || file.thumbnail) ? 'none' : 'inline-block' }}
                             >
                               {getIconForType(file.type)}
                             </span>
