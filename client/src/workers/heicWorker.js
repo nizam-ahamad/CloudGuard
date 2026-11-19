@@ -19,6 +19,9 @@ async function getLibheif() {
 
 self.onmessage = async (e) => {
   const { id, buffer, maxDimension = 2048, quality = 0.85 } = e.data || {};
+  let images = null;
+  let origCanvas = null;
+  let finalCanvas = null;
 
   try {
     if (!buffer) {
@@ -28,7 +31,7 @@ self.onmessage = async (e) => {
     const libheif = await getLibheif();
     const decoder = new libheif.HeifDecoder();
     const uint8Array = new Uint8Array(buffer);
-    const images = decoder.decode(uint8Array);
+    images = decoder.decode(uint8Array);
 
     if (!images || images.length === 0) {
       throw new Error('No images found in HEIF container');
@@ -54,7 +57,7 @@ self.onmessage = async (e) => {
 
     // 2. OffscreenCanvas rendering entirely off the main thread
     if (typeof OffscreenCanvas !== 'undefined') {
-      const origCanvas = new OffscreenCanvas(width, height);
+      origCanvas = new OffscreenCanvas(width, height);
       const origCtx = origCanvas.getContext('2d');
       if (origCtx) {
         const imageData = origCtx.createImageData(width, height);
@@ -66,7 +69,7 @@ self.onmessage = async (e) => {
         });
         origCtx.putImageData(imageData, 0, 0);
 
-        let finalCanvas = origCanvas;
+        finalCanvas = origCanvas;
         if (targetWidth !== width || targetHeight !== height) {
           finalCanvas = new OffscreenCanvas(targetWidth, targetHeight);
           const finalCtx = finalCanvas.getContext('2d');
@@ -129,5 +132,34 @@ self.onmessage = async (e) => {
       success: false,
       error: err?.message || 'HEIC decode failed',
     });
+  } finally {
+    // Safe memory cleanup: release WASM image handles
+    if (images && Array.isArray(images)) {
+      for (const img of images) {
+        try {
+          if (typeof img?.free === 'function') {
+            img.free();
+          } else if (typeof img?.close === 'function') {
+            img.close();
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+    }
+
+    // Safe memory cleanup: release OffscreenCanvas backing store memory
+    try {
+      if (origCanvas) {
+        origCanvas.width = 0;
+        origCanvas.height = 0;
+      }
+      if (finalCanvas && finalCanvas !== origCanvas) {
+        finalCanvas.width = 0;
+        finalCanvas.height = 0;
+      }
+    } catch (e) {
+      // ignore
+    }
   }
 };

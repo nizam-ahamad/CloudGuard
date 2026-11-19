@@ -8,15 +8,22 @@
  * - Off-thread decoding: Eliminates UI click lag and scrolling stutter.
  * - Single-worker priority queue: Visible photo ('high') jumps ahead of
  *   background preloads ('low') so preloading never starves the active slide.
- * - AbortSignal cancellation: Slide changes immediately abort in-flight work.
- * - 25-second watchdog: Hung or malformed WebAssembly decodes are terminated safely.
- * - Max dimension capping: 2048px max edge reduces memory footprint on mobile devices.
+ * - Bulletproof settle() guard: Exactly one resolution/rejection path per task,
+ *   guaranteeing timers, listeners, and worker state are always cleared.
+ * - Active-Job Abort Terminate & Respawn: If the user changes slides during
+ *   synchronous WASM decoding, immediately kills the hung worker and starts
+ *   the new slide in 0ms on a freshly spawned worker.
+ * - Crash & OOM Recovery: Handles worker.onerror and worker.onmessageerror by
+ *   respawning the worker and pumping the queue so subsequent photos never freeze.
+ * - 15-second hard watchdog: Starts on enqueue to cap total wait and execution time.
+ * - Max dimension capping: 2048px max edge prevents mobile memory exhaustion.
  */
 
 let worker = null;
 let currentTaskId = 0;
 let activeTask = null;
 const queue = [];
+const HARD_TIMEOUT_MS = 15000; // 15s hard cap from enqueue to completion
 
 function getWorker() {
   if (!worker) {
@@ -25,6 +32,7 @@ function getWorker() {
     });
     worker.onmessage = handleWorkerMessage;
     worker.onerror = handleWorkerError;
+    worker.onmessageerror = handleWorkerError;
   }
   return worker;
 }
@@ -40,6 +48,11 @@ function terminateWorker() {
   }
 }
 
+function respawnWorker() {
+  terminateWorker();
+  return getWorker();
+}
+
 async function handleWorkerMessage(e) {
   const { id, success, blob, raw, error } = e.data || {};
   if (!activeTask || activeTask.id !== id) {
@@ -47,63 +60,49 @@ async function handleWorkerMessage(e) {
   }
 
   const task = activeTask;
-  activeTask = null;
-
-  if (task.timeoutId) {
-    clearTimeout(task.timeoutId);
-  }
-  if (task.signalCleanup) {
-    task.signalCleanup();
-  }
 
   if (task.signal?.aborted) {
-    task.reject(new DOMException('Aborted', 'AbortError'));
-    processQueue();
+    task.settle(() => task.reject(new DOMException('Aborted', 'AbortError')));
     return;
   }
 
-  if (!success) {
-    task.reject(new Error(error || 'HEIC decode failed in worker'));
-    processQueue();
+  if (!success || error) {
+    task.settle(() => task.reject(new Error(error || 'HEIC decode failed in worker')));
     return;
   }
 
   if (blob) {
-    task.resolve(blob);
-    processQueue();
+    task.settle(() => task.resolve(blob));
     return;
   }
 
   if (raw) {
     try {
       const convertedBlob = await rawToBlob(raw, task.quality);
-      task.resolve(convertedBlob);
+      task.settle(() => task.resolve(convertedBlob));
     } catch (err) {
-      task.reject(err);
+      task.settle(() => task.reject(err));
     }
-    processQueue();
     return;
   }
 
-  task.reject(new Error('Unknown response from HEIC worker'));
-  processQueue();
+  task.settle(() => task.reject(new Error('Unknown response from HEIC worker')));
 }
 
 function handleWorkerError(err) {
-  console.error('[heicDecoder] Worker error:', err);
-  if (activeTask) {
-    const task = activeTask;
-    activeTask = null;
-    if (task.timeoutId) clearTimeout(task.timeoutId);
-    if (task.signalCleanup) task.signalCleanup();
-    task.reject(new Error(err?.message || 'HEIC worker encountered an error'));
+  console.error('[heicDecoder] Worker crash or error:', err);
+  const task = activeTask;
+  // Respawn a fresh worker immediately so subsequent decodes work
+  respawnWorker();
+  if (task) {
+    task.settle(() => task.reject(new Error(err?.message || 'HEIC worker crashed or encountered an error')));
+  } else {
+    processQueue();
   }
-  terminateWorker();
-  processQueue();
 }
 
 function processQueue() {
-  // Enforce single active decode in worker so CPU is never overwhelmed
+  // Enforce single-worker concurrency so CPU is never overloaded
   if (activeTask) {
     return;
   }
@@ -112,12 +111,14 @@ function processQueue() {
     return;
   }
 
-  // Pop next non-aborted task
+  // Find next non-settled, non-aborted task
   while (queue.length > 0) {
     const nextTask = queue.shift();
+    if (nextTask.isSettled()) {
+      continue;
+    }
     if (nextTask.signal?.aborted) {
-      if (nextTask.signalCleanup) nextTask.signalCleanup();
-      nextTask.reject(new DOMException('Aborted', 'AbortError'));
+      nextTask.settle(() => nextTask.reject(new DOMException('Aborted', 'AbortError')));
       continue;
     }
     activeTask = nextTask;
@@ -127,39 +128,6 @@ function processQueue() {
   if (!activeTask) return;
 
   const w = getWorker();
-  const currentRunningId = activeTask.id;
-
-  // 25-second safety watchdog
-  activeTask.timeoutId = setTimeout(() => {
-    if (activeTask && activeTask.id === currentRunningId) {
-      console.warn(`[heicDecoder] Decode task ${currentRunningId} timed out after 25s`);
-      const task = activeTask;
-      activeTask = null;
-      if (task.signalCleanup) task.signalCleanup();
-      task.reject(new Error('HEIC decoding timed out after 25s'));
-      terminateWorker();
-      processQueue();
-    }
-  }, 25000);
-
-  // If active task's signal aborts while in-flight:
-  if (activeTask.signal) {
-    const onAbort = () => {
-      if (activeTask && activeTask.id === currentRunningId) {
-        clearTimeout(activeTask.timeoutId);
-        const task = activeTask;
-        activeTask = null;
-        if (task.signalCleanup) task.signalCleanup();
-        task.reject(new DOMException('Aborted', 'AbortError'));
-        terminateWorker(); // Terminate worker immediately to halt CPU consumption
-        processQueue();
-      }
-    };
-    activeTask.signal.addEventListener('abort', onAbort, { once: true });
-    activeTask.signalCleanup = () => {
-      activeTask?.signal?.removeEventListener('abort', onAbort);
-    };
-  }
 
   // Dispatch message with transferable ArrayBuffer
   try {
@@ -182,12 +150,9 @@ function processQueue() {
         quality: activeTask.quality,
       });
     } catch (postErr) {
-      if (activeTask.timeoutId) clearTimeout(activeTask.timeoutId);
-      if (activeTask.signalCleanup) activeTask.signalCleanup();
-      const task = activeTask;
-      activeTask = null;
-      task.reject(postErr);
-      processQueue();
+      const failedTask = activeTask;
+      respawnWorker();
+      failedTask.settle(() => failedTask.reject(postErr));
     }
   }
 }
@@ -295,6 +260,10 @@ export async function decodeHeicToBlob(inputBlobOrBuffer, quality = 0.85, option
 
   return new Promise((resolve, reject) => {
     const taskId = ++currentTaskId;
+    let settled = false;
+    let timeoutId = null;
+    let onAbortListener = null;
+
     const task = {
       id: taskId,
       buffer,
@@ -304,23 +273,67 @@ export async function decodeHeicToBlob(inputBlobOrBuffer, quality = 0.85, option
       signal,
       resolve,
       reject,
-      timeoutId: null,
-      signalCleanup: null,
+      isSettled: () => settled,
+      settle: (action) => {
+        if (settled) return;
+        settled = true;
+
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+
+        if (signal && onAbortListener) {
+          signal.removeEventListener('abort', onAbortListener);
+          onAbortListener = null;
+        }
+
+        // If this was the active task, clear active pointer
+        if (activeTask && activeTask.id === taskId) {
+          activeTask = null;
+        } else {
+          // If still in waiting queue, remove it
+          const idx = queue.findIndex((t) => t.id === taskId);
+          if (idx !== -1) {
+            queue.splice(idx, 1);
+          }
+        }
+
+        // Perform resolution / rejection
+        try {
+          if (typeof action === 'function') {
+            action();
+          }
+        } finally {
+          // Always pump queue so next task starts immediately
+          processQueue();
+        }
+      },
     };
 
+    // Hard 15s watchdog starts on enqueue to cap total wait + decode duration
+    timeoutId = setTimeout(() => {
+      if (settled) return;
+      console.warn(`[heicDecoder] Decode task ${taskId} timed out after 15s`);
+      const isCurrentlyActive = Boolean(activeTask && activeTask.id === taskId);
+      if (isCurrentlyActive) {
+        respawnWorker(); // Terminate hung WASM worker immediately
+      }
+      task.settle(() => reject(new Error('HEIC decoding timed out after 15s')));
+    }, HARD_TIMEOUT_MS);
+
+    // AbortSignal handling:
+    // If active task's signal aborts (slide switched), terminate & respawn immediately!
     if (signal) {
-      const onSignalAbort = () => {
-        const idx = queue.indexOf(task);
-        if (idx !== -1) {
-          queue.splice(idx, 1);
-          signal.removeEventListener('abort', onSignalAbort);
-          reject(new DOMException('Aborted', 'AbortError'));
+      onAbortListener = () => {
+        if (settled) return;
+        const isCurrentlyActive = Boolean(activeTask && activeTask.id === taskId);
+        if (isCurrentlyActive) {
+          respawnWorker(); // Synchronous WASM decode is running; terminate immediately
         }
+        task.settle(() => reject(new DOMException('Aborted', 'AbortError')));
       };
-      signal.addEventListener('abort', onSignalAbort, { once: true });
-      task.signalCleanup = () => {
-        signal.removeEventListener('abort', onSignalAbort);
-      };
+      signal.addEventListener('abort', onAbortListener, { once: true });
     }
 
     // Priority insertion:

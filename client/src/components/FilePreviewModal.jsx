@@ -134,7 +134,7 @@ export async function getOrDecodeHeic(file, signedUrl, signal, options = {}) {
   }
 
   // 2. In-flight Promise deduplication
-  const inFlightKey = `heic:${fileId || signedUrl}`;
+  const inFlightKey = fileId ? `heic:${fileId}` : `heic:${signedUrl}`;
   if (inFlightPromises.has(inFlightKey)) {
     return inFlightPromises.get(inFlightKey);
   }
@@ -172,10 +172,19 @@ export async function getOrDecodeHeic(file, signedUrl, signal, options = {}) {
       return objectUrl;
     } finally {
       inFlightPromises.delete(inFlightKey);
+      if (fileId) {
+        inFlightPromises.delete(`heic:${fileId}`);
+      }
+      if (signedUrl) {
+        inFlightPromises.delete(`heic:${signedUrl}`);
+      }
     }
   })();
 
   inFlightPromises.set(inFlightKey, decodePromise);
+  if (fileId) {
+    inFlightPromises.set(`heic:${fileId}`, decodePromise);
+  }
   return decodePromise;
 }
 
@@ -309,18 +318,21 @@ export function HeicPreviewImage({ fileId, src, alt, className, fallbackUrl, thu
           setHasError(false);
           if (onLoad) onLoad(objectUrl);
         } else {
-          setHasError(true);
           setIsLoading(false);
+          setHasError(true);
           if (onLoad) onLoad(null);
         }
       } catch (err) {
         if (err.name === 'AbortError') {
+          if (isMounted) {
+            setIsLoading(false);
+          }
           return;
         }
-        console.warn('[HEIC Preview] Decoding failed:', err);
+        console.warn('[HEIC Preview] Decoding failed or timed out:', err);
         if (isMounted) {
-          setHasError(true);
           setIsLoading(false);
+          setHasError(true);
           if (onLoad) onLoad(null);
         }
       }
