@@ -17,6 +17,7 @@
  *   respawning the worker and pumping the queue so subsequent photos never freeze.
  * - 15-second hard watchdog: Starts on enqueue to cap total wait and execution time.
  * - Max dimension capping: 2048px max edge prevents mobile memory exhaustion.
+ * - Clear Error Logging: Visible in DevTools Console via [HEIC Decode Error].
  */
 
 let worker = null;
@@ -54,7 +55,7 @@ function respawnWorker() {
 }
 
 async function handleWorkerMessage(e) {
-  const { id, success, blob, raw, error } = e.data || {};
+  const { id, success, blob, arrayBuffer, mimeType, raw, error } = e.data || {};
   if (!activeTask || activeTask.id !== id) {
     return;
   }
@@ -67,7 +68,9 @@ async function handleWorkerMessage(e) {
   }
 
   if (!success || error) {
-    task.settle(() => task.reject(new Error(error || 'HEIC decode failed in worker')));
+    const err = new Error(error || 'HEIC decode failed in worker');
+    console.error('[HEIC Decode Error] Worker reported failure:', err);
+    task.settle(() => task.reject(err));
     return;
   }
 
@@ -76,21 +79,34 @@ async function handleWorkerMessage(e) {
     return;
   }
 
+  if (arrayBuffer) {
+    try {
+      const recoveredBlob = new Blob([arrayBuffer], { type: mimeType || 'image/webp' });
+      task.settle(() => task.resolve(recoveredBlob));
+      return;
+    } catch (blobErr) {
+      console.error('[HEIC Decode Error] Failed to reconstruct Blob from arrayBuffer:', blobErr);
+    }
+  }
+
   if (raw) {
     try {
       const convertedBlob = await rawToBlob(raw, task.quality);
       task.settle(() => task.resolve(convertedBlob));
     } catch (err) {
+      console.error('[HEIC Decode Error] rawToBlob failed:', err);
       task.settle(() => task.reject(err));
     }
     return;
   }
 
-  task.settle(() => task.reject(new Error('Unknown response from HEIC worker')));
+  const unknownErr = new Error('Unknown response from HEIC worker');
+  console.error('[HEIC Decode Error]', unknownErr);
+  task.settle(() => task.reject(unknownErr));
 }
 
 function handleWorkerError(err) {
-  console.error('[heicDecoder] Worker crash or error:', err);
+  console.error('[HEIC Decode Error] Worker crashed or threw error:', err);
   const task = activeTask;
   // Respawn a fresh worker immediately so subsequent decodes work
   respawnWorker();
@@ -150,6 +166,7 @@ function processQueue() {
         quality: activeTask.quality,
       });
     } catch (postErr) {
+      console.error('[HEIC Decode Error] postMessage failed:', postErr);
       const failedTask = activeTask;
       respawnWorker();
       failedTask.settle(() => failedTask.reject(postErr));
@@ -314,12 +331,13 @@ export async function decodeHeicToBlob(inputBlobOrBuffer, quality = 0.85, option
     // Hard 15s watchdog starts on enqueue to cap total wait + decode duration
     timeoutId = setTimeout(() => {
       if (settled) return;
-      console.warn(`[heicDecoder] Decode task ${taskId} timed out after 15s`);
+      const err = new Error(`HEIC decoding timed out after ${HARD_TIMEOUT_MS / 1000}s`);
+      console.error('[HEIC Decode Error]', err);
       const isCurrentlyActive = Boolean(activeTask && activeTask.id === taskId);
       if (isCurrentlyActive) {
         respawnWorker(); // Terminate hung WASM worker immediately
       }
-      task.settle(() => reject(new Error('HEIC decoding timed out after 15s')));
+      task.settle(() => reject(err));
     }, HARD_TIMEOUT_MS);
 
     // AbortSignal handling:

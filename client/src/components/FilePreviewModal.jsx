@@ -136,7 +136,16 @@ export async function getOrDecodeHeic(file, signedUrl, signal, options = {}) {
   // 2. In-flight Promise deduplication
   const inFlightKey = fileId ? `heic:${fileId}` : `heic:${signedUrl}`;
   if (inFlightPromises.has(inFlightKey)) {
-    return inFlightPromises.get(inFlightKey);
+    const existing = inFlightPromises.get(inFlightKey);
+    try {
+      return await existing;
+    } catch (err) {
+      inFlightPromises.delete(inFlightKey);
+      if (fileId) inFlightPromises.delete(`heic:${fileId}`);
+      if (signedUrl) inFlightPromises.delete(`heic:${signedUrl}`);
+      if (signal?.aborted) throw err;
+      // Previous promise aborted or failed; continue below to attempt fresh decode for this caller
+    }
   }
 
   // 3. Decode promise
@@ -170,6 +179,11 @@ export async function getOrDecodeHeic(file, signedUrl, signal, options = {}) {
       }
 
       return objectUrl;
+    } catch (err) {
+      if (err?.name !== 'AbortError') {
+        console.error('[HEIC Decode Error] getOrDecodeHeic failed:', err);
+      }
+      throw err;
     } finally {
       inFlightPromises.delete(inFlightKey);
       if (fileId) {
@@ -276,6 +290,18 @@ export function HeicPreviewImage({ fileId, src, alt, className, fallbackUrl, thu
   const [isLoading, setIsLoading] = useState(!cachedInitialBlob);
   const [hasError, setHasError] = useState(false);
 
+  const onLoadRef = React.useRef(onLoad);
+  useEffect(() => {
+    onLoadRef.current = onLoad;
+  }, [onLoad]);
+
+  const srcRef = React.useRef(src);
+  useEffect(() => {
+    srcRef.current = src;
+  }, [src]);
+
+  const photoKey = resolvedId || src;
+
   useEffect(() => {
     // 1. If already cached in LRU, use it immediately in 0ms with zero loading spinner flash
     if (resolvedId) {
@@ -286,15 +312,15 @@ export function HeicPreviewImage({ fileId, src, alt, className, fallbackUrl, thu
         }
         setIsLoading(false);
         setHasError(false);
-        if (onLoad) onLoad(cached.decodedBlobUrl);
+        if (onLoadRef.current) onLoadRef.current(cached.decodedBlobUrl);
         return;
       }
     }
 
-    if (!src && !resolvedId) {
+    if (!photoKey) {
       setIsLoading(false);
       setHasError(true);
-      if (onLoad) onLoad(null);
+      if (onLoadRef.current) onLoadRef.current(null);
       return;
     }
 
@@ -306,7 +332,8 @@ export function HeicPreviewImage({ fileId, src, alt, className, fallbackUrl, thu
       setHasError(false);
 
       try {
-        const objectUrl = await getOrDecodeHeic(targetFile, src, abortController.signal, {
+        const targetSrc = srcRef.current || src;
+        const objectUrl = await getOrDecodeHeic(targetFile, targetSrc, abortController.signal, {
           priority: 'high',
           maxDimension: 2048,
         });
@@ -316,24 +343,22 @@ export function HeicPreviewImage({ fileId, src, alt, className, fallbackUrl, thu
           setBlobUrl(objectUrl);
           setIsLoading(false);
           setHasError(false);
-          if (onLoad) onLoad(objectUrl);
+          if (onLoadRef.current) onLoadRef.current(objectUrl);
         } else {
           setIsLoading(false);
           setHasError(true);
-          if (onLoad) onLoad(null);
+          if (onLoadRef.current) onLoadRef.current(null);
         }
       } catch (err) {
-        if (err.name === 'AbortError') {
-          if (isMounted) {
-            setIsLoading(false);
-          }
+        if (err?.name === 'AbortError') {
+          // Decode was aborted/re-triggered: do NOT fall back to thumbnail or error state
           return;
         }
-        console.warn('[HEIC Preview] Decoding failed or timed out:', err);
+        console.error('[HEIC Decode Error]', err);
         if (isMounted) {
           setIsLoading(false);
           setHasError(true);
-          if (onLoad) onLoad(null);
+          if (onLoadRef.current) onLoadRef.current(null);
         }
       }
     }
@@ -346,7 +371,7 @@ export function HeicPreviewImage({ fileId, src, alt, className, fallbackUrl, thu
       // decodedBlobUrl is preserved in the 25-item LRU cache for 0ms back-and-forth navigation,
       // and is revoked only when evicted from previewLruCache.
     };
-  }, [resolvedId, src, onLoad]);
+  }, [photoKey]);
 
   const effectiveFallback = fallbackUrl || thumbnailUrl;
 

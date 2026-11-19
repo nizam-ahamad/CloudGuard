@@ -93,7 +93,16 @@ self.onmessage = async (e) => {
         }
 
         if (blob) {
-          self.postMessage({ id, success: true, blob });
+          try {
+            self.postMessage({ id, success: true, blob });
+          } catch (postErr) {
+            // Fallback if Blob structured cloning is unsupported in current worker environment
+            const arrayBuffer = await blob.arrayBuffer();
+            self.postMessage(
+              { id, success: true, arrayBuffer, mimeType: blob.type || 'image/webp' },
+              [arrayBuffer]
+            );
+          }
           return;
         }
       }
@@ -133,22 +142,23 @@ self.onmessage = async (e) => {
       error: err?.message || 'HEIC decode failed',
     });
   } finally {
-    // Safe memory cleanup: release WASM image handles
-    if (images && Array.isArray(images)) {
-      for (const img of images) {
-        try {
-          if (typeof img?.free === 'function') {
-            img.free();
-          } else if (typeof img?.close === 'function') {
-            img.close();
+    // Safe memory cleanup: wrap in isolated try/catch so cleanup can NEVER break result delivery
+    try {
+      if (images && Array.isArray(images)) {
+        for (const img of images) {
+          try {
+            if (typeof img?.free === 'function') {
+              img.free();
+            } else if (typeof img?.close === 'function') {
+              img.close();
+            }
+          } catch (_) {
+            // ignore
           }
-        } catch (e) {
-          // ignore
         }
       }
-    }
+    } catch (_) {}
 
-    // Safe memory cleanup: release OffscreenCanvas backing store memory
     try {
       if (origCanvas) {
         origCanvas.width = 0;
@@ -158,8 +168,6 @@ self.onmessage = async (e) => {
         finalCanvas.width = 0;
         finalCanvas.height = 0;
       }
-    } catch (e) {
-      // ignore
-    }
+    } catch (_) {}
   }
 };
