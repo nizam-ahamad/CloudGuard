@@ -176,12 +176,14 @@ export async function getOrDecodeHeic(file, signedUrl, signal) {
 }
 
 /**
- * Safely preloads immediate neighbors (index + 1 / index - 1):
- * - Standard images: caches signedUrl and warms browser cache via Image()
- * - HEIC / HEIF: caches signedUrl and decodes into LRU cache
- * - Video / PDF / others: caches ONLY lightweight signedUrl metadata (zero large binary stream downloads)
+ * Safely preloads a media item for adjacent slides (index ± 1):
+ * - Checks previewLruCache first (no-op if already cached)
+ * - Fetches signed URL via getSignedUrlFn(file) or fetchAccessUrl
+ * - Standard images: warms browser cache via new Image().src = signedUrl
+ * - HEIC / HEIF: fetches + decodes via decodeHeicToBlob into previewLruCache (deduplicated via inFlightPromises)
+ * - Videos / PDFs / other large files: warms only lightweight signed URL metadata
  */
-export async function preloadNeighborFile(file, signal) {
+export async function preloadMediaItem(file, getSignedUrlFn, signal) {
   if (!file || signal?.aborted) return;
   const fileId = String(file._id || file.id || file.s3Key || '');
   if (!fileId) return;
@@ -190,23 +192,48 @@ export async function preloadNeighborFile(file, signal) {
   const isHeic = fileExt === 'heic' || fileExt === 'heif' || file.mimeType === 'image/heic' || file.mimeType === 'image/heif';
   const isStandardImage = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg'].includes(fileExt) || file.mimeType?.startsWith('image/');
 
+  // 1. Check if already fully cached in LRU (no-op)
+  const existing = getCachedPreviewEntry(fileId);
+  if (isHeic && existing?.decodedBlobUrl) {
+    return;
+  }
+  if (!isHeic && existing?.signedUrl && (Date.now() - existing.signedUrlFetchedAt < SIGNED_URL_TTL_MS)) {
+    return;
+  }
+
   try {
-    const signedUrl = await getOrFetchSignedUrl(file, signal);
+    // 2. Fetch signed URL using getSignedUrlFn or fallback to getOrFetchSignedUrl
+    let signedUrl = existing?.signedUrl;
+    if (!signedUrl || (Date.now() - existing.signedUrlFetchedAt >= SIGNED_URL_TTL_MS)) {
+      if (typeof getSignedUrlFn === 'function') {
+        signedUrl = await getSignedUrlFn(file);
+      } else {
+        signedUrl = await getOrFetchSignedUrl(file, signal);
+      }
+    }
     if (!signedUrl || signal?.aborted) return;
 
+    // Cache signedUrl in LRU cache
+    putCachedPreviewEntry(fileId, {
+      signedUrl,
+      signedUrlFetchedAt: Date.now(),
+    });
+
+    // 3. For .heic / .heif, fetch + decode via decodeHeicToBlob into previewLruCache
+    // (deduplicated via inFlightPromises so clicking > mid-preload awaits the same promise instead of decoding twice)
     if (isHeic) {
       await getOrDecodeHeic(file, signedUrl, signal);
       return;
     }
 
+    // 4. For standard images (jpg, jpeg, png, webp, gif), warm browser cache via Image()
     if (isStandardImage) {
       const img = new Image();
       img.src = signedUrl;
       return;
     }
 
-    // Videos / PDFs / other large files:
-    // Signed URL metadata is already cached in step 1. Do NOT download video/PDF binary streams in background.
+    // 5. For videos/PDFs, only lightweight signedUrl metadata is warmed (zero large binary stream downloads)
   } catch (err) {
     if (err?.name !== 'AbortError') {
       console.warn(`[Preload] Safe warm-up skipped for ${file.name || fileId}:`, err?.message || err);
@@ -215,46 +242,51 @@ export async function preloadNeighborFile(file, signal) {
 }
 
 /**
- * Lazy HEIC/HEIF Decoder & Renderer with LRU Caching
- * Leverages bounded LRU cache for 0ms transitions across slides.
+ * Convenience wrapper for neighbor preloading.
  */
-export function HeicPreviewImage({ src, alt, className, fallbackUrl, thumbnailUrl, file, fileId }) {
-  const targetFile = file || { _id: fileId, name: alt };
-  const effectiveFileId = String(fileId || file?._id || file?.id || (src ? src.split('?')[0] : ''));
+export async function preloadNeighborFile(file, signal) {
+  return preloadMediaItem(file, null, signal);
+}
 
-  // Synchronous cache hit check on initial render
-  const [blobUrl, setBlobUrl] = useState(() => {
-    if (effectiveFileId) {
-      const cached = getCachedPreviewEntry(effectiveFileId);
-      if (cached?.decodedBlobUrl) return cached.decodedBlobUrl;
-    }
-    return null;
-  });
-  const [isLoading, setIsLoading] = useState(() => !blobUrl);
+/**
+ * Lazy HEIC/HEIF Decoder & Renderer with LRU Caching
+ * Leverages bounded LRU cache for 0ms transitions across slides with zero loading spinner flash.
+ */
+export function HeicPreviewImage({ fileId, src, alt, className, fallbackUrl, thumbnailUrl, file }) {
+  const targetFile = file || { _id: fileId, name: alt };
+  const resolvedId = String(fileId || file?._id || file?.id || (src ? src.split('?')[0] : ''));
+
+  // Synchronous cache hit check on initial render - renders immediately in 0 ms with zero spinner flash
+  const cachedInitialBlob = resolvedId ? getCachedPreviewEntry(resolvedId)?.decodedBlobUrl || null : null;
+
+  const [blobUrl, setBlobUrl] = useState(cachedInitialBlob);
+  const [isLoading, setIsLoading] = useState(!cachedInitialBlob);
   const [hasError, setHasError] = useState(false);
 
   useEffect(() => {
+    // 1. If already cached in LRU, use it immediately in 0ms with zero loading spinner flash
+    if (resolvedId) {
+      const cached = getCachedPreviewEntry(resolvedId);
+      if (cached?.decodedBlobUrl) {
+        if (blobUrl !== cached.decodedBlobUrl) {
+          setBlobUrl(cached.decodedBlobUrl);
+        }
+        setIsLoading(false);
+        setHasError(false);
+        return;
+      }
+    }
+
+    if (!src && !resolvedId) {
+      setIsLoading(false);
+      setHasError(true);
+      return;
+    }
+
     let isMounted = true;
     const abortController = new AbortController();
 
     async function decodeHeic() {
-      // 1. If already cached in LRU, use it immediately in 0ms
-      if (effectiveFileId) {
-        const cached = getCachedPreviewEntry(effectiveFileId);
-        if (cached?.decodedBlobUrl) {
-          setBlobUrl(cached.decodedBlobUrl);
-          setIsLoading(false);
-          setHasError(false);
-          return;
-        }
-      }
-
-      if (!src && !effectiveFileId) {
-        setIsLoading(false);
-        setHasError(true);
-        return;
-      }
-
       setIsLoading(true);
       setHasError(false);
 
@@ -290,7 +322,7 @@ export function HeicPreviewImage({ src, alt, className, fallbackUrl, thumbnailUr
       // decodedBlobUrl is preserved in the 25-item LRU cache for 0ms back-and-forth navigation,
       // and is revoked only when evicted from previewLruCache.
     };
-  }, [src, effectiveFileId]);
+  }, [resolvedId, src]);
 
   const effectiveFallback = fallbackUrl || thumbnailUrl;
 
@@ -551,6 +583,7 @@ export default function FilePreviewModal({
 
           {isHeic ? (
             <HeicPreviewImage
+              key={fileId}
               src={effectiveUrl}
               alt={previewFile.name}
               file={previewFile}

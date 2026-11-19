@@ -23,7 +23,7 @@ import DeleteConfirmModal from '../components/DeleteConfirmModal';
 import { API_BASE_URL } from '../config';
 import { getCachedAccessUrl, fetchAccessUrl, prefetchAccessUrl } from '../utils/accessUrlCache';
 import { isHeicFile } from '../utils/thumbnailHelper';
-import { HeicPreviewImage } from '../components/FilePreviewModal';
+import { HeicPreviewImage, preloadMediaItem, getCachedPreviewEntry, putCachedPreviewEntry } from '../components/FilePreviewModal';
 
 // --------------------------------------------------------------------------
 // MODULE-LEVEL CACHES: Persist across tab switching to prevent network refetching
@@ -346,7 +346,8 @@ export default function PhotosView({ token: propToken }) {
     const fileId = item._id;
 
     // Check cache first for 0ms instant display and 0 network requests
-    const cachedUrl = getCachedAccessUrl(fileId) || urlCacheRef.current.get(fileId);
+    const cachedLru = getCachedPreviewEntry(fileId);
+    const cachedUrl = cachedLru?.signedUrl || getCachedAccessUrl(fileId) || urlCacheRef.current.get(fileId);
     if (cachedUrl) {
       urlCacheRef.current.set(fileId, cachedUrl);
       setOriginalUrl(cachedUrl);
@@ -368,6 +369,10 @@ export default function PhotosView({ token: propToken }) {
       const accessUrl = await fetchAccessUrl(fileId, token);
       if (accessUrl) {
         urlCacheRef.current.set(fileId, accessUrl);
+        putCachedPreviewEntry(fileId, {
+          signedUrl: accessUrl,
+          signedUrlFetchedAt: Date.now(),
+        });
       }
 
       // Only update state if the user hasn't already clicked away to another item
@@ -407,6 +412,38 @@ export default function PhotosView({ token: propToken }) {
 
   const navigateNext = handleNext;
   const navigatePrev = handlePrev;
+
+  // 3b. Safe Neighbor Preloading (index ± 1) for Photos Lightbox
+  // Once the active lightbox item is open and ready, schedules a 250ms debounced warm-up
+  // with AbortController cleanup on slide change or modal close
+  useEffect(() => {
+    if (previewIndex === null || !currentPreviewItem || mediaList.length === 0) {
+      return;
+    }
+
+    const abortController = new AbortController();
+    const timer = setTimeout(() => {
+      const nextIndex = previewIndex + 1 < mediaList.length ? previewIndex + 1 : -1;
+      const prevIndex = previewIndex - 1 >= 0 ? previewIndex - 1 : -1;
+
+      const getSignedUrl = (file) => {
+        const token = propToken || (typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null);
+        return fetchAccessUrl(file._id, token);
+      };
+
+      if (nextIndex >= 0) {
+        preloadMediaItem(mediaList[nextIndex], getSignedUrl, abortController.signal);
+      }
+      if (prevIndex >= 0) {
+        preloadMediaItem(mediaList[prevIndex], getSignedUrl, abortController.signal);
+      }
+    }, 250);
+
+    return () => {
+      clearTimeout(timer);
+      abortController.abort();
+    };
+  }, [previewIndex, currentPreviewItem, mediaList, propToken]);
 
   // 4. Grid card click handler
   const openPreview = useCallback((item, index = null) => {
@@ -1163,6 +1200,9 @@ export default function PhotosView({ token: propToken }) {
               <div className="relative flex items-center justify-center max-h-[80vh] w-full">
                 {isHeicFile(currentPreviewItem) ? (
                   <HeicPreviewImage
+                    key={currentPreviewItem._id}
+                    fileId={currentPreviewItem._id}
+                    file={currentPreviewItem}
                     src={fullMediaUrl || currentPreviewItem.accessUrl || currentPreviewItem.url}
                     alt={currentPreviewItem.name}
                     className="max-h-[80vh] max-w-full object-contain rounded-lg shadow-2xl transition-opacity duration-300"
