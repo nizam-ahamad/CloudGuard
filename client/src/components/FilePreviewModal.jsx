@@ -1,50 +1,284 @@
-import React, { useState, useEffect } from 'react';
-import { Loader2 } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { fetchAccessUrl } from '../utils/accessUrlCache';
+
+// -------------------------------------------------------------
+// Bounded 25-Item Session LRU Cache & In-Flight Deduplication
+// -------------------------------------------------------------
+const MAX_CACHE_SIZE = 25;
+const SIGNED_URL_TTL_MS = 600_000; // 10 minutes (600,000 ms)
+
+const previewLruCache = new Map();
+const inFlightPromises = new Map();
 
 /**
- * Lazy HEIC/HEIF Decoder & Renderer
- * Fetches the HEIC blob, converts it client-side to a JPEG object URL using heic2any,
- * manages loading state with a spinner, and revokes the object URL on cleanup.
+ * Retrieves a preview entry from the LRU cache, refreshing its recency.
  */
-export function HeicPreviewImage({ src, alt, className, fallbackUrl, thumbnailUrl }) {
-  const [blobUrl, setBlobUrl] = useState(null);
-  const [isLoading, setIsLoading] = useState(true);
+export function getCachedPreviewEntry(fileId) {
+  if (!fileId) return null;
+  const key = String(fileId);
+  const entry = previewLruCache.get(key);
+  if (entry) {
+    previewLruCache.delete(key);
+    previewLruCache.set(key, entry);
+    return entry;
+  }
+  return null;
+}
+
+/**
+ * Stores or updates a preview entry in the bounded 25-item LRU cache.
+ * Automatically evicts the oldest entry and revokes its decodedBlobUrl.
+ */
+export function putCachedPreviewEntry(fileId, updates) {
+  if (!fileId) return;
+  const key = String(fileId);
+  const existing = previewLruCache.get(key) || {};
+  const updatedEntry = {
+    ...existing,
+    ...updates,
+  };
+
+  if (previewLruCache.has(key)) {
+    previewLruCache.delete(key);
+  }
+  previewLruCache.set(key, updatedEntry);
+
+  if (previewLruCache.size > MAX_CACHE_SIZE) {
+    const oldestKey = previewLruCache.keys().next().value;
+    const evicted = previewLruCache.get(oldestKey);
+    if (evicted?.decodedBlobUrl) {
+      try {
+        URL.revokeObjectURL(evicted.decodedBlobUrl);
+      } catch (e) {
+        console.warn('[LRU Cache] Revoke ObjectURL error on eviction:', e);
+      }
+    }
+    previewLruCache.delete(oldestKey);
+  }
+
+  return updatedEntry;
+}
+
+/**
+ * Returns a cached signed URL (valid for 10m) or fetches a new one,
+ * deduplicating concurrent in-flight requests.
+ */
+export async function getOrFetchSignedUrl(file, signal) {
+  if (!file) return null;
+  const fileId = String(file._id || file.id || file.s3Key || '');
+  if (!fileId) return file.url || file.accessUrl || file.downloadUrl || null;
+
+  // 1. Check LRU cache
+  const cached = getCachedPreviewEntry(fileId);
+  if (cached?.signedUrl && cached.signedUrlFetchedAt && (Date.now() - cached.signedUrlFetchedAt < SIGNED_URL_TTL_MS)) {
+    return cached.signedUrl;
+  }
+
+  // 2. In-flight Promise deduplication
+  const inFlightKey = `url:${fileId}`;
+  if (inFlightPromises.has(inFlightKey)) {
+    return inFlightPromises.get(inFlightKey);
+  }
+
+  // 3. Direct URL already on file object
+  if (file.url || file.accessUrl || file.downloadUrl) {
+    const directUrl = file.url || file.accessUrl || file.downloadUrl;
+    putCachedPreviewEntry(fileId, {
+      signedUrl: directUrl,
+      signedUrlFetchedAt: Date.now(),
+    });
+    return directUrl;
+  }
+
+  // 4. Fetch via fetchAccessUrl
+  const promise = (async () => {
+    try {
+      const url = await fetchAccessUrl(fileId);
+      if (url) {
+        putCachedPreviewEntry(fileId, {
+          signedUrl: url,
+          signedUrlFetchedAt: Date.now(),
+        });
+      }
+      return url || null;
+    } catch (err) {
+      if (err?.name !== 'AbortError') {
+        console.warn(`[FilePreviewModal] Failed to get signed URL for ${fileId}:`, err);
+      }
+      return null;
+    } finally {
+      inFlightPromises.delete(inFlightKey);
+    }
+  })();
+
+  inFlightPromises.set(inFlightKey, promise);
+  return promise;
+}
+
+/**
+ * Returns a cached decoded HEIC blob URL or fetches and decodes it,
+ * deduplicating concurrent in-flight requests so neighbor preloading
+ * seamlessly hands off to active viewing with zero duplicate work.
+ */
+export async function getOrDecodeHeic(file, signedUrl, signal) {
+  const fileId = String(file?._id || file?.id || file?.s3Key || '');
+  if (!fileId && !signedUrl) return null;
+
+  // 1. Check LRU cache
+  if (fileId) {
+    const cached = getCachedPreviewEntry(fileId);
+    if (cached?.decodedBlobUrl) {
+      return cached.decodedBlobUrl;
+    }
+  }
+
+  // 2. In-flight Promise deduplication
+  const inFlightKey = `heic:${fileId || signedUrl}`;
+  if (inFlightPromises.has(inFlightKey)) {
+    return inFlightPromises.get(inFlightKey);
+  }
+
+  // 3. Decode promise
+  const decodePromise = (async () => {
+    try {
+      let targetUrl = signedUrl;
+      if (!targetUrl && file) {
+        targetUrl = await getOrFetchSignedUrl(file, signal);
+      }
+      if (!targetUrl) throw new Error('No preview URL available for HEIC');
+
+      const resp = await fetch(targetUrl, { signal });
+      if (!resp.ok) throw new Error(`HTTP error ${resp.status}`);
+      const arrayBuffer = await resp.arrayBuffer();
+
+      const { decodeHeicToBlob } = await import('../utils/heicDecoder');
+      const decodedBlob = await decodeHeicToBlob(arrayBuffer, 0.86);
+
+      const objectUrl = URL.createObjectURL(decodedBlob);
+
+      if (fileId) {
+        putCachedPreviewEntry(fileId, {
+          decodedBlobUrl: objectUrl,
+          signedUrl: targetUrl,
+          signedUrlFetchedAt: Date.now(),
+        });
+      }
+
+      return objectUrl;
+    } finally {
+      inFlightPromises.delete(inFlightKey);
+    }
+  })();
+
+  inFlightPromises.set(inFlightKey, decodePromise);
+  return decodePromise;
+}
+
+/**
+ * Safely preloads immediate neighbors (index + 1 / index - 1):
+ * - Standard images: caches signedUrl and warms browser cache via Image()
+ * - HEIC / HEIF: caches signedUrl and decodes into LRU cache
+ * - Video / PDF / others: caches ONLY lightweight signedUrl metadata (zero large binary stream downloads)
+ */
+export async function preloadNeighborFile(file, signal) {
+  if (!file || signal?.aborted) return;
+  const fileId = String(file._id || file.id || file.s3Key || '');
+  if (!fileId) return;
+
+  const fileExt = (file.type || (file.name || '').split('.').pop() || '').toLowerCase();
+  const isHeic = fileExt === 'heic' || fileExt === 'heif' || file.mimeType === 'image/heic' || file.mimeType === 'image/heif';
+  const isStandardImage = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg'].includes(fileExt) || file.mimeType?.startsWith('image/');
+
+  try {
+    const signedUrl = await getOrFetchSignedUrl(file, signal);
+    if (!signedUrl || signal?.aborted) return;
+
+    if (isHeic) {
+      await getOrDecodeHeic(file, signedUrl, signal);
+      return;
+    }
+
+    if (isStandardImage) {
+      const img = new Image();
+      img.src = signedUrl;
+      return;
+    }
+
+    // Videos / PDFs / other large files:
+    // Signed URL metadata is already cached in step 1. Do NOT download video/PDF binary streams in background.
+  } catch (err) {
+    if (err?.name !== 'AbortError') {
+      console.warn(`[Preload] Safe warm-up skipped for ${file.name || fileId}:`, err?.message || err);
+    }
+  }
+}
+
+/**
+ * Lazy HEIC/HEIF Decoder & Renderer with LRU Caching
+ * Leverages bounded LRU cache for 0ms transitions across slides.
+ */
+export function HeicPreviewImage({ src, alt, className, fallbackUrl, thumbnailUrl, file, fileId }) {
+  const targetFile = file || { _id: fileId, name: alt };
+  const effectiveFileId = String(fileId || file?._id || file?.id || (src ? src.split('?')[0] : ''));
+
+  // Synchronous cache hit check on initial render
+  const [blobUrl, setBlobUrl] = useState(() => {
+    if (effectiveFileId) {
+      const cached = getCachedPreviewEntry(effectiveFileId);
+      if (cached?.decodedBlobUrl) return cached.decodedBlobUrl;
+    }
+    return null;
+  });
+  const [isLoading, setIsLoading] = useState(() => !blobUrl);
   const [hasError, setHasError] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
-    let objectUrl = null;
     const abortController = new AbortController();
 
     async function decodeHeic() {
-      if (!src) {
+      // 1. If already cached in LRU, use it immediately in 0ms
+      if (effectiveFileId) {
+        const cached = getCachedPreviewEntry(effectiveFileId);
+        if (cached?.decodedBlobUrl) {
+          setBlobUrl(cached.decodedBlobUrl);
+          setIsLoading(false);
+          setHasError(false);
+          return;
+        }
+      }
+
+      if (!src && !effectiveFileId) {
         setIsLoading(false);
         setHasError(true);
         return;
       }
+
       setIsLoading(true);
       setHasError(false);
 
       try {
-        const resp = await fetch(src, { signal: abortController.signal });
-        if (!resp.ok) throw new Error(`HTTP error ${resp.status}`);
-        const arrayBuffer = await resp.arrayBuffer();
+        const objectUrl = await getOrDecodeHeic(targetFile, src, abortController.signal);
         if (!isMounted) return;
 
-        const { decodeHeicToBlob } = await import('../utils/heicDecoder');
-        const decodedBlob = await decodeHeicToBlob(arrayBuffer, 0.92);
-        if (!isMounted) return;
-
-        objectUrl = URL.createObjectURL(decodedBlob);
-        setBlobUrl(objectUrl);
+        if (objectUrl) {
+          setBlobUrl(objectUrl);
+          setIsLoading(false);
+          setHasError(false);
+        } else {
+          setHasError(true);
+          setIsLoading(false);
+        }
       } catch (err) {
         if (err.name === 'AbortError') {
           return;
         }
         console.warn('[HEIC Preview] Decoding failed:', err);
-        if (isMounted) setHasError(true);
-      } finally {
-        if (isMounted) setIsLoading(false);
+        if (isMounted) {
+          setHasError(true);
+          setIsLoading(false);
+        }
       }
     }
 
@@ -53,11 +287,10 @@ export function HeicPreviewImage({ src, alt, className, fallbackUrl, thumbnailUr
     return () => {
       isMounted = false;
       abortController.abort();
-      if (objectUrl) {
-        URL.revokeObjectURL(objectUrl);
-      }
+      // decodedBlobUrl is preserved in the 25-item LRU cache for 0ms back-and-forth navigation,
+      // and is revoked only when evicted from previewLruCache.
     };
-  }, [src]);
+  }, [src, effectiveFileId]);
 
   const effectiveFallback = fallbackUrl || thumbnailUrl;
 
@@ -73,7 +306,7 @@ export function HeicPreviewImage({ src, alt, className, fallbackUrl, thumbnailUr
         )}
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/20 rounded-lg">
           <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-          <span className="text-xs font-medium text-white/90 drop-shadow">Decoding full-resolution HEIC...</span>
+          <span className="text-xs font-medium text-white/90 drop-shadow">Loading high-resolution photo...</span>
         </div>
       </div>
     );
@@ -100,8 +333,102 @@ export default function FilePreviewModal({
   previewText,
   closePreview,
   handleDownload,
+  files,
+  fileList,
+  allFiles,
+  mediaList,
+  currentIndex,
+  onNavigate,
+  onNext,
+  onPrev,
 }) {
   if (!previewFile) return null;
+
+  const fileId = previewFile._id || previewFile.id;
+
+  // Populate LRU cache whenever previewUrl is passed
+  useEffect(() => {
+    if (previewFile && previewUrl && fileId) {
+      putCachedPreviewEntry(fileId, {
+        signedUrl: previewUrl,
+        signedUrlFetchedAt: Date.now(),
+      });
+    }
+  }, [previewFile, previewUrl, fileId]);
+
+  const cachedEntry = fileId ? getCachedPreviewEntry(fileId) : null;
+  const effectiveUrl = (cachedEntry?.signedUrl && (Date.now() - cachedEntry.signedUrlFetchedAt < SIGNED_URL_TTL_MS))
+    ? cachedEntry.signedUrl
+    : (previewUrl || previewFile.s3Url || previewFile.url || previewFile.downloadUrl || '');
+
+  const items = files || fileList || allFiles || mediaList || [];
+  const hasItems = Array.isArray(items) && items.length > 0;
+  const activeIdx = typeof currentIndex === 'number' && currentIndex >= 0
+    ? currentIndex
+    : hasItems
+    ? items.findIndex((f) => String(f._id || f.id) === String(fileId))
+    : -1;
+
+  const hasPrev = activeIdx > 0;
+  const hasNext = activeIdx >= 0 && activeIdx < items.length - 1;
+
+  const handlePrev = useCallback(() => {
+    if (onPrev) {
+      onPrev();
+    } else if (onNavigate && hasPrev) {
+      onNavigate(activeIdx - 1, items[activeIdx - 1]);
+    }
+  }, [onPrev, onNavigate, hasPrev, activeIdx, items]);
+
+  const handleNext = useCallback(() => {
+    if (onNext) {
+      onNext();
+    } else if (onNavigate && hasNext) {
+      onNavigate(activeIdx + 1, items[activeIdx + 1]);
+    }
+  }, [onNext, onNavigate, hasNext, activeIdx, items]);
+
+  // Keyboard navigation (< / > / Escape)
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'ArrowLeft' && hasPrev) {
+        handlePrev();
+      } else if (e.key === 'ArrowRight' && hasNext) {
+        handleNext();
+      } else if (e.key === 'Escape' && closePreview) {
+        closePreview();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [hasPrev, hasNext, handlePrev, handleNext, closePreview]);
+
+  // Safe Neighbor Preloading (index + 1 and index - 1)
+  // Only after active slide finishes loading (!loadingActive), schedule 250ms debounced background warm-up
+  const loadingActive = !effectiveUrl && !cachedEntry?.decodedBlobUrl;
+
+  useEffect(() => {
+    if (!previewFile || loadingActive || !hasItems || activeIdx < 0) return;
+
+    const nextFile = activeIdx + 1 < items.length ? items[activeIdx + 1] : null;
+    const prevFile = activeIdx - 1 >= 0 ? items[activeIdx - 1] : null;
+    if (!nextFile && !prevFile) return;
+
+    const abortController = new AbortController();
+    const timeoutId = setTimeout(() => {
+      if (nextFile) {
+        preloadNeighborFile(nextFile, abortController.signal);
+      }
+      if (prevFile) {
+        preloadNeighborFile(prevFile, abortController.signal);
+      }
+    }, 250);
+
+    return () => {
+      clearTimeout(timeoutId);
+      abortController.abort();
+    };
+  }, [previewFile, loadingActive, hasItems, activeIdx, items]);
 
   const isAudio = Boolean(
     previewFile?.mimeType?.startsWith('audio/') ||
@@ -135,17 +462,53 @@ export default function FilePreviewModal({
           </button>
         </div>
       </div>
-      <div className="flex-1 overflow-hidden flex items-center justify-center p-4 w-full max-w-5xl mx-auto">
-        <video
-          src={previewUrl || previewFile.s3Url || previewFile.url || previewFile.downloadUrl}
-          controls
-          autoPlay
-          playsInline
-          preload="auto"
-          className="max-w-full max-h-[80vh] rounded-lg object-contain shadow-2xl bg-black"
-        >
-          Your browser does not support the video tag.
-        </video>
+      <div className="relative flex-1 overflow-hidden flex items-center justify-center p-4 w-full max-w-5xl mx-auto">
+        {hasPrev && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              handlePrev();
+            }}
+            className="absolute left-2 sm:left-4 z-30 p-2 sm:p-3 rounded-full bg-black/60 hover:bg-black/80 text-white/90 hover:text-white border border-white/20 shadow-xl transition-all cursor-pointer active:scale-95"
+            aria-label="Previous file"
+            title="Previous (Left Arrow)"
+          >
+            <ChevronLeft className="w-5 h-5 sm:w-6 sm:h-6" />
+          </button>
+        )}
+        {effectiveUrl ? (
+          <video
+            key={effectiveUrl}
+            src={effectiveUrl}
+            controls
+            autoPlay
+            playsInline
+            preload="auto"
+            className="max-w-full max-h-[80vh] rounded-lg object-contain shadow-2xl bg-black"
+          >
+            Your browser does not support the video tag.
+          </video>
+        ) : (
+          <div className="flex flex-col items-center justify-center gap-2 text-white/80 min-h-[200px]">
+            <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+            <span className="text-xs font-medium">Loading preview...</span>
+          </div>
+        )}
+        {hasNext && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleNext();
+            }}
+            className="absolute right-2 sm:right-4 z-30 p-2 sm:p-3 rounded-full bg-black/60 hover:bg-black/80 text-white/90 hover:text-white border border-white/20 shadow-xl transition-all cursor-pointer active:scale-95"
+            aria-label="Next file"
+            title="Next (Right Arrow)"
+          >
+            <ChevronRight className="w-5 h-5 sm:w-6 sm:h-6" />
+          </button>
+        )}
       </div>
     </div>
   ) : (
@@ -170,23 +533,54 @@ export default function FilePreviewModal({
             </button>
           </div>
         </div>
-        <div className="flex-1 overflow-auto bg-neutral-100 dark:bg-neutral-950 p-4 flex items-center justify-center">
+        <div className="relative flex-1 overflow-auto bg-neutral-100 dark:bg-neutral-950 p-4 flex items-center justify-center">
+          {hasPrev && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handlePrev();
+              }}
+              className="absolute left-2 sm:left-4 z-30 p-2 sm:p-3 rounded-full bg-black/60 hover:bg-black/80 text-white/90 hover:text-white border border-white/20 shadow-xl transition-all cursor-pointer active:scale-95"
+              aria-label="Previous file"
+              title="Previous (Left Arrow)"
+            >
+              <ChevronLeft className="w-5 h-5 sm:w-6 sm:h-6" />
+            </button>
+          )}
+
           {isHeic ? (
             <HeicPreviewImage
-              src={previewUrl}
+              src={effectiveUrl}
               alt={previewFile.name}
+              file={previewFile}
+              fileId={fileId}
               className="max-w-full max-h-[70vh] object-contain shadow-sm rounded"
               fallbackUrl={previewFile.thumbnailUrl || previewFile.thumbnail}
             />
           ) : ['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'].includes(fileExt) ? (
-            <img src={previewUrl} alt={previewFile.name} className="max-w-full max-h-[70vh] object-contain shadow-sm rounded" />
+            effectiveUrl ? (
+              <img src={effectiveUrl} alt={previewFile.name} className="max-w-full max-h-[70vh] object-contain shadow-sm rounded" />
+            ) : (
+              <div className="flex flex-col items-center justify-center gap-2 text-neutral-400 min-h-[200px]">
+                <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+                <span className="text-xs font-medium">Loading high-resolution photo...</span>
+              </div>
+            )
           ) : fileExt === 'pdf' ? (
-            <iframe src={previewUrl} className="w-full h-[70vh] border-0 rounded" title="PDF Preview" />
+            effectiveUrl ? (
+              <iframe src={effectiveUrl} className="w-full h-[70vh] border-0 rounded" title="PDF Preview" />
+            ) : (
+              <div className="flex flex-col items-center justify-center gap-2 text-neutral-400 min-h-[200px]">
+                <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+                <span className="text-xs font-medium">Loading preview...</span>
+              </div>
+            )
           ) : (fileExt === 'txt' || fileExt === 'md') ? (
             <pre className="w-full h-full text-left bg-white dark:bg-[#121212] text-neutral-900 dark:text-neutral-100 p-6 rounded-lg overflow-auto text-sm font-mono whitespace-pre-wrap shadow-inner border border-neutral-200 dark:border-neutral-800">
-              {previewText || 'Loading...'}
+              {previewText || 'Loading preview...'}
             </pre>
-          ) : (isAudio && previewUrl) ? (
+          ) : (isAudio && effectiveUrl) ? (
             <div className="w-full max-w-md bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl p-6 sm:p-8 shadow-xl flex flex-col items-center text-center space-y-4">
               <div className="w-16 h-16 rounded-full bg-primary/10 text-primary flex items-center justify-center">
                 <span className="material-symbols-outlined text-3xl">music_note</span>
@@ -200,7 +594,7 @@ export default function FilePreviewModal({
                 controls
                 autoPlay
                 preload="metadata"
-                src={previewUrl}
+                src={effectiveUrl}
                 className="w-full max-w-md"
               />
             </div>
@@ -209,6 +603,21 @@ export default function FilePreviewModal({
               <span className="material-symbols-outlined text-4xl">visibility_off</span>
               <p>Preview not available for this file type.</p>
             </div>
+          )}
+
+          {hasNext && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleNext();
+              }}
+              className="absolute right-2 sm:right-4 z-30 p-2 sm:p-3 rounded-full bg-black/60 hover:bg-black/80 text-white/90 hover:text-white border border-white/20 shadow-xl transition-all cursor-pointer active:scale-95"
+              aria-label="Next file"
+              title="Next (Right Arrow)"
+            >
+              <ChevronRight className="w-5 h-5 sm:w-6 sm:h-6" />
+            </button>
           )}
         </div>
       </div>

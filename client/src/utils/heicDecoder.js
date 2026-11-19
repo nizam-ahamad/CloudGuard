@@ -17,13 +17,13 @@ async function getLibheif() {
 }
 
 /**
- * Decodes a HEIC/HEIF Blob, File, ArrayBuffer, or Uint8Array to a full-resolution JPEG Blob.
+ * Decodes a HEIC/HEIF Blob, File, ArrayBuffer, or Uint8Array to a full-resolution WebP (or fallback JPEG) Blob.
  *
  * @param {Blob|File|ArrayBuffer|Uint8Array} inputBlobOrBuffer - Input HEIC data
- * @param {number} quality - JPEG output quality (0.0 to 1.0, default 0.92)
- * @returns {Promise<Blob>} Full-resolution JPEG Blob
+ * @param {number} quality - Output quality (0.0 to 1.0, default 0.86)
+ * @returns {Promise<Blob>} Full-resolution WebP/JPEG Blob
  */
-export async function decodeHeicToBlob(inputBlobOrBuffer, quality = 0.92) {
+export async function decodeHeicToBlob(inputBlobOrBuffer, quality = 0.86) {
   if (!inputBlobOrBuffer) {
     throw new Error('No input provided to decodeHeicToBlob');
   }
@@ -81,17 +81,27 @@ export async function decodeHeicToBlob(inputBlobOrBuffer, quality = 0.92) {
 
   ctx.putImageData(imageData, 0, 0);
 
-  // 4. Convert canvas to full-resolution JPEG Blob
+  // 4. Convert canvas to full-resolution WebP Blob with automatic JPEG fallback
   return new Promise((resolve, reject) => {
     canvas.toBlob(
       (blob) => {
         if (blob) {
-          resolve(blob);
-        } else {
-          reject(new Error('Canvas toBlob failed'));
+          return resolve(blob);
         }
+        // Fallback to image/jpeg if WebP export returns null
+        canvas.toBlob(
+          (fallbackBlob) => {
+            if (fallbackBlob) {
+              resolve(fallbackBlob);
+            } else {
+              reject(new Error('Canvas toBlob failed for both webp and jpeg'));
+            }
+          },
+          'image/jpeg',
+          quality
+        );
       },
-      'image/jpeg',
+      'image/webp',
       quality
     );
   });
