@@ -2,7 +2,7 @@
 
 > [!IMPORTANT]
 > ### 🚨 LIVING ARCHITECTURE DOCUMENT
-> **Any AI model or developer modifying features, UI workflows, API endpoints, or data pipelines in this repository MUST update this document before committing.** Keep this document aligned with the actual code at all times.
+> **Any AI model or developer modifying features, UI workflows, API endpoints, or data pipelines in this repository MUST update `PROJECT_CONTEXT.md` and this document before committing.** Keep documentation aligned with the actual code at all times. Do not alter the public `README.md`.
 
 ---
 

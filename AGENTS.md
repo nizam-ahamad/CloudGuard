@@ -7,11 +7,14 @@
 
 ## 1. Mandatory Pre-Execution & Documentation Rules
 
-1. **Read Context First:** Before planning or implementing any code changes, read `README.md` and `DESIGN.md` to understand existing architecture, design tokens, and pipeline constraints.
+1. **Read Context First:** Before planning or implementing any code changes, read `PROJECT_CONTEXT.md` and `DESIGN.md` to understand existing architecture, design tokens, and pipeline constraints.
 2. **Mandatory Documentation Updates on EVERY Prompt:**
-   - **Whenever code, features, UI rules, or API endpoints change, you MUST update `README.md` and `DESIGN.md` in the exact same turn before committing.**
+   - **Whenever code, features, UI rules, or API endpoints change, you MUST update `PROJECT_CONTEXT.md` and `DESIGN.md` in the exact same turn before committing.**
    - Add newly introduced milestones or architectural shifts to the Changelog in `DESIGN.md`.
    - Never complete a task leaving documentation out of sync with your changes.
+3. **DO NOT Overwrite Public `README.md`:**
+   - **NEVER modify, overwrite, or alter the public `README.md` unless explicitly requested by the user.**
+   - `README.md` is reserved as the public GitHub repository showcase. All internal system context, engineering rules, and technical documentation belong in `PROJECT_CONTEXT.md` and `DESIGN.md`.
 
 ---
 
