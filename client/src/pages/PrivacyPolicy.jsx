@@ -70,7 +70,7 @@ export default function PrivacyPolicy() {
         {/* Two-Column Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-start">
           {/* Left Column: Sticky Sidebar (Desktop Only) */}
-          <aside className="hidden lg:block lg:col-span-4 sticky top-24 space-y-6">
+          <aside className="hidden lg:block lg:col-span-4 lg:sticky lg:top-24 lg:self-start lg:max-h-[calc(100vh-7rem)] lg:overflow-y-auto space-y-6">
             {/* Quick Navigation (Table of Contents) */}
             <div className="bg-neutral-900/40 border border-neutral-800/80 rounded-2xl p-6 backdrop-blur-sm">
               <div className="flex items-center gap-2.5 text-white font-semibold text-sm mb-4 pb-3 border-b border-neutral-800/80">
@@ -117,7 +117,7 @@ export default function PrivacyPolicy() {
           {/* Right Column: Content Cards (Fills Remaining Width) */}
           <main className="lg:col-span-8 space-y-6">
             {/* Section 1 */}
-            <section id="section-1" className="scroll-mt-28 bg-neutral-900/30 border border-neutral-800/80 rounded-2xl p-6 lg:p-8 backdrop-blur-sm hover:border-neutral-700/80 transition-colors space-y-4">
+            <section id="section-1" className="scroll-mt-24 bg-neutral-900/30 border border-neutral-800/80 rounded-2xl p-6 lg:p-8 backdrop-blur-sm hover:border-neutral-700/80 transition-colors space-y-4">
               <div className="flex items-center gap-3">
                 <span className="text-xs font-mono font-semibold px-2.5 py-1 rounded-md bg-neutral-800 text-neutral-300 border border-neutral-700">
                   01
@@ -130,7 +130,7 @@ export default function PrivacyPolicy() {
             </section>
 
             {/* Section 2 */}
-            <section id="section-2" className="scroll-mt-28 bg-neutral-900/30 border border-neutral-800/80 rounded-2xl p-6 lg:p-8 backdrop-blur-sm hover:border-neutral-700/80 transition-colors space-y-4">
+            <section id="section-2" className="scroll-mt-24 bg-neutral-900/30 border border-neutral-800/80 rounded-2xl p-6 lg:p-8 backdrop-blur-sm hover:border-neutral-700/80 transition-colors space-y-4">
               <div className="flex items-center gap-3">
                 <span className="text-xs font-mono font-semibold px-2.5 py-1 rounded-md bg-neutral-800 text-neutral-300 border border-neutral-700">
                   02
@@ -154,7 +154,7 @@ export default function PrivacyPolicy() {
             </section>
 
             {/* Section 3 */}
-            <section id="section-3" className="scroll-mt-28 bg-neutral-900/30 border border-neutral-800/80 rounded-2xl p-6 lg:p-8 backdrop-blur-sm hover:border-neutral-700/80 transition-colors space-y-4">
+            <section id="section-3" className="scroll-mt-24 bg-neutral-900/30 border border-neutral-800/80 rounded-2xl p-6 lg:p-8 backdrop-blur-sm hover:border-neutral-700/80 transition-colors space-y-4">
               <div className="flex items-center gap-3">
                 <span className="text-xs font-mono font-semibold px-2.5 py-1 rounded-md bg-neutral-800 text-neutral-300 border border-neutral-700">
                   03
@@ -171,7 +171,7 @@ export default function PrivacyPolicy() {
             </section>
 
             {/* Section 4 */}
-            <section id="section-4" className="scroll-mt-28 bg-neutral-900/30 border border-neutral-800/80 rounded-2xl p-6 lg:p-8 backdrop-blur-sm hover:border-neutral-700/80 transition-colors space-y-4">
+            <section id="section-4" className="scroll-mt-24 bg-neutral-900/30 border border-neutral-800/80 rounded-2xl p-6 lg:p-8 backdrop-blur-sm hover:border-neutral-700/80 transition-colors space-y-4">
               <div className="flex items-center gap-3">
                 <span className="text-xs font-mono font-semibold px-2.5 py-1 rounded-md bg-neutral-800 text-neutral-300 border border-neutral-700">
                   04
@@ -192,7 +192,7 @@ export default function PrivacyPolicy() {
             </section>
 
             {/* Section 5 */}
-            <section id="section-5" className="scroll-mt-28 bg-neutral-900/30 border border-neutral-800/80 rounded-2xl p-6 lg:p-8 backdrop-blur-sm hover:border-neutral-700/80 transition-colors space-y-4">
+            <section id="section-5" className="scroll-mt-24 bg-neutral-900/30 border border-neutral-800/80 rounded-2xl p-6 lg:p-8 backdrop-blur-sm hover:border-neutral-700/80 transition-colors space-y-4">
               <div className="flex items-center gap-3">
                 <span className="text-xs font-mono font-semibold px-2.5 py-1 rounded-md bg-neutral-800 text-neutral-300 border border-neutral-700">
                   05
@@ -253,7 +253,7 @@ export default function PrivacyPolicy() {
             </section>
 
             {/* Section 6 */}
-            <section id="section-6" className="scroll-mt-28 bg-neutral-900/30 border border-neutral-800/80 rounded-2xl p-6 lg:p-8 backdrop-blur-sm hover:border-neutral-700/80 transition-colors space-y-4">
+            <section id="section-6" className="scroll-mt-24 bg-neutral-900/30 border border-neutral-800/80 rounded-2xl p-6 lg:p-8 backdrop-blur-sm hover:border-neutral-700/80 transition-colors space-y-4">
               <div className="flex items-center gap-3">
                 <span className="text-xs font-mono font-semibold px-2.5 py-1 rounded-md bg-neutral-800 text-neutral-300 border border-neutral-700">
                   06
@@ -271,7 +271,7 @@ export default function PrivacyPolicy() {
             </section>
 
             {/* Section 7 */}
-            <section id="section-7" className="scroll-mt-28 bg-neutral-900/30 border border-neutral-800/80 rounded-2xl p-6 lg:p-8 backdrop-blur-sm hover:border-neutral-700/80 transition-colors space-y-4">
+            <section id="section-7" className="scroll-mt-24 bg-neutral-900/30 border border-neutral-800/80 rounded-2xl p-6 lg:p-8 backdrop-blur-sm hover:border-neutral-700/80 transition-colors space-y-4">
               <div className="flex items-center gap-3">
                 <span className="text-xs font-mono font-semibold px-2.5 py-1 rounded-md bg-neutral-800 text-neutral-300 border border-neutral-700">
                   07
@@ -292,7 +292,7 @@ export default function PrivacyPolicy() {
             </section>
 
             {/* Section 8 */}
-            <section id="section-8" className="scroll-mt-28 bg-neutral-900/30 border border-neutral-800/80 rounded-2xl p-6 lg:p-8 backdrop-blur-sm hover:border-neutral-700/80 transition-colors space-y-4">
+            <section id="section-8" className="scroll-mt-24 bg-neutral-900/30 border border-neutral-800/80 rounded-2xl p-6 lg:p-8 backdrop-blur-sm hover:border-neutral-700/80 transition-colors space-y-4">
               <div className="flex items-center gap-3">
                 <span className="text-xs font-mono font-semibold px-2.5 py-1 rounded-md bg-neutral-800 text-neutral-300 border border-neutral-700">
                   08

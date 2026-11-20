@@ -4,11 +4,11 @@
 @layer base {
   html {
     overflow-y: auto;
-    overflow-x: hidden;
+    overflow-x: clip;
   }
   body {
     @apply bg-surface text-on-surface font-body-md min-h-screen;
-    overflow-x: hidden;
+    overflow-x: clip;
   }
 }
 
