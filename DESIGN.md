@@ -137,7 +137,7 @@ sequenceDiagram
 - **Setup Flow:** Protected via `authMiddleware`. Generates a base32 secret and QR code data URL. The user scans the code and confirms with a 6-digit code. Upon verification, 8 recovery codes are generated, hashed with bcrypt, and returned to the client once.
 - **Login Flow:** When 2FA is active, initial login returns `{ requires2FA: true, tempToken, email }`. The client switches to the 2FA challenge screen. Verification issues the standard 7-day JWT session token.
 - **Disable Flow:** Requires account password confirmation (or current TOTP / backup code for passwordless OAuth accounts). Erases secret and backup codes from database.
-- **Autofill & Paste Hardening:** The Disable 2FA modal password confirmation input explicitly suppresses password manager/browser credential prompts (`autoComplete="new-password"`, `data-lpignore="true"`, `data-1p-ignore="true"`, `data-form-type="other"`) and rejects clipboard paste and drag-and-drop operations (`onPaste`, `onDrop`) to enforce deliberate manual identity confirmation. Mobile layout ensures full-width action buttons and responsive stacking.
+- **Autofill & Paste Hardening:** Critical verification inputs (Disable 2FA confirmation and Danger Zone account erasure) use masked text inputs (`type="text"` with `WebkitTextSecurity: 'disc'`) rather than `type="password"`. This completely eliminates browser saved-credential popups and Chrome's "Suggest strong password" injection while retaining password masking. Inputs initialize with `readOnly` (removed on focus/interaction) and enforce strict paste/drop prevention (`onPaste`, `onDrop`) to require deliberate manual confirmation. Mobile layout ensures full-width action buttons and responsive stacking.
 
 ---
 

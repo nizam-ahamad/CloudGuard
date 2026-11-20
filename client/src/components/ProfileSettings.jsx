@@ -941,17 +941,25 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
             <form onSubmit={handleDisable2FA} className="space-y-4">
               {user?.hasPassword || !isOAuthUser ? (
                 <div>
-                  <label htmlFor="disable-2fa-confirm-input" className="block text-xs font-semibold text-neutral-700 dark:text-neutral-300 mb-1">
+                  <label htmlFor="disable-2fa-verify-entry" className="block text-xs font-semibold text-neutral-700 dark:text-neutral-300 mb-1">
                     Account Password
                   </label>
                   <input
-                    type="password"
-                    id="disable-2fa-confirm-input"
-                    name="disable-2fa-confirm-input"
-                    autoComplete="new-password"
+                    type="text"
+                    style={{ WebkitTextSecurity: 'disc', textSecurity: 'disc' }}
+                    id="disable-2fa-verify-entry"
+                    name="disable-2fa-verify-entry"
+                    autoComplete="off"
+                    autoCorrect="off"
+                    autoCapitalize="off"
+                    spellCheck={false}
                     data-lpignore="true"
                     data-1p-ignore="true"
+                    data-bwignore="true"
                     data-form-type="other"
+                    readOnly
+                    onFocus={(e) => e.currentTarget.removeAttribute('readOnly')}
+                    onMouseDown={(e) => e.currentTarget.removeAttribute('readOnly')}
                     onPaste={(e) => e.preventDefault()}
                     onDrop={(e) => e.preventDefault()}
                     value={disablePassword}
@@ -1366,7 +1374,7 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
               <div className="relative">
                 <input
                   type="text"
-                  style={{ WebkitTextSecurity: showDeletePassword ? 'none' : 'disc' }}
+                  style={{ WebkitTextSecurity: showDeletePassword ? 'none' : 'disc', textSecurity: showDeletePassword ? 'none' : 'disc' }}
                   name="danger-zone-confirm-secret"
                   id="danger-zone-verify-pass"
                   maxLength={72}
@@ -1379,9 +1387,13 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
                   spellCheck={false}
                   data-lpignore="true"
                   data-1p-ignore="true"
+                  data-bwignore="true"
                   data-form-type="other"
                   readOnly
                   onFocus={(e) => e.currentTarget.removeAttribute('readOnly')}
+                  onMouseDown={(e) => e.currentTarget.removeAttribute('readOnly')}
+                  onPaste={(e) => e.preventDefault()}
+                  onDrop={(e) => e.preventDefault()}
                   className="w-full px-3.5 py-2.5 pr-10 rounded-xl bg-white dark:bg-[#121212] border border-neutral-300 dark:border-neutral-700 text-sm text-neutral-900 dark:text-white placeholder-neutral-400 dark:placeholder-zinc-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500/30 transition-colors shadow-sm"
                 />
                 <button
@@ -1416,6 +1428,11 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
               onChange={(e) => setDeleteConfirmText(e.target.value)}
               placeholder="Type DELETE to confirm"
               autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck={false}
+              onPaste={(e) => e.preventDefault()}
+              onDrop={(e) => e.preventDefault()}
               className="w-full px-3.5 py-2.5 rounded-xl bg-white dark:bg-[#121212] border border-neutral-300 dark:border-neutral-700 text-sm text-neutral-900 dark:text-white placeholder-neutral-400 dark:placeholder-zinc-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500/30 transition-colors shadow-sm"
             />
           </div>
