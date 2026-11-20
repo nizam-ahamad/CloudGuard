@@ -70,20 +70,20 @@ export default function PrivacyPolicy() {
         {/* Two-Column Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-start">
           {/* Left Column: Sticky Sidebar (Desktop Only) */}
-          <aside className="hidden lg:block lg:col-span-4 lg:sticky lg:top-24 lg:self-start lg:max-h-[calc(100vh-7rem)] lg:overflow-y-auto space-y-6">
+          <aside className="hidden lg:block lg:col-span-4 lg:sticky lg:top-20 lg:self-start space-y-3">
             {/* Quick Navigation (Table of Contents) */}
-            <div className="bg-neutral-900/40 border border-neutral-800/80 rounded-2xl p-6 backdrop-blur-sm">
-              <div className="flex items-center gap-2.5 text-white font-semibold text-sm mb-4 pb-3 border-b border-neutral-800/80">
+            <div className="bg-neutral-900/40 border border-neutral-800/80 rounded-2xl p-4 backdrop-blur-sm">
+              <div className="flex items-center gap-2.5 text-white font-semibold text-sm mb-3 pb-2.5 border-b border-neutral-800/80">
                 <AlignLeft size={16} className="text-emerald-400" />
                 <span>On This Page</span>
               </div>
-              <nav className="space-y-1">
+              <nav className="space-y-0.5">
                 {navItems.map((item) => (
                   <a
                     key={item.id}
                     href={`#${item.id}`}
                     onClick={(e) => scrollToSection(e, item.id)}
-                    className="text-sm text-neutral-400 hover:text-white hover:translate-x-1 transition-all py-1.5 flex items-center justify-between group rounded-lg px-2 hover:bg-neutral-800/40"
+                    className="text-xs sm:text-sm text-neutral-400 hover:text-white hover:translate-x-1 transition-all py-1.5 flex items-center justify-between group rounded-lg px-2 hover:bg-neutral-800/40"
                   >
                     <span className="flex items-center gap-2">
                       <span className="font-mono text-xs text-neutral-500 group-hover:text-neutral-400">{item.num}</span>
@@ -98,7 +98,7 @@ export default function PrivacyPolicy() {
             {/* Companion Legal Page Link */}
             <Link
               to="/terms"
-              className="flex items-center justify-between px-5 py-3 rounded-xl bg-neutral-900/40 hover:bg-neutral-800/60 border border-neutral-800/80 hover:border-neutral-700 text-sm text-neutral-400 hover:text-white transition-all group backdrop-blur-sm"
+              className="flex items-center justify-between px-4 py-2.5 rounded-xl bg-neutral-900/40 hover:bg-neutral-800/60 border border-neutral-800/80 hover:border-neutral-700 text-xs sm:text-sm text-neutral-400 hover:text-white transition-all group backdrop-blur-sm"
             >
               <span>View Terms of Service</span>
               <span className="text-neutral-500 group-hover:text-neutral-300 transition-transform group-hover:translate-x-1">&rarr;</span>
@@ -107,7 +107,7 @@ export default function PrivacyPolicy() {
             {/* Action Button */}
             <Link
               to="/"
-              className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-neutral-900/80 hover:bg-neutral-800 text-neutral-300 hover:text-white border border-neutral-800 hover:border-neutral-700 font-medium text-sm transition-all group"
+              className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-neutral-900/80 hover:bg-neutral-800 text-neutral-300 hover:text-white border border-neutral-800 hover:border-neutral-700 font-medium text-xs sm:text-sm transition-all group"
             >
               <ArrowLeft size={16} className="transition-transform group-hover:-translate-x-1" />
               <span>Return to CloudGuard Vault</span>
