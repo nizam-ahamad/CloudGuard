@@ -113,6 +113,34 @@ function App() {
     localStorage.setItem('theme', theme);
   }, [theme]);
 
+  // Route-aware canonical link and robots meta updater for SEO
+  useEffect(() => {
+    const publicIndexablePaths = ['/', '/pricing', '/privacy', '/terms', '/refund', '/refund-policy', '/contact'];
+    const currentPath = location.pathname.replace(/\/+$/, '') || '/';
+    const isPublic = publicIndexablePaths.includes(currentPath);
+
+    // 1. Update <link rel="canonical">
+    let canonicalLink = document.querySelector('link[rel="canonical"]');
+    if (!canonicalLink) {
+      canonicalLink = document.createElement('link');
+      canonicalLink.setAttribute('rel', 'canonical');
+      document.head.appendChild(canonicalLink);
+    }
+    const canonicalHref = isPublic
+      ? `https://cloudguard.site${location.pathname === '/' ? '/' : location.pathname}`
+      : 'https://cloudguard.site/';
+    canonicalLink.setAttribute('href', canonicalHref);
+
+    // 2. Update <meta name="robots">
+    let robotsMeta = document.querySelector('meta[name="robots"]');
+    if (!robotsMeta) {
+      robotsMeta = document.createElement('meta');
+      robotsMeta.setAttribute('name', 'robots');
+      document.head.appendChild(robotsMeta);
+    }
+    robotsMeta.setAttribute('content', isPublic ? 'index, follow' : 'noindex, nofollow');
+  }, [location.pathname]);
+
   const [token, setToken] = useState(() => localStorage.getItem('token') || sessionStorage.getItem('token'));
   const [user, setUser] = useState(() => {
     const userStr = localStorage.getItem('user') || sessionStorage.getItem('user');
