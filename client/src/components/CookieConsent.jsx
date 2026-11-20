@@ -35,7 +35,7 @@ export default function CookieConsent() {
           </h3>
         </div>
         <p className="text-xs text-neutral-600 dark:text-neutral-400 leading-relaxed mb-4">
-          We use strictly necessary cookies to authenticate your vault session and maintain zero-knowledge encryption. Non-essential telemetry is used only to improve platform stability. Read our{' '}
+          We use strictly necessary cookies to authenticate your vault session and maintain Zero-Trust access control. Non-essential telemetry is used only to improve platform stability. Read our{' '}
           <Link className="text-cyan-600 dark:text-cyan-400 hover:underline" to="/privacy">
             Privacy Policy
           </Link>.

@@ -148,7 +148,7 @@ export default function TermsOfService() {
                   <strong className="text-neutral-200">Instant Digital Fulfillment:</strong> Upon successful payment confirmation for any upgraded subscription tier or storage allocation, access to additional storage quotas and premium features is provisioned immediately to your account dashboard with zero shipping or handling delay.
                 </li>
                 <li>
-                  <strong className="text-neutral-200">14-Day Evaluation Trial (Zero Forever-Free Policy):</strong> New accounts are provisioned with a 14-day evaluation trial including 5 GB of storage to evaluate platform performance, zero-knowledge encryption, and automated malware analysis. CloudGuard does not provide a permanent, unmonetized forever-free storage tier. Unpaid vaults are never parked or held indefinitely; accounts that do not upgrade prior to trial expiration transition to a 7-day read-only grace period before permanent cryptographic deletion.
+                  <strong className="text-neutral-200">14-Day Evaluation Trial (Zero Forever-Free Policy):</strong> New accounts are provisioned with a 14-day evaluation trial including 5 GB of storage to evaluate platform performance, AES-256 encrypted cloud storage, and automated malware analysis. CloudGuard does not provide a permanent, unmonetized forever-free storage tier. Unpaid vaults are never parked or held indefinitely; accounts that do not upgrade prior to trial expiration transition to a 7-day read-only grace period before permanent cryptographic deletion.
                 </li>
               </ul>
             </section>

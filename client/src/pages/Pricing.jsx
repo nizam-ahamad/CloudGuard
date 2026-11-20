@@ -111,8 +111,8 @@ const TIERS_CONFIG = [
 
 const UNIFORM_SECURITY_FEATURES = [
   {
-    title: 'Zero-Knowledge Encrypted Storage',
-    desc: 'All assets encrypted at rest using AES-256 with cryptographically signed ephemeral access tokens.',
+    title: 'AES-256 Encrypted Vault Storage',
+    desc: 'AES-256 server-side encryption at rest, TLS 1.3 in transit, and short-lived HMAC-SHA256 signed access tokens.',
     icon: Lock,
   },
   {

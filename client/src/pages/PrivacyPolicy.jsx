@@ -219,7 +219,7 @@ export default function PrivacyPolicy() {
                     </tr>
                     <tr>
                       <td className="px-4 py-3 font-medium text-white">Backblaze, Inc. (Backblaze B2)</td>
-                      <td className="px-4 py-3">Encrypted zero-knowledge object storage</td>
+                      <td className="px-4 py-3">AES-256 encrypted cloud storage</td>
                       <td className="px-4 py-3 text-cyan-400">Amsterdam, Netherlands (eu-central-003 / EU)</td>
                     </tr>
                     <tr>

@@ -11,6 +11,12 @@
 
 CloudGuard is an enterprise-grade, privacy-first secure cloud vault and digital asset management platform. It combines static AI malware detection, direct cloud object storage, and high-performance client-side media pipelines to deliver lightning-fast previews with **near-zero EC2 server load**.
 
+### 🔐 Security & Encryption Architecture: Zero-Trust vs. E2EE
+CloudGuard intentionally implements **server-side AES-256 encryption at rest** and **TLS 1.3 in transit** combined with **Zero-Trust per-request access control**, rather than blind client-side zero-knowledge end-to-end encryption (E2EE):
+1. **Server-Side AES-256 Encryption at Rest:** Backblaze B2 encrypts stored assets at rest with AES-256.
+2. **Zero-Trust Ephemeral Access:** Every file download, thumbnail, and stream request requires short-lived, HMAC-SHA256 presigned tokens (`/api/files/:id/access` and `/api/photos`) generated on demand following strict tenant authentication and quota validation.
+3. **Intentional Non-Zero-Knowledge Rationale:** Client-side zero-knowledge encryption prevents servers from inspecting file headers, rendering automated malware scanning, static PE heuristic classification, and account password recovery impossible. CloudGuard balances enterprise-grade encryption with automated malware prevention and threat detection.
+
 ### ⚡ Zero-EC2-Load Architecture
 
 Traditional cloud storage platforms process and transcode files on expensive backend application servers, driving up compute bills and introducing severe I/O bottlenecks. CloudGuard operates on a radically different architectural model:
