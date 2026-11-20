@@ -89,7 +89,8 @@ def query_malware_bazaar(sha256_hash: str) -> dict:
         "Content-Type": "application/x-www-form-urlencoded"
     }
     mb_key = (
-        os.getenv("MALWAREBAZAAR_API_KEY")
+        os.getenv("MALWAREBAZAAR_AUTH_KEY")
+        or os.getenv("MALWAREBAZAAR_API_KEY")
         or os.getenv("MB_API_KEY")
         or os.getenv("ABUSE_CH_API_KEY")
         or ""

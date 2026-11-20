@@ -304,9 +304,9 @@ async function checkMalwareBazaarNode(sha256) {
     params.append('hash', sha256);
 
     const headers = { 'Content-Type': 'application/x-www-form-urlencoded' };
-    const mbKey = process.env.MALWAREBAZAAR_API_KEY || process.env.MB_API_KEY || process.env.ABUSE_CH_API_KEY;
-    if (mbKey) {
-      headers['Auth-Key'] = mbKey;
+    const authKey = (process.env.MALWAREBAZAAR_AUTH_KEY || '').trim();
+    if (authKey) {
+      headers['Auth-Key'] = authKey;
     }
 
     const res = await axios.post('https://mb-api.abuse.ch/api/v1/', params, {
