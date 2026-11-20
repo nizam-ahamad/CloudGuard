@@ -94,7 +94,11 @@ export default function AuthPage() {
   }, [isOtpMode, timer]);
 
   const handleInputChange = (e) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
+    let { name, value } = e.target;
+    if (name === 'name') {
+      value = value.replace(/[<>{}[\];]/g, '');
+    }
+    setFormData({ ...formData, [name]: value });
     if (formError) setFormError('');
   };
 
@@ -980,7 +984,7 @@ export default function AuthPage() {
                     type="text"
                     name="name"
                     required
-                    maxLength={50}
+                    maxLength={60}
                     disabled={isLoading}
                     value={formData.name}
                     onChange={handleInputChange}

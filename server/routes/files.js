@@ -536,7 +536,8 @@ router.post('/presigned-url', authMiddleware, async (req, res) => {
   try {
     // 1. Accept any standard property naming convention
     const rawFileName = req.body.fileName || req.body.name || req.body.filename || req.body.originalName;
-    const nameVal = validateVaultItemName(rawFileName);
+    const normalizedRawName = typeof rawFileName === 'string' ? rawFileName.replace(/:/g, '-') : rawFileName;
+    const nameVal = validateVaultItemName(normalizedRawName);
     if (!nameVal.valid) {
       return res.status(400).json({ error: nameVal.error, message: nameVal.error });
     }
@@ -680,7 +681,8 @@ router.post('/presigned-url', authMiddleware, async (req, res) => {
 router.post('/multipart/init', authMiddleware, async (req, res) => {
   try {
     const { fileName: rawFileName, fileSize, mimeType, folderId, folder } = req.body;
-    const nameVal = validateVaultItemName(rawFileName);
+    const normalizedRawName = typeof rawFileName === 'string' ? rawFileName.replace(/:/g, '-') : rawFileName;
+    const nameVal = validateVaultItemName(normalizedRawName);
     if (!nameVal.valid) {
       return res.status(400).json({ error: nameVal.error, message: nameVal.error });
     }

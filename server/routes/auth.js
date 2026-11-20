@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const dns = require('node:dns');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -73,33 +74,104 @@ const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 // Cryptographically secure 6-digit OTP generator (prevents PRNG state reconstruction)
 const generateOtp = () => crypto.randomInt(100000, 1000000).toString();
 
-// Strict allowlist of verified permanent consumer email domains (blocks disposable/temporary providers)
-const ALLOWED_EMAIL_DOMAINS = new Set([
-  'gmail.com',
-  'googlemail.com',
-  'outlook.com',
-  'outlook.in',
-  'hotmail.com',
-  'live.com',
-  'msn.com',
-  'yahoo.com',
-  'yahoo.co.in',
-  'yahoo.in',
-  'ymail.com',
-  'rocketmail.com',
-  'icloud.com',
-  'me.com',
-  'mac.com',
-  'rediffmail.com',
-  'rediff.com',
-  'proton.me',
-  'protonmail.com',
-  'zoho.com',
-  'zohomail.in',
-  'fastmail.com',
-  'gmx.com',
-  'aol.com',
+// High-risk disposable / temporary email service domain roots
+const DISPOSABLE_EMAIL_ROOTS = new Set([
+  '10minutemail.com',
+  '10minutemail.net',
+  'tempmail.com',
+  'temp-mail.org',
+  'guerrillamail.com',
+  'guerrillamail.net',
+  'guerrillamail.biz',
+  'guerrillamail.org',
+  'sharklasers.com',
+  'grr.la',
+  'mailinator.com',
+  'yopmail.com',
+  'yopmail.net',
+  'trashmail.com',
+  'trashmail.net',
+  'dispostable.com',
+  'throwawaymail.com',
+  'getairmail.com',
+  'maildrop.cc',
+  'inboxkitten.com',
+  'fakemailgenerator.com',
+  'mohmal.com',
+  'crazymailing.com',
+  'tempail.com',
+  'mytemp.email',
+  'nada.ltd',
+  'getnada.com',
+  'emailondeck.com',
+  'burners.me',
 ]);
+
+const isDisposableDomain = (domain) => {
+  if (!domain || typeof domain !== 'string') return true;
+  const cleanDomain = domain.toLowerCase().trim();
+  if (DISPOSABLE_EMAIL_ROOTS.has(cleanDomain)) return true;
+  for (const root of DISPOSABLE_EMAIL_ROOTS) {
+    if (cleanDomain.endsWith(`.${root}`)) return true;
+  }
+  return false;
+};
+
+/**
+ * Validates domain legitimacy via disposable blocklist and DNS MX records.
+ * Fails open on 2500ms timeout or transient errors to prevent false rejections.
+ */
+const validateEmailDomain = async (email) => {
+  if (!email || typeof email !== 'string') {
+    return { valid: false, error: 'Valid email address is required' };
+  }
+  const parts = email.split('@');
+  if (parts.length !== 2) {
+    return { valid: false, error: 'Invalid email address format' };
+  }
+  const domain = parts[1].toLowerCase().trim();
+  if (!domain || domain.length < 3 || !domain.includes('.')) {
+    return { valid: false, error: 'Invalid email domain' };
+  }
+
+  if (isDisposableDomain(domain)) {
+    return {
+      valid: false,
+      error: 'Disposable email addresses are not permitted. Please use a permanent email provider.',
+    };
+  }
+
+  try {
+    const mxPromise = dns.promises.resolveMx(domain);
+    const timeoutPromise = new Promise((_, reject) => {
+      const timer = setTimeout(() => {
+        const err = new Error('DNS resolution timeout');
+        err.code = 'ETIMEOUT';
+        reject(err);
+      }, 2500);
+      if (timer.unref) timer.unref();
+    });
+
+    const records = await Promise.race([mxPromise, timeoutPromise]);
+    if (!records || records.length === 0) {
+      return {
+        valid: false,
+        error: 'The provided email domain does not have valid mail server (MX) records.',
+      };
+    }
+  } catch (err) {
+    if (err.code === 'ENOTFOUND' || err.code === 'ENODATA' || err.code === 'SERVFAIL') {
+      return {
+        valid: false,
+        error: 'The email domain does not exist or cannot receive email.',
+      };
+    }
+    // Fail open on timeouts (ETIMEOUT) and transient network errors
+    console.warn(`[DNS MX Warning] MX check for ${domain} failed open: ${err.message || err.code}`);
+  }
+
+  return { valid: true };
+};
 
 // User verification middleware for authenticated routes (e.g. PUT /password)
 const verifyToken = authMiddleware;
@@ -285,12 +357,12 @@ router.post('/register', authLimiter, async (req, res) => {
     }
     if (normalizedEmail.length > 254) return res.status(400).json({ error: 'Email cannot exceed 254 characters' });
 
-    // Strict permanent consumer email domain validation
-    const domain = normalizedEmail.split('@')[1]?.toLowerCase();
-    if (!domain || !ALLOWED_EMAIL_DOMAINS.has(domain)) {
+    // Verify email domain via disposable blocklist and MX lookup
+    const domainVal = await validateEmailDomain(normalizedEmail);
+    if (!domainVal.valid) {
       return res.status(400).json({
-        error: 'Disposable or unsupported email domains are not allowed. Please use Gmail, Outlook, Yahoo, iCloud, Rediffmail, Proton, or Zoho.',
-        message: 'Disposable or unsupported email domains are not allowed. Please use Gmail, Outlook, Yahoo, iCloud, Rediffmail, Proton, or Zoho.',
+        error: domainVal.error,
+        message: domainVal.error,
       });
     }
 
@@ -646,12 +718,12 @@ router.post('/resend-otp', otpLimiter, async (req, res) => {
     const normalizedEmail = email.toLowerCase().trim();
     if (!normalizedEmail) return res.status(400).json({ error: 'Email is required' });
 
-    // Strict permanent consumer email domain validation
-    const domain = normalizedEmail.split('@')[1]?.toLowerCase();
-    if (!domain || !ALLOWED_EMAIL_DOMAINS.has(domain)) {
+    // Verify email domain via disposable blocklist and MX lookup
+    const domainVal = await validateEmailDomain(normalizedEmail);
+    if (!domainVal.valid) {
       return res.status(400).json({
-        error: 'Disposable or unsupported email domains are not allowed. Please use Gmail, Outlook, Yahoo, iCloud, Rediffmail, Proton, or Zoho.',
-        message: 'Disposable or unsupported email domains are not allowed. Please use Gmail, Outlook, Yahoo, iCloud, Rediffmail, Proton, or Zoho.',
+        error: domainVal.error,
+        message: domainVal.error,
       });
     }
 
@@ -727,6 +799,16 @@ router.post('/login', authLimiter, async (req, res) => {
       return res.status(400).json({ error: 'No password configured for this account' });
     }
 
+    // Check account password lockout (15 minutes after 7 consecutive failed attempts)
+    if (user.lockUntil && user.lockUntil > new Date()) {
+      const remainingMinutes = Math.ceil((user.lockUntil.getTime() - Date.now()) / (60 * 1000));
+      return res.status(429).json({
+        error: `Too many failed password attempts. Please try again in ${remainingMinutes || 15} minute${remainingMinutes === 1 ? '' : 's'} or reset your password.`,
+        message: `Too many failed password attempts. Please try again in ${remainingMinutes || 15} minute${remainingMinutes === 1 ? '' : 's'} or reset your password.`,
+        locked: true,
+      });
+    }
+
     if (!user.isVerified) {
       // Regenerate activation code if logging in before verifying
       const otp = generateOtp();
@@ -748,7 +830,25 @@ router.post('/login', authLimiter, async (req, res) => {
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       console.warn(`[Auth Warning] Password mismatch for user: ${normalizedEmail}`);
+      user.failedLoginAttempts = (user.failedLoginAttempts || 0) + 1;
+      if (user.failedLoginAttempts >= 7) {
+        user.lockUntil = new Date(Date.now() + 15 * 60 * 1000);
+        await user.save();
+        return res.status(429).json({
+          error: 'Too many failed password attempts. Please try again in 15 minutes or reset your password.',
+          message: 'Too many failed password attempts. Please try again in 15 minutes or reset your password.',
+          locked: true,
+        });
+      }
+      await user.save();
       return res.status(400).json({ error: 'Invalid email or password' });
+    }
+
+    // Reset failed login attempts on successful password verification
+    if (user.failedLoginAttempts > 0 || user.lockUntil) {
+      user.failedLoginAttempts = 0;
+      user.lockUntil = null;
+      await user.save();
     }
 
     if (user.twoFactorEnabled) {
@@ -914,6 +1014,8 @@ router.post('/reset-password', otpLimiter, async (req, res) => {
     user.resetPasswordToken = null;
     user.resetPasswordExpire = null;
     user.otpAttempts = 0;
+    user.failedLoginAttempts = 0;
+    user.lockUntil = null;
     user.isVerified = true; // Setting password verifies account
     user.unverifiedExpiresAt = undefined;
     user.tokenVersion = (user.tokenVersion || 0) + 1;
@@ -973,6 +1075,8 @@ router.put('/reset-password/:token', otpLimiter, async (req, res) => {
     user.resetPasswordToken = null;
     user.resetPasswordExpire = null;
     user.otpAttempts = 0;
+    user.failedLoginAttempts = 0;
+    user.lockUntil = null;
     user.isVerified = true;
     user.unverifiedExpiresAt = undefined;
     user.tokenVersion = (user.tokenVersion || 0) + 1;
