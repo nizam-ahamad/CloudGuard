@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import axios from 'axios';
-import { Loader2, AlertTriangle, X, Smartphone, Check, Download, ExternalLink, Shield, ShieldCheck, ShieldAlert, KeyRound, Copy } from 'lucide-react';
+import { Loader2, AlertTriangle, X, Smartphone, Check, Download, ExternalLink, Shield, ShieldCheck, ShieldAlert, KeyRound, Copy, Eye, EyeOff } from 'lucide-react';
 import toast, { Toaster } from 'react-hot-toast';
 import PasswordInput from '../PasswordInput';
 import { API_BASE_URL } from '../config';
@@ -146,6 +147,7 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
 
   // Disable 2FA modal state
   const [showDisable2FAModal, setShowDisable2FAModal] = useState(false);
+  const [showDisable2faSecret, setShowDisable2faSecret] = useState(false);
   const [disablePassword, setDisablePassword] = useState('');
   const [disableCode, setDisableCode] = useState('');
   const [disableLoading, setDisableLoading] = useState(false);
@@ -204,6 +206,23 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
       })
       .catch((err) => console.warn('Failed to refresh user profile:', err));
   }, []);
+
+  // Lock background scrolling while 2FA modals are open
+  useEffect(() => {
+    if (showBackupCodesModal || showDisable2FAModal) {
+      const originalOverflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      return () => {
+        document.body.style.overflow = originalOverflow;
+      };
+    }
+  }, [showBackupCodesModal, showDisable2FAModal]);
+
+  useEffect(() => {
+    if (!showDisable2FAModal) {
+      setShowDisable2faSecret(false);
+    }
+  }, [showDisable2FAModal]);
 
   const handleStart2FASetup = async () => {
     setSetupLoading(true);
@@ -724,6 +743,7 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
                   setDisableError('');
                   setDisablePassword('');
                   setDisableCode('');
+                  setShowDisable2faSecret(false);
                   setShowDisable2FAModal(true);
                 }}
                 className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400 border border-red-500/20 transition-colors cursor-pointer"
@@ -858,8 +878,8 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
       </div>
 
       {/* Recovery Backup Codes Modal */}
-      {showBackupCodesModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+      {showBackupCodesModal && typeof document !== 'undefined' && createPortal(
+        <div className="fixed inset-0 w-screen h-[100dvh] z-[9999] flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-in fade-in">
           <div className="bg-white dark:bg-[#18181b] border border-neutral-200 dark:border-[#27272a] rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
             <div className="flex items-center justify-between pb-2 border-b border-neutral-200 dark:border-neutral-800">
               <div className="flex items-center gap-2">
@@ -911,12 +931,13 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Disable 2FA Modal */}
-      {showDisable2FAModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+      {showDisable2FAModal && typeof document !== 'undefined' && createPortal(
+        <div className="fixed inset-0 w-screen h-[100dvh] z-[9999] flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-in fade-in">
           <div className="bg-white dark:bg-[#18181b] border border-neutral-200 dark:border-[#27272a] rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
             <div className="flex items-center justify-between pb-2 border-b border-neutral-200 dark:border-neutral-800">
               <div className="flex items-center gap-2">
@@ -927,7 +948,10 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
               </div>
               <button
                 type="button"
-                onClick={() => setShowDisable2FAModal(false)}
+                onClick={() => {
+                  setShowDisable2FAModal(false);
+                  setShowDisable2faSecret(false);
+                }}
                 className="text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 cursor-pointer"
               >
                 <X className="w-4 h-4" />
@@ -944,30 +968,45 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
                   <label htmlFor="disable-2fa-verify-entry" className="block text-xs font-semibold text-neutral-700 dark:text-neutral-300 mb-1">
                     Account Password
                   </label>
-                  <input
-                    type="text"
-                    style={{ WebkitTextSecurity: 'disc', textSecurity: 'disc' }}
-                    id="disable-2fa-verify-entry"
-                    name="disable-2fa-verify-entry"
-                    autoComplete="off"
-                    autoCorrect="off"
-                    autoCapitalize="off"
-                    spellCheck={false}
-                    data-lpignore="true"
-                    data-1p-ignore="true"
-                    data-bwignore="true"
-                    data-form-type="other"
-                    readOnly
-                    onFocus={(e) => e.currentTarget.removeAttribute('readOnly')}
-                    onMouseDown={(e) => e.currentTarget.removeAttribute('readOnly')}
-                    onPaste={(e) => e.preventDefault()}
-                    onDrop={(e) => e.preventDefault()}
-                    value={disablePassword}
-                    onChange={(e) => setDisablePassword(e.target.value)}
-                    placeholder="Enter your account password"
-                    className="w-full px-3 py-2 text-xs rounded-lg bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 text-neutral-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-red-500/40"
-                    autoFocus
-                  />
+                  <div className="relative">
+                    <input
+                      type="text"
+                      style={{ WebkitTextSecurity: showDisable2faSecret ? 'none' : 'disc', textSecurity: showDisable2faSecret ? 'none' : 'disc' }}
+                      id="disable-2fa-verify-entry"
+                      name="disable-2fa-verify-entry"
+                      autoComplete="off"
+                      autoCorrect="off"
+                      autoCapitalize="off"
+                      spellCheck={false}
+                      data-lpignore="true"
+                      data-1p-ignore="true"
+                      data-bwignore="true"
+                      data-form-type="other"
+                      readOnly
+                      onFocus={(e) => e.currentTarget.removeAttribute('readOnly')}
+                      onMouseDown={(e) => e.currentTarget.removeAttribute('readOnly')}
+                      onPaste={(e) => e.preventDefault()}
+                      onDrop={(e) => e.preventDefault()}
+                      value={disablePassword}
+                      onChange={(e) => setDisablePassword(e.target.value)}
+                      placeholder="Enter your account password"
+                      className="w-full px-3 py-2 pr-10 text-xs rounded-lg bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 text-neutral-900 dark:text-white placeholder-neutral-400 dark:placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-red-500/40"
+                      autoFocus
+                    />
+                    <button
+                      type="button"
+                      tabIndex={-1}
+                      aria-label={showDisable2faSecret ? 'Hide password' : 'Show password'}
+                      onClick={() => setShowDisable2faSecret((prev) => !prev)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 dark:text-neutral-500 dark:hover:text-neutral-300 transition-colors cursor-pointer p-1"
+                    >
+                      {showDisable2faSecret ? (
+                        <EyeOff className="w-4 h-4" />
+                      ) : (
+                        <Eye className="w-4 h-4" />
+                      )}
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <div>
@@ -992,7 +1031,10 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
               <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2.5 pt-2">
                 <button
                   type="button"
-                  onClick={() => setShowDisable2FAModal(false)}
+                  onClick={() => {
+                    setShowDisable2FAModal(false);
+                    setShowDisable2faSecret(false);
+                  }}
                   className="w-full sm:w-auto inline-flex items-center justify-center px-4 py-2 text-xs font-semibold rounded-lg border border-neutral-200 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
                 >
                   Cancel
@@ -1014,7 +1056,8 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Subscription & Vault Plan Card */}
