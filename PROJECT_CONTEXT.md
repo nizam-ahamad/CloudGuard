@@ -17,6 +17,13 @@ CloudGuard intentionally implements **server-side AES-256 encryption at rest** a
 2. **Zero-Trust Ephemeral Access:** Every file download, thumbnail, and stream request requires short-lived, HMAC-SHA256 presigned tokens (`/api/files/:id/access` and `/api/photos`) generated on demand following strict tenant authentication and quota validation.
 3. **Intentional Non-Zero-Knowledge Rationale:** Client-side zero-knowledge encryption prevents servers from inspecting file headers, rendering automated malware scanning, static PE heuristic classification, and account password recovery impossible. CloudGuard balances enterprise-grade encryption with automated malware prevention and threat detection.
 
+### 🔑 Two-Factor Authentication (TOTP 2FA) Architecture
+CloudGuard implements RFC 6238 Time-Based One-Time Password (TOTP) two-factor authentication with single-use recovery backup codes:
+1. **Zero Client Compute Overhead:** 2FA cryptographic secret generation and QR code rasterization execute entirely on the backend (`otplib` and `qrcode`). No heavy crypto packages are shipped in the client bundle.
+2. **AES-256-GCM Encrypted Secret Storage:** TOTP secrets are encrypted at rest using AES-256-GCM with a dynamic initialization vector (IV) and authentication tag before saving to MongoDB, preventing database exposure from compromising plaintext secrets. Secrets and backup codes have `select: false` by default in Mongoose.
+3. **Single-Use Recovery Codes:** Enabling 2FA generates 8 cryptographically secure 8-character recovery codes (`XXXX-XXXX`) hashed with bcrypt in MongoDB. Using a backup code during a 2FA challenge atomically purges it from the user's array.
+4. **Two-Stage Authentication Flow:** When a user with 2FA enabled submits valid credentials via `/api/auth/login` or Google OAuth (`/api/auth/google`), the backend issues an ephemeral 5-minute JWT (`purpose: '2fa_pending'`). The user must verify a 6-digit TOTP code or recovery code via `/api/auth/2fa/verify-login` (protected by `otpLimiter`) to receive a full 7-day session token.
+
 ### ⚡ Zero-EC2-Load Architecture
 
 Traditional cloud storage platforms process and transcode files on expensive backend application servers, driving up compute bills and introducing severe I/O bottlenecks. CloudGuard operates on a radically different architectural model:
@@ -62,11 +69,12 @@ CloudGuard/
 │   │   │   ├── FolderDetailsModal.jsx    # Recursive folder statistics and size calculation
 │   │   │   ├── StorageQuotaBanner.jsx    # Quota threshold warning banner
 │   │   │   ├── SubscriptionAlertBanner.jsx # Billing and expiration alerts
-│   │   │   └── TrialBanner.jsx           # 14-day evaluation countdown banner
+│   │   │   ├── TrialBanner.jsx           # 14-day evaluation countdown banner
+│   │   │   └── ProfileSettings.jsx       # Profile, password, 2FA management & account controls
 │   │   ├── pages/
 │   │   │   ├── PhotosView.jsx            # High-performance media gallery & photo lightbox
 │   │   │   ├── AdminMonitor.jsx          # Founder telemetry, storage consumption, and account controls
-│   │   │   ├── AuthPage.jsx              # Sign-up, Sign-in, and OAuth flows
+│   │   │   ├── AuthPage.jsx              # Sign-up, Sign-in, 2FA challenge, and OAuth flows
 │   │   │   ├── LandingPage.jsx           # Public landing and product showcase
 │   │   │   ├── Pricing.jsx               # Cashfree subscription tiers and upgrade flows
 │   │   │   └── Settings.jsx              # User preferences, security, and profile settings
@@ -125,3 +133,4 @@ CloudGuard/
 4. **Mandatory Build Verification:** Always run `npm --prefix client run build` after editing client files to ensure zero compilation or bundling regressions before committing.
 5. **Route-Aware Canonical & Robots SEO Rule:** Public marketing and legal routes (`/`, `/pricing`, `/privacy`, `/terms`, `/refund`, `/contact`) dynamically update `<link rel="canonical">` to `https://cloudguard.site{pathname}` and `<meta name="robots">` to `index, follow`. Private, authenticated, and utility routes (`/dashboard`, `/login`, `/monitor`, `/reset-password/*`, etc.) dynamically set `<meta name="robots">` to `noindex, nofollow` and fallback canonical to `https://cloudguard.site/` to prevent private vault views or transient auth screens from leaking into search indexes.
 6. **Scrollbar-Free Sticky Legal TOC Navigation:** In legal documentation pages (Privacy Policy, Terms of Service), the "On This Page" TOC sidebar uses `lg:sticky lg:top-20 lg:self-start` with `items-start` on the grid parent, staying pinned through the entire document without any inner scrollbars (`overflow-y-auto` and `max-h-*` strictly prohibited on the sidebar). Compact vertical spacing (`p-4` card padding, `space-y-0.5` on links, `space-y-3` on aside) ensures all section items and navigation action buttons display completely without clipping across standard viewport heights (~600px). Target sections use `scroll-mt-24` for clean offset below the sticky header.
+7. **TOTP Two-Factor Authentication (2FA) Security Standards:** All 2FA verification endpoints are rate-limited (`otpLimiter`). TOTP secrets are encrypted with AES-256-GCM at rest and never exposed to the client. Recovery backup codes are hashed using bcrypt and enforced as strictly single-use. The client UI provides both QR scan and manual copy keys during setup, alongside `.txt` download and copy utilities for emergency recovery codes.

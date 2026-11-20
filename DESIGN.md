@@ -94,6 +94,50 @@ CloudGuard couples **server-side AES-256 encryption at rest** with **Zero-Trust 
 3. **Zero-Trust Ephemeral Access Control:** Direct object access requires authenticated, time-bounded HMAC-SHA256 presigned URLs issued by the Node.js API gateway (`/api/files/:id/access` and `/api/photos`). Every request enforces tenant ownership (`tenantQuery.js`), rate limiting (`rateLimiter.js`), and subscription status checks.
 4. **Intentional Non-Zero-Knowledge Design:** Blind client-side zero-knowledge encryption prevents server-side static file analysis. CloudGuard operates a real-time AI security microservice (FastAPI + Random Forest PE classifier + Abuse.ch threat feed verification) to detect and quarantine malware prior to permanent storage. Server-side AES-256 enables automated malware scanning and secure password recovery while maintaining high data confidentiality.
 
+### 2.1 TOTP Two-Factor Authentication (2FA) Architecture & Workflow
+CloudGuard incorporates opt-in Time-Based One-Time Password (TOTP) two-factor authentication compatible with Google Authenticator, Apple Passwords, Authy, and 1Password:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User
+    participant Client as Client (React 19)
+    participant API as EC2 Backend (/api/auth)
+    participant DB as MongoDB
+
+    Note over User,DB: 2FA Setup Flow (Profile Settings)
+    User->>Client: Click "Enable 2FA"
+    Client->>API: POST /api/auth/2fa/setup (Bearer Token)
+    API->>API: otplib.generateSecret() + qrcode.toDataURL()
+    API-->>Client: { qrCodeUrl, manualKey }
+    Client->>User: Display QR Code + Manual Key
+    User->>Client: Enter 6-digit TOTP code
+    Client->>API: POST /api/auth/2fa/verify-setup { secret, code }
+    API->>API: Validate code + Encrypt secret (AES-256-GCM) + Hash 8 Backup Codes (bcrypt)
+    API->>DB: Save twoFactorEnabled=true, encrypted secret, hashed backup codes
+    API-->>Client: { success: true, backupCodes: [XXXX-XXXX x8] }
+    Client->>User: Display Recovery Backup Codes Modal (Copy / Download .txt)
+
+    Note over User,DB: 2FA Login Challenge Flow
+    User->>Client: Submit Email/Password or Google Login
+    Client->>API: POST /api/auth/login or /api/auth/google
+    API->>API: Credentials valid & user.twoFactorEnabled === true
+    API-->>Client: { requires2FA: true, tempToken (5m TTL), email }
+    Client->>User: Display 2FA Challenge View (TOTP or Backup Code)
+    User->>Client: Enter 6-digit code or XXXX-XXXX backup code
+    Client->>API: POST /api/auth/2fa/verify-login { tempToken, code }
+    API->>API: Verify tempToken (2fa_pending) + Verify TOTP / match hashed backup code
+    alt Backup Code Used
+        API->>DB: Atomic splice removal of used backup code
+    end
+    API-->>Client: { success: true, token (7d session), user }
+    Client->>User: Authenticate session & redirect to dashboard
+```
+
+- **Setup Flow:** Protected via `authMiddleware`. Generates a base32 secret and QR code data URL. The user scans the code and confirms with a 6-digit code. Upon verification, 8 recovery codes are generated, hashed with bcrypt, and returned to the client once.
+- **Login Flow:** When 2FA is active, initial login returns `{ requires2FA: true, tempToken, email }`. The client switches to the 2FA challenge screen. Verification issues the standard 7-day JWT session token.
+- **Disable Flow:** Requires account password confirmation (or current TOTP / backup code for passwordless OAuth accounts). Erases secret and backup codes from database.
+
 ---
 
 ## 3. UI/UX & Layout Architecture
@@ -170,6 +214,7 @@ On long-form legal pages (`PrivacyPolicy.jsx` and `TermsOfService.jsx`), the lef
 
 | Commit | Date | Milestone Description |
 | :--- | :--- | :--- |
+| `HEAD` | 2026-11-20 | **Opt-In TOTP Two-Factor Authentication (2FA):** Implemented RFC 6238 TOTP 2FA with AES-256-GCM encrypted secrets, 8 single-use hashed recovery backup codes, profile setup & disable workflows, and login challenge screen. |
 | `bc44968` | 2026-11-20 | **Scrollbar-Free Sticky Legal TOC:** Completely eliminated inner sidebar scrollbars and pinned left TOC sidebar at `lg:top-20 lg:self-start` with compact spacing fitting ~600px viewports. |
 | `42052ed` | 2026-11-20 | **Legal TOC Sticky Layout Fix:** Resolved broken sticky behavior on Privacy Policy and Terms of Service via `overflow-x: clip`, `lg:self-start`, `scroll-mt-24`, and unconstrained normal-viewport sidebar height. |
 | `1999bbc` | 2026-11-20 | **Route-Aware Canonical SEO Updater:** Added dynamic canonical link and robots meta updater in `App.jsx` for public routes vs. private `noindex` paths. |

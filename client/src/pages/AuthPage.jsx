@@ -53,6 +53,11 @@ export default function AuthPage() {
   const [isForgotPassword, setIsForgotPassword] = useState(false);
   const [isOtpMode, setIsOtpMode] = useState(false);
   const [isNewPasswordMode, setIsNewPasswordMode] = useState(false);
+  const [is2FAMode, setIs2FAMode] = useState(false);
+  const [twoFactorTempToken, setTwoFactorTempToken] = useState('');
+  const [twoFactorCode, setTwoFactorCode] = useState('');
+  const [useBackupCode, setUseBackupCode] = useState(false);
+  const [twoFactorError, setTwoFactorError] = useState('');
 
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -112,6 +117,17 @@ export default function AuthPage() {
         return;
       }
 
+      if (res.data?.requires2FA) {
+        setTwoFactorTempToken(res.data.tempToken);
+        setPendingEmail(res.data.email);
+        setIs2FAMode(true);
+        setTwoFactorCode('');
+        setTwoFactorError('');
+        setUseBackupCode(false);
+        setIsLoading(false);
+        return;
+      }
+
       localStorage.setItem('token', res.data.token);
       localStorage.setItem('user', JSON.stringify(res.data.user));
 
@@ -141,6 +157,18 @@ export default function AuthPage() {
         consentGiven: true,
         isAdultConfirmed: true,
       });
+
+      if (res.data?.requires2FA) {
+        setTwoFactorTempToken(res.data.tempToken);
+        setPendingEmail(res.data.email);
+        setIs2FAMode(true);
+        setTwoFactorCode('');
+        setTwoFactorError('');
+        setUseBackupCode(false);
+        setPendingGoogleAuth(null);
+        setGoogleConsentChecked(false);
+        return;
+      }
 
       localStorage.setItem('token', res.data.token);
       localStorage.setItem('user', JSON.stringify(res.data.user));
@@ -293,6 +321,56 @@ export default function AuthPage() {
     }
   };
 
+  // 2FA Challenge Handlers
+  const handleVerify2FA = async (e) => {
+    if (e) e.preventDefault();
+    const enteredCode = twoFactorCode.trim();
+    if (!enteredCode) {
+      setTwoFactorError('Please enter your verification code.');
+      return;
+    }
+    try {
+      setIsLoading(true);
+      setTwoFactorError('');
+      const res = await axios.post(`${API_BASE_URL}/api/auth/2fa/verify-login`, {
+        tempToken: twoFactorTempToken,
+        code: enteredCode,
+      });
+
+      if (res.data?.token) {
+        localStorage.setItem('token', res.data.token);
+        localStorage.setItem('user', JSON.stringify(res.data.user));
+
+        window.dispatchEvent(new Event('cloudguard:auth-changed'));
+        window.dispatchEvent(new Event('auth-change'));
+        window.dispatchEvent(new Event('storage'));
+
+        toast.success(`Welcome back, ${res.data.user?.name || 'User'}!`);
+        const dest = getPostAuthDestination();
+        if (dest.includes('/pricing')) {
+          window.location.href = dest;
+        } else {
+          navigate(dest, { replace: true });
+        }
+      }
+    } catch (err) {
+      console.error('2FA verification error:', err);
+      const msg = err.response?.data?.error || 'Invalid code. Please try again.';
+      setTwoFactorError(msg);
+      toast.error(msg);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleCancel2FA = () => {
+    setIs2FAMode(false);
+    setTwoFactorTempToken('');
+    setTwoFactorCode('');
+    setTwoFactorError('');
+    setUseBackupCode(false);
+  };
+
   // Standard Email/Password Submit Handler
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -430,6 +508,17 @@ export default function AuthPage() {
 
       console.log('[Auth] Server response:', res.data);
 
+      if (res.data?.requires2FA) {
+        setTwoFactorTempToken(res.data.tempToken);
+        setPendingEmail(res.data.email || formData.email);
+        setIs2FAMode(true);
+        setTwoFactorCode('');
+        setTwoFactorError('');
+        setUseBackupCode(false);
+        setIsLoading(false);
+        return;
+      }
+
       if (res.data?.requireOtp) {
         setPendingEmail(formData.email);
         setIsOtpMode(true);
@@ -510,7 +599,104 @@ export default function AuthPage() {
         </Link>
 
         {/* View Mode Router */}
-        {isOtpMode ? (
+        {is2FAMode ? (
+          /* 2FA CHALLENGE VIEW */
+          <div className="flex flex-col">
+            <div className="flex items-center justify-between border-b border-neutral-800 mb-3.5 pb-2">
+              <span className="text-xs font-semibold text-white">Two-Factor Authentication</span>
+              <button
+                type="button"
+                onClick={handleCancel2FA}
+                className="text-[11px] text-neutral-400 hover:text-white transition-colors cursor-pointer"
+              >
+                ← Back
+              </button>
+            </div>
+
+            <p className="text-[11px] text-neutral-400 text-center mb-3 leading-relaxed">
+              {useBackupCode
+                ? 'Enter one of your 8-character single-use recovery backup codes.'
+                : 'Enter the 6-digit verification code from your authenticator app.'}
+            </p>
+
+            <form onSubmit={handleVerify2FA} className="space-y-3">
+              <div>
+                <label className="block text-[10px] font-semibold text-neutral-400 uppercase tracking-wider mb-1">
+                  {useBackupCode ? 'Recovery Backup Code' : 'Authenticator Code'}
+                </label>
+                {useBackupCode ? (
+                  <input
+                    type="text"
+                    required
+                    maxLength={9}
+                    autoFocus
+                    autoComplete="off"
+                    disabled={isLoading}
+                    value={twoFactorCode}
+                    onChange={(e) => {
+                      setTwoFactorCode(e.target.value.toUpperCase());
+                      if (twoFactorError) setTwoFactorError('');
+                    }}
+                    placeholder="XXXX-XXXX"
+                    className="w-full px-3 py-2 text-center text-sm font-mono tracking-widest rounded-xl bg-neutral-800/90 border border-neutral-700 text-white placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                  />
+                ) : (
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    required
+                    maxLength={6}
+                    autoFocus
+                    autoComplete="one-time-code"
+                    disabled={isLoading}
+                    value={twoFactorCode}
+                    onChange={(e) => {
+                      setTwoFactorCode(e.target.value.replace(/[^0-9]/g, '').slice(0, 6));
+                      if (twoFactorError) setTwoFactorError('');
+                    }}
+                    placeholder="000000"
+                    className="w-full px-3 py-2 text-center text-lg font-mono tracking-[0.3em] rounded-xl bg-neutral-800/90 border border-neutral-700 text-white placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                  />
+                )}
+              </div>
+
+              {twoFactorError && (
+                <p className="text-[11px] text-red-400 text-center">{twoFactorError}</p>
+              )}
+
+              <div className="text-center pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUseBackupCode(!useBackupCode);
+                    setTwoFactorCode('');
+                    setTwoFactorError('');
+                  }}
+                  className="text-[11px] text-blue-400 hover:text-blue-300 transition-colors cursor-pointer"
+                >
+                  {useBackupCode
+                    ? 'Use Authenticator App (6-digit code)'
+                    : "Don't have your device? Use a backup code"}
+                </button>
+              </div>
+
+              <button
+                type="submit"
+                disabled={isLoading || !twoFactorCode.trim()}
+                className="w-full mt-2 flex items-center justify-center gap-2 py-2 px-4 text-xs font-semibold rounded-xl bg-white text-neutral-900 hover:bg-neutral-200 active:scale-[0.99] transition-all cursor-pointer disabled:opacity-50"
+              >
+                {isLoading ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <>
+                    <span>Verify and Continue</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </>
+                )}
+              </button>
+            </form>
+          </div>
+        ) : isOtpMode ? (
           /* OTP VERIFICATION VIEW */
           <div className="flex flex-col">
             <div className="flex items-center justify-between border-b border-neutral-800 mb-3.5 pb-2">
