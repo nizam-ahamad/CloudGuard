@@ -129,6 +129,45 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [isFinalModalOpen, setIsFinalModalOpen] = useState(false);
 
+  // Display Name state hooks
+  const [displayName, setDisplayName] = useState(user?.name || '');
+  const [isUpdatingName, setIsUpdatingName] = useState(false);
+  const [nameSaved, setNameSaved] = useState(false);
+
+  useEffect(() => {
+    if (user?.name !== undefined) {
+      setDisplayName(user.name || '');
+    }
+  }, [user?.name]);
+
+  const handleUpdateDisplayName = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    const trimmed = displayName.trim();
+    if (!trimmed || trimmed.length < 2 || trimmed.length > 60) {
+      toast.error('Display name must be between 2 and 60 characters');
+      return;
+    }
+    if (/[<>{}[\];]/.test(trimmed)) {
+      toast.error('Display name cannot contain special characters (<, >, {, }, [, ], ;)');
+      return;
+    }
+    setIsUpdatingName(true);
+    try {
+      const res = await api.put('/auth/profile', { name: trimmed });
+      if (res.data?.success || res.status === 200) {
+        toast.success('Display name updated successfully');
+        setNameSaved(true);
+        if (typeof setUser === 'function') {
+          setUser((prev) => ({ ...prev, name: trimmed }));
+        }
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to update display name');
+    } finally {
+      setIsUpdatingName(false);
+    }
+  };
+
   // 2FA state hooks
   const [is2FAEnabled, setIs2FAEnabled] = useState(Boolean(user?.twoFactorEnabled));
   const [isSettingUp2FA, setIsSettingUp2FA] = useState(false);
@@ -560,13 +599,31 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
         <h3 className="font-title-md text-on-surface dark:text-[#e3e3e3] mb-4">Profile Details</h3>
         <div className="space-y-4">
           <div>
-            <label className="text-xs font-mono text-slate-500 dark:text-gray-400 uppercase tracking-wider mb-2 block">Name</label>
-            <input 
-              type="text" 
-              value={user?.name || ''} 
-              readOnly 
-              className="w-full h-12 bg-transparent border border-slate-300 dark:border-[#333] focus:border-black dark:focus:border-white outline-none text-black dark:text-white px-4 transition-colors opacity-70 cursor-not-allowed" 
-            />
+            <label className="text-xs font-mono text-slate-500 dark:text-gray-400 uppercase tracking-wider mb-2 block">Display Name</label>
+            <form onSubmit={handleUpdateDisplayName} className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+              <input 
+                type="text" 
+                value={displayName} 
+                maxLength={60}
+                onChange={(e) => {
+                  const filtered = e.target.value.replace(/[<>{}[\];]/g, '');
+                  setDisplayName(filtered);
+                  setNameSaved(false);
+                }}
+                placeholder="Enter your display name"
+                className="flex-1 h-12 bg-transparent border border-slate-300 dark:border-[#333] focus:border-black dark:focus:border-white outline-none text-black dark:text-white px-4 transition-colors" 
+              />
+              <button
+                type="submit"
+                disabled={isUpdatingName || !displayName.trim() || displayName.trim() === (user?.name || '')}
+                className="h-12 px-5 bg-neutral-900 hover:bg-neutral-800 text-white dark:bg-white dark:text-black dark:hover:bg-neutral-200 text-xs font-semibold uppercase tracking-wider transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0 cursor-pointer"
+              >
+                {isUpdatingName ? 'Saving...' : nameSaved ? 'Saved' : 'Save Name'}
+              </button>
+            </form>
+            <p className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-1.5">
+              Between 2 and 60 characters. Special characters (&lt;, &gt;, &#123;, &#125;, [, ], ;) are prohibited.
+            </p>
           </div>
           <div>
             <label className="text-xs font-mono text-slate-500 dark:text-gray-400 uppercase tracking-wider mb-2 block">Email</label>

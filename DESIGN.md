@@ -209,13 +209,22 @@ On long-form legal pages (`PrivacyPolicy.jsx` and `TermsOfService.jsx`), the lef
 - **Zero Inner Scrollbars:** All inner scrollbars (`overflow-y-auto`, `max-h-*`) are completely eliminated from the sidebar. Compact vertical geometry (`p-4` card padding, `space-y-0.5` link intervals, `py-1.5` link padding, `space-y-3` aside spacing, and `py-2.5` compact action buttons) guarantees that all 8 Privacy items and 11 Terms items fit comfortably within a ~600px viewport height without clipping.
 - **Header Offset Alignment:** Target section cards employ `scroll-mt-24` (96px) to ensure smooth scrolling that leaves comfortable visual headroom below the sticky top navigation bar.
 
+### 2.8 Defense-in-Depth Input Sanitization & Character Architecture
+To protect against MongoDB NoSQL operator injection, ASCII control-character corruption, stored XSS, HTML injection, and filesystem traversal, CloudGuard enforces strict perimeter sanitization and granular field validation:
+- **Global NoSQL & Control-Byte Stripping:** Centralized `globalSanitizeMiddleware` recursively scans `req.body`, `req.query`, and `req.params`. Any object keys beginning with `$` or containing `.` are stripped before reaching route controllers. Non-printable ASCII control characters (`[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]`) and null bytes (`\0`) are eliminated from string values.
+- **Strict Credential Exemption:** Sensitive authentication fields (`password`, `currentPassword`, `newPassword`, `credential`, `tempToken`, `token`) are strictly excluded from character stripping so raw symbols (e.g. `<`, `>`, `&`, `$`, `@`) pass unaltered to bcrypt hashing functions.
+- **Display Name Policy:** Enforces string length between 2 and 60 characters, rejecting `< > { } [ ] ;` and script tags. The client Display Name input in `ProfileSettings.jsx` applies `maxLength={60}` and reactive regex stripping on change for immediate user feedback.
+- **Vault Item Name Constraints:** Files and folders are validated via `validateVaultItemName` (length 1..120), rejecting `.` / `..`, control characters, and filesystem-breaking symbols `[<>:"/\\|?*]`.
+- **Freeform Content & Search Query Bounds:** Freeform contact/support text is sanitized via `sanitizePlainText` (name ≤ 60, subject ≤ 120, message ≤ 2000), stripping complete script blocks, style tags, HTML markup, and event handlers. All search queries are capped at 100 characters before regex escaping to prevent ReDoS.
+
 ---
 
 ## 4. Changelog & Architectural Milestones
 
 | Commit | Date | Milestone Description |
 | :--- | :--- | :--- |
-| `HEAD` | 2026-11-20 | **Opt-In TOTP Two-Factor Authentication (2FA):** Implemented RFC 6238 TOTP 2FA with AES-256-GCM encrypted secrets, 8 single-use hashed recovery backup codes, profile setup & disable workflows, and login challenge screen. |
+| `HEAD` | 2026-11-20 | **Defense-in-Depth Input Sanitization & Character Policy:** Created centralized `sanitize.js` middleware with recursive NoSQL ($ and .) key stripping, control-character cleaner, raw password preservation, display name constraints (2..60, no < > { } [ ] ;), vault item constraints (1..120, no filesystem forbidden chars), and search query length caps. |
+| `a42217f` | 2026-11-20 | **Opt-In TOTP Two-Factor Authentication (2FA):** Implemented RFC 6238 TOTP 2FA with AES-256-GCM encrypted secrets, 8 single-use hashed recovery backup codes, profile setup & disable workflows, and login challenge screen. |
 | `bc44968` | 2026-11-20 | **Scrollbar-Free Sticky Legal TOC:** Completely eliminated inner sidebar scrollbars and pinned left TOC sidebar at `lg:top-20 lg:self-start` with compact spacing fitting ~600px viewports. |
 | `42052ed` | 2026-11-20 | **Legal TOC Sticky Layout Fix:** Resolved broken sticky behavior on Privacy Policy and Terms of Service via `overflow-x: clip`, `lg:self-start`, `scroll-mt-24`, and unconstrained normal-viewport sidebar height. |
 | `1999bbc` | 2026-11-20 | **Route-Aware Canonical SEO Updater:** Added dynamic canonical link and robots meta updater in `App.jsx` for public routes vs. private `noindex` paths. |

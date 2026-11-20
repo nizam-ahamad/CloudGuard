@@ -8,6 +8,7 @@ const User = require('../models/User');
 const authMiddleware = require('../middleware/auth');
 const { buildTenantQuery } = require('../utils/tenantQuery');
 const { permanentlyDeleteS3Keys } = require('../utils/s3Delete');
+const { validateVaultItemName } = require('../middleware/sanitize');
 
 const escapeRegex = (string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -55,8 +56,12 @@ router.post('/', authMiddleware, async (req, res) => {
     }
 
     const { name, parentId } = req.body;
-    const trimmedName = (name || '').trim();
-    if (!trimmedName || trimmedName.length > 60) {
+    const validation = validateVaultItemName(name);
+    if (!validation.valid) {
+      return res.status(400).json({ error: validation.error, message: validation.error });
+    }
+    const trimmedName = validation.sanitized;
+    if (trimmedName.length > 60) {
       return res.status(400).json({ error: 'Folder name must be between 1 and 60 characters', message: 'Folder name must be between 1 and 60 characters' });
     }
 
@@ -217,14 +222,19 @@ const handleFolderUpdate = async (req, res) => {
     ];
 
     const { name, newName, parentId, parentFolder, destinationId, targetFolderId } = req.body;
-    const trimmedName = (name || newName || '').trim();
+    const rawName = (name || newName || '').trim();
 
     // If no name is provided, but a move destination is provided, execute move
-    if (!trimmedName && (parentId !== undefined || parentFolder !== undefined || destinationId !== undefined || targetFolderId !== undefined)) {
+    if (!rawName && (parentId !== undefined || parentFolder !== undefined || destinationId !== undefined || targetFolderId !== undefined)) {
       return handleMoveFolder(req, res);
     }
 
-    if (!trimmedName || trimmedName.length > 60) {
+    const validation = validateVaultItemName(rawName);
+    if (!validation.valid) {
+      return res.status(400).json({ error: validation.error, message: validation.error });
+    }
+    const trimmedName = validation.sanitized;
+    if (trimmedName.length > 60) {
       return res.status(400).json({ error: 'Folder name must be between 1 and 60 characters', message: 'Folder name must be between 1 and 60 characters' });
     }
 

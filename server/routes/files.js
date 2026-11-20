@@ -23,6 +23,7 @@ const Folder = require('../models/Folder');
 const { buildTenantQuery } = require('../utils/tenantQuery');
 const { permanentlyDeleteS3Keys, purgeAllVersionsUnderPrefix } = require('../utils/s3Delete');
 const { applyCdnToUrl } = require('../utils/cdnHelper');
+const { validateVaultItemName } = require('../middleware/sanitize');
 
 // In-memory cache for presigned preview/access URLs (30-minute TTL)
 // Key: `${file._id}:${file.s3Key}` -> Value: { url: string, expiresAt: number }
@@ -534,7 +535,13 @@ router.get('/', authMiddleware, async (req, res) => {
 router.post('/presigned-url', authMiddleware, async (req, res) => {
   try {
     // 1. Accept any standard property naming convention
-    const fileName = req.body.fileName || req.body.name || req.body.filename || req.body.originalName;
+    const rawFileName = req.body.fileName || req.body.name || req.body.filename || req.body.originalName;
+    const nameVal = validateVaultItemName(rawFileName);
+    if (!nameVal.valid) {
+      return res.status(400).json({ error: nameVal.error, message: nameVal.error });
+    }
+    const fileName = nameVal.sanitized;
+
     const fileSize = req.body.fileSize !== undefined ? req.body.fileSize : req.body.size;
     const mimeType = req.body.mimeType || req.body.type || req.body.contentType || 'application/octet-stream';
     const activeFolder = req.body.folderId || req.body.folder || null;
@@ -544,8 +551,8 @@ router.post('/presigned-url', authMiddleware, async (req, res) => {
     const userId = req.user.id || req.user._id;
 
     const parsedFileSize = Number(fileSize);
-    if (!fileName || !Number.isFinite(parsedFileSize) || parsedFileSize <= 0) {
-      return res.status(400).json({ error: 'Filename and valid non-zero file size are required', message: 'Invalid file size' });
+    if (!Number.isFinite(parsedFileSize) || parsedFileSize <= 0) {
+      return res.status(400).json({ error: 'Valid non-zero file size is required', message: 'Invalid file size' });
     }
 
     // 2. Storage Quota Enforcement
@@ -672,7 +679,13 @@ router.post('/presigned-url', authMiddleware, async (req, res) => {
 // POST /api/files/multipart/init — Initialize multipart upload for large files (>= 25 MB)
 router.post('/multipart/init', authMiddleware, async (req, res) => {
   try {
-    const { fileName, fileSize, mimeType, folderId, folder } = req.body;
+    const { fileName: rawFileName, fileSize, mimeType, folderId, folder } = req.body;
+    const nameVal = validateVaultItemName(rawFileName);
+    if (!nameVal.valid) {
+      return res.status(400).json({ error: nameVal.error, message: nameVal.error });
+    }
+    const fileName = nameVal.sanitized;
+
     const userId = req.user.id || req.user._id;
     const activeFolder = folderId || folder || null;
     const validFolder = (activeFolder && mongoose.Types.ObjectId.isValid(String(activeFolder)))
@@ -680,8 +693,8 @@ router.post('/multipart/init', authMiddleware, async (req, res) => {
       : null;
 
     const parsedFileSize = Number(fileSize);
-    if (!fileName || !Number.isFinite(parsedFileSize) || parsedFileSize <= 0) {
-      return res.status(400).json({ error: 'Filename and valid non-zero file size are required', message: 'Invalid file size' });
+    if (!Number.isFinite(parsedFileSize) || parsedFileSize <= 0) {
+      return res.status(400).json({ error: 'Valid non-zero file size is required', message: 'Invalid file size' });
     }
 
     // 1. Pre-flight storage quota and write-lock checks (identical to single-PUT)
@@ -2236,14 +2249,15 @@ const handleFileRename = async (req, res) => {
       : String(rawUserId);
 
     const { name, newName } = req.body;
-    const trimmedName = (name || newName || '').trim();
-
-    if (!trimmedName || trimmedName.length > 120) {
+    const rawName = (name || newName || '').trim();
+    const nameVal = validateVaultItemName(rawName);
+    if (!nameVal.valid) {
       return res.status(400).json({
-        error: 'File name must be between 1 and 120 characters',
-        message: 'File name must be between 1 and 120 characters'
+        error: nameVal.error,
+        message: nameVal.error
       });
     }
+    const trimmedName = nameVal.sanitized;
 
     const file = await File.findOne({
       _id: req.params.id,
@@ -2276,21 +2290,10 @@ const handleFolderRenameInFiles = async (req, res) => {
   try {
     const { id } = req.params;
     const { name, newName, parentId, targetFolderId } = req.body;
-    const trimmedName = (name || newName || '').trim();
-
-    if (trimmedName && trimmedName.length > 60) {
-      return res.status(400).json({
-        error: 'Folder name must be between 1 and 60 characters',
-        message: 'Folder name must be between 1 and 60 characters'
-      });
-    }
-    const userId = req.user?._id || req.user?.id;
-    const userMatch = mongoose.Types.ObjectId.isValid(userId)
-      ? { $in: [String(userId), new mongoose.Types.ObjectId(userId)] }
-      : String(userId);
+    const rawName = (name || newName || '').trim();
 
     // If name is omitted but destination is provided, execute move
-    if (!trimmedName && (parentId !== undefined || targetFolderId !== undefined)) {
+    if (!rawName && (parentId !== undefined || targetFolderId !== undefined)) {
       const dest = parentId !== undefined ? parentId : targetFolderId;
       const targetParentId = dest === 'null' || dest === 'root' || !dest ? null : dest;
       if (id === targetParentId) {
@@ -2312,8 +2315,19 @@ const handleFolderRenameInFiles = async (req, res) => {
       return res.json({ success: true, folder: targetFolder });
     }
 
-    if (!trimmedName) {
-      return res.status(400).json({ error: 'Folder name cannot be empty' });
+    const nameVal = validateVaultItemName(rawName);
+    if (!nameVal.valid) {
+      return res.status(400).json({
+        error: nameVal.error,
+        message: nameVal.error
+      });
+    }
+    const trimmedName = nameVal.sanitized;
+    if (trimmedName.length > 60) {
+      return res.status(400).json({
+        error: 'Folder name must be between 1 and 60 characters',
+        message: 'Folder name must be between 1 and 60 characters'
+      });
     }
 
     // 1. Find the target folder

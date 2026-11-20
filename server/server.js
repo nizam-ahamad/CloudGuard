@@ -81,36 +81,18 @@ const JWT_SECRET = process.env.JWT_SECRET;
 app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
-// Lightweight NoSQL operator sanitizer middleware
-// Recursively strips keys starting with '$' or containing '.' in-place
-function sanitizeNoSql(payload) {
-  if (!payload || typeof payload !== 'object') return payload;
+// Centralized defense-in-depth sanitization & validation module
+const {
+  globalSanitizeMiddleware,
+  sanitizePlainText,
+  validateDisplayName,
+  validateVaultItemName,
+  validatePasswordInput,
+  validateCodeInput,
+} = require('./middleware/sanitize');
 
-  if (Array.isArray(payload)) {
-    for (let i = 0; i < payload.length; i++) {
-      if (payload[i] && typeof payload[i] === 'object') {
-        sanitizeNoSql(payload[i]);
-      }
-    }
-    return payload;
-  }
-
-  for (const key of Object.keys(payload)) {
-    if (key.startsWith('$') || key.includes('.')) {
-      delete payload[key];
-    } else if (payload[key] && typeof payload[key] === 'object') {
-      sanitizeNoSql(payload[key]);
-    }
-  }
-  return payload;
-}
-
-app.use((req, res, next) => {
-  if (req.body) sanitizeNoSql(req.body);
-  if (req.query) sanitizeNoSql(req.query);
-  if (req.params) sanitizeNoSql(req.params);
-  next();
-});
+// Mount global NoSQL operator ($ and .) and control-character sanitizer
+app.use(globalSanitizeMiddleware);
 
 const s3 = new S3Client({
   region: process.env.AWS_REGION || 'eu-central-003',
@@ -927,6 +909,49 @@ app.use('/api', require('./routes/photos'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/admin', (req, res) => res.status(404).json({ error: 'Not found' }));
 
+// Contact & Support Endpoints with XSS defense and plain text sanitization
+const handleContactMessage = (req, res) => {
+  try {
+    const { name, email, subject, message } = req.body || {};
+    const cleanName = sanitizePlainText(name, 60);
+    const cleanSubject = sanitizePlainText(subject, 120);
+    const cleanMessage = sanitizePlainText(message, 2000);
+
+    if (!cleanName || !cleanSubject || !cleanMessage) {
+      return res.status(400).json({
+        error: 'Name, subject, and message are required and cannot be empty or script-only.',
+        message: 'Name, subject, and message are required and cannot be empty or script-only.',
+      });
+    }
+
+    if (typeof email !== 'string' || email.trim().length === 0 || email.length > 254) {
+      return res.status(400).json({
+        error: 'A valid email address is required (maximum 254 characters).',
+        message: 'A valid email address is required (maximum 254 characters).',
+      });
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email.trim())) {
+      return res.status(400).json({
+        error: 'Invalid email address format.',
+        message: 'Invalid email address format.',
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Thank you for contacting CloudGuard support. Your message has been received.',
+    });
+  } catch (err) {
+    console.error('Contact endpoint error:', err);
+    return res.status(500).json({ error: 'Failed to process message' });
+  }
+};
+
+app.post('/api/contact', handleContactMessage);
+app.post('/api/support', handleContactMessage);
+
 app.post('/api/auth/register', async (req, res) => {
   try {
     const globalUsed = await getGlobalStorageUsed();
@@ -934,8 +959,22 @@ app.post('/api/auth/register', async (req, res) => {
       return res.status(503).json({ error: "Registration disabled: CloudGuard global server capacity has been reached." });
     }
 
-    const { name, email, password } = req.body;
+    const { name, email, password } = req.body || {};
     if (!name || !email || !password) return res.status(400).json({ error: 'Missing fields' });
+
+    const nameVal = validateDisplayName(name);
+    if (!nameVal.valid) {
+      return res.status(400).json({ error: nameVal.error, message: nameVal.error });
+    }
+
+    if (typeof email !== 'string' || email.length > 254) {
+      return res.status(400).json({ error: 'Email must be a string and under 254 characters' });
+    }
+
+    const pwdVal = validatePasswordInput(password);
+    if (!pwdVal.valid) {
+      return res.status(400).json({ error: pwdVal.error, message: pwdVal.error });
+    }
     
     const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/;
     if (!passwordRegex.test(password)) {
@@ -1089,7 +1128,18 @@ app.post('/api/auth/resend-otp', async (req, res) => {
 
 app.post('/api/auth/login', async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password } = req.body || {};
+    if (!email || !password) return res.status(400).json({ error: 'Please enter both email and password' });
+
+    if (typeof email !== 'string' || email.length > 254) {
+      return res.status(400).json({ error: 'Email must be a string and under 254 characters' });
+    }
+
+    const pwdVal = validatePasswordInput(password);
+    if (!pwdVal.valid) {
+      return res.status(400).json({ error: pwdVal.error, message: pwdVal.error });
+    }
+
     let user = null;
     
         user = await User.findOne({ email });
@@ -1176,9 +1226,14 @@ app.put('/api/auth/reset-password/:token', async (req, res) => {
       return res.status(400).json({ error: 'Invalid or expired reset token' });
     }
 
-    const { password } = req.body;
+    const { password } = req.body || {};
     if (!password) {
       return res.status(400).json({ error: 'Please provide a new password' });
+    }
+
+    const pwdVal = validatePasswordInput(password);
+    if (!pwdVal.valid) {
+      return res.status(400).json({ error: pwdVal.error, message: pwdVal.error });
     }
 
     const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/;
@@ -1203,10 +1258,22 @@ app.put('/api/auth/reset-password/:token', async (req, res) => {
 
 app.put('/api/auth/password', verifyToken, async (req, res) => {
   try {
-    const { currentPassword, newPassword } = req.body;
+    const { currentPassword, newPassword } = req.body || {};
     if (!newPassword) return res.status(400).json({ error: 'New password is required' });
 
-    const passwordRegex = /^(?=.*[A-Za-z])(?=.*d).{8,}$/;
+    const newPwdVal = validatePasswordInput(newPassword);
+    if (!newPwdVal.valid) {
+      return res.status(400).json({ error: newPwdVal.error, message: newPwdVal.error });
+    }
+
+    if (currentPassword) {
+      const curPwdVal = validatePasswordInput(currentPassword);
+      if (!curPwdVal.valid) {
+        return res.status(400).json({ error: curPwdVal.error, message: curPwdVal.error });
+      }
+    }
+
+    const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/;
     if (!passwordRegex.test(newPassword)) {
       return res.status(400).json({ error: 'Password must be at least 8 characters long and contain at least 1 letter and 1 number' });
     }
@@ -1349,8 +1416,14 @@ app.post('/api/presign', verifyToken, async (req, res) => {
     const { filename, contentType, folderId } = req.body;
     if (!filename) return res.status(400).json({ error: 'Filename is required' });
 
+    const nameVal = validateVaultItemName(filename);
+    if (!nameVal.valid) {
+      return res.status(400).json({ error: nameVal.error, message: nameVal.error });
+    }
+    const cleanFileName = nameVal.sanitized;
+
     const userId = req.user?._id || req.user?.id || req.userId || 'anonymous';
-    const fileKey = `uploads/${userId}/${Date.now()}-${filename}`;
+    const fileKey = `uploads/${userId}/${Date.now()}-${cleanFileName}`;
     
     const command = new PutObjectCommand({
       Bucket: process.env.AWS_BUCKET_NAME,
@@ -1386,8 +1459,14 @@ app.post('/api/upload', verifyToken, async (req, res) => {
   const { fileKey, originalName, fileSize, folderId } = req.body;
   if (!fileKey || !originalName) return res.status(400).json({ error: "No file data provided" });
 
-  const filesToProcess = [{ key: fileKey, originalname: originalName, size: fileSize || 0 }];
-  console.log('[Upload Hit] File data for direct upload:', originalName);
+  const nameVal = validateVaultItemName(originalName);
+  if (!nameVal.valid) {
+    return res.status(400).json({ error: nameVal.error, message: nameVal.error });
+  }
+  const cleanOriginalName = nameVal.sanitized;
+
+  const filesToProcess = [{ key: fileKey, originalname: cleanOriginalName, size: fileSize || 0 }];
+  console.log('[Upload Hit] File data for direct upload:', cleanOriginalName);
 
   const userId = req.user._id;
   const incomingSize = filesToProcess.reduce((sum, f) => sum + f.size, 0);
@@ -1774,8 +1853,11 @@ app.post('/api/folders', verifyToken, async (req, res) => {
   try {
     const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
     const { name, parentId } = req.body;
-    const trimmedName = (name || '').trim();
-    if (!trimmedName) return res.status(400).json({ error: 'Folder name is required' });
+    const nameVal = validateVaultItemName(name);
+    if (!nameVal.valid) {
+      return res.status(400).json({ error: nameVal.error, message: nameVal.error });
+    }
+    const trimmedName = nameVal.sanitized;
 
     // Check if an active (non-trashed) folder with the same name already exists in this folder
     const duplicateQuery = buildTenantQuery(rawUserId, {
@@ -1858,10 +1940,10 @@ app.get('/api/folders/:id', verifyToken, async (req, res) => {
 const handleFolderRename = async (req, res) => {
   try {
     const { newName, name, parentId, targetFolderId } = req.body;
-    const trimmedName = (newName || name || '').trim();
+    const rawName = (newName || name || '').trim();
 
     // If no name is provided, but destination is provided, execute move instead of throwing error
-    if (!trimmedName && (parentId !== undefined || targetFolderId !== undefined)) {
+    if (!rawName && (parentId !== undefined || targetFolderId !== undefined)) {
       const dest = parentId !== undefined ? parentId : targetFolderId;
       const targetParentId = dest === 'null' || dest === 'root' || !dest ? null : dest;
       if (req.params.id === targetParentId) {
@@ -1874,9 +1956,11 @@ const handleFolderRename = async (req, res) => {
       return res.json({ success: true, folder });
     }
 
-    if (!trimmedName) {
-      return res.status(400).json({ error: 'Folder name cannot be empty' });
+    const nameVal = validateVaultItemName(rawName);
+    if (!nameVal.valid) {
+      return res.status(400).json({ error: nameVal.error, message: nameVal.error });
     }
+    const trimmedName = nameVal.sanitized;
 
     const folderId = req.params.id;
     const folder = await FolderModel.findOne({ _id: folderId, userId: req.user._id });
@@ -2115,7 +2199,7 @@ app.get('/api/files', verifyToken, async (req, res) => {
   res.setHeader('Expires', '0');
   try {
     const isRecent = req.query.recent === 'true';
-    const searchQuery = req.query.search || '';
+    const searchQuery = (req.query.search || '').trim().slice(0, 100);
     const targetFolderId = req.query.folderId || req.query.folder || null;
     const userId = req.user?.id || req.user?._id || req.user?.userId;
     if (!userId) {

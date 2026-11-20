@@ -20,6 +20,14 @@ const authMiddleware = require('../middleware/auth');
 const { sendActivationOtp, sendResetOtp, sendWelcomeEmail, sendNotificationEmail, sendAccountDeletedEmail } = require('../utils/emailService');
 const { authLimiter, otpLimiter } = require('../middleware/rateLimiter');
 const { permanentlyDeleteS3Keys } = require('../utils/s3Delete');
+const {
+  validateDisplayName,
+  validateVaultItemName,
+  validatePasswordInput,
+  validateCodeInput,
+  validateEmailInput,
+  sanitizePlainText,
+} = require('../middleware/sanitize');
 
 const get2faEncryptionKey = () =>
   crypto.createHash('sha256').update(process.env.JWT_SECRET || 'cloudguard_fallback_secret').digest();
@@ -258,12 +266,24 @@ router.post('/register', authLimiter, async (req, res) => {
     if (typeof name !== 'string' || typeof email !== 'string' || typeof password !== 'string') {
       return res.status(400).json({ error: 'Invalid input format', message: 'Invalid input format' });
     }
-    const trimmedName = name.trim();
-    const normalizedEmail = email.toLowerCase().trim();
-    if (!trimmedName || !normalizedEmail || !password) return res.status(400).json({ error: 'All fields are required' });
-    if (trimmedName.length > 50) return res.status(400).json({ error: 'Name cannot exceed 50 characters' });
-    if (normalizedEmail.length > 120) return res.status(400).json({ error: 'Email cannot exceed 120 characters' });
-    if (password.length > 72) return res.status(400).json({ error: 'Password cannot exceed 72 characters' });
+
+    const nameVal = validateDisplayName(name);
+    if (!nameVal.valid) {
+      return res.status(400).json({ error: nameVal.error, message: nameVal.error });
+    }
+    const trimmedName = nameVal.sanitized;
+
+    const emailVal = validateEmailInput(email);
+    if (!emailVal.valid) {
+      return res.status(400).json({ error: emailVal.error, message: emailVal.error });
+    }
+    const normalizedEmail = emailVal.sanitized;
+
+    const pwdVal = validatePasswordInput(password);
+    if (!pwdVal.valid) {
+      return res.status(400).json({ error: pwdVal.error, message: pwdVal.error });
+    }
+    if (normalizedEmail.length > 254) return res.status(400).json({ error: 'Email cannot exceed 254 characters' });
 
     // Strict permanent consumer email domain validation
     const domain = normalizedEmail.split('@')[1]?.toLowerCase();
@@ -392,10 +412,12 @@ router.post('/verify-activation-otp', otpLimiter, async (req, res) => {
     if (typeof email !== 'string' || typeof otp !== 'string') {
       return res.status(400).json({ error: 'Invalid input format', message: 'Invalid input format' });
     }
-    if (!email.trim() || !otp.trim()) {
-      return res.status(400).json({ error: 'Email and verification code are required' });
+    const codeVal = validateCodeInput(otp);
+    if (!codeVal.valid) {
+      return res.status(400).json({ error: codeVal.error, message: codeVal.error });
     }
-    if (otp.trim().length > 8) {
+    const cleanOtp = codeVal.sanitized;
+    if (cleanOtp.length > 8) {
       return res.status(400).json({ error: 'Invalid verification code' });
     }
 
@@ -495,8 +517,12 @@ router.post('/verify-otp', otpLimiter, async (req, res) => {
     if (typeof email !== 'string' || typeof otp !== 'string' || (type !== undefined && typeof type !== 'string')) {
       return res.status(400).json({ error: 'Invalid input format', message: 'Invalid input format' });
     }
-    if (!email.trim() || !otp.trim()) return res.status(400).json({ error: 'Email and OTP are required' });
-    if (otp.trim().length > 8) return res.status(400).json({ error: 'Invalid verification code' });
+    const codeVal = validateCodeInput(otp);
+    if (!codeVal.valid) {
+      return res.status(400).json({ error: codeVal.error, message: codeVal.error });
+    }
+    const cleanOtp = codeVal.sanitized;
+    if (cleanOtp.length > 8) return res.status(400).json({ error: 'Invalid verification code' });
 
     const normalizedEmail = email.toLowerCase().trim();
     const user = await User.findOne({ email: normalizedEmail });
@@ -667,15 +693,18 @@ router.post('/login', authLimiter, async (req, res) => {
       return res.status(400).json({ error: 'Invalid input format', message: 'Invalid input format' });
     }
 
-    const normalizedEmail = email.toLowerCase().trim();
-    if (!normalizedEmail || !password) {
-      return res.status(400).json({ error: 'Please enter both email and password' });
+    const emailVal = validateEmailInput(email);
+    if (!emailVal.valid) {
+      return res.status(400).json({ error: emailVal.error, message: emailVal.error });
     }
-    if (normalizedEmail.length > 120) {
-      return res.status(400).json({ error: 'Email cannot exceed 120 characters' });
+    const normalizedEmail = emailVal.sanitized;
+
+    const pwdVal = validatePasswordInput(password);
+    if (!pwdVal.valid) {
+      return res.status(400).json({ error: pwdVal.error, message: pwdVal.error });
     }
-    if (password.length > 72) {
-      return res.status(400).json({ error: 'Password cannot exceed 72 characters' });
+    if (normalizedEmail.length > 254) {
+      return res.status(400).json({ error: 'Email cannot exceed 254 characters' });
     }
 
     // Explicitly include +password in query
@@ -824,18 +853,24 @@ router.post('/reset-password', otpLimiter, async (req, res) => {
     if (typeof email !== 'string' || typeof otp !== 'string' || typeof newPassword !== 'string') {
       return res.status(400).json({ error: 'Invalid input format', message: 'Invalid input format' });
     }
-    const normalizedEmail = email.toLowerCase().trim();
-    if (!normalizedEmail || !otp.trim() || !newPassword) {
-      return res.status(400).json({ error: 'Email, OTP, and new password are required' });
+    const emailVal = validateEmailInput(email);
+    if (!emailVal.valid) {
+      return res.status(400).json({ error: emailVal.error, message: emailVal.error });
     }
-    if (normalizedEmail.length > 120) {
-      return res.status(400).json({ error: 'Email cannot exceed 120 characters' });
+    const normalizedEmail = emailVal.sanitized;
+
+    const codeVal = validateCodeInput(otp);
+    if (!codeVal.valid) {
+      return res.status(400).json({ error: codeVal.error, message: codeVal.error });
     }
-    if (otp.trim().length > 8) {
+    const cleanOtp = codeVal.sanitized;
+
+    const pwdVal = validatePasswordInput(newPassword);
+    if (!pwdVal.valid) {
+      return res.status(400).json({ error: pwdVal.error, message: pwdVal.error });
+    }
+    if (cleanOtp.length > 8) {
       return res.status(400).json({ error: 'Invalid or expired reset code' });
-    }
-    if (newPassword.length > 72) {
-      return res.status(400).json({ error: 'Password cannot exceed 72 characters' });
     }
 
     const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/;
@@ -902,11 +937,12 @@ router.put('/reset-password/:token', otpLimiter, async (req, res) => {
     if (!password) {
       return res.status(400).json({ error: 'Please provide a new password' });
     }
-    if (password.length > 72) {
-      return res.status(400).json({ error: 'Password cannot exceed 72 characters' });
+    const pwdVal = validatePasswordInput(password);
+    if (!pwdVal.valid) {
+      return res.status(400).json({ error: pwdVal.error, message: pwdVal.error });
     }
-    if (email && email.trim().length > 120) {
-      return res.status(400).json({ error: 'Email cannot exceed 120 characters' });
+    if (email && email.trim().length > 254) {
+      return res.status(400).json({ error: 'Email cannot exceed 254 characters' });
     }
 
     const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/;
@@ -954,15 +990,19 @@ router.put('/reset-password/:token', otpLimiter, async (req, res) => {
 // ==========================================
 router.put('/password', verifyToken, async (req, res) => {
   try {
-    const { currentPassword, newPassword } = req.body;
+    const { currentPassword, newPassword } = req.body || {};
     if (!newPassword) {
       return res.status(400).json({ error: 'New password is required' });
     }
-    if (typeof newPassword === 'string' && newPassword.length > 72) {
-      return res.status(400).json({ error: 'New password cannot exceed 72 characters' });
+    const newPwdVal = validatePasswordInput(newPassword);
+    if (!newPwdVal.valid) {
+      return res.status(400).json({ error: newPwdVal.error, message: newPwdVal.error });
     }
-    if (currentPassword && typeof currentPassword === 'string' && currentPassword.length > 72) {
-      return res.status(400).json({ error: 'Current password cannot exceed 72 characters' });
+    if (currentPassword) {
+      const curPwdVal = validatePasswordInput(currentPassword);
+      if (!curPwdVal.valid) {
+        return res.status(400).json({ error: curPwdVal.error, message: curPwdVal.error });
+      }
     }
 
     const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/;
@@ -1009,11 +1049,15 @@ router.post('/change-password', verifyToken, async (req, res) => {
     if (!newPassword) {
       return res.status(400).json({ error: 'New password is required' });
     }
-    if (typeof newPassword === 'string' && newPassword.length > 72) {
-      return res.status(400).json({ error: 'New password cannot exceed 72 characters' });
+    const newPwdVal = validatePasswordInput(newPassword);
+    if (!newPwdVal.valid) {
+      return res.status(400).json({ error: newPwdVal.error, message: newPwdVal.error });
     }
-    if (currentPassword && typeof currentPassword === 'string' && currentPassword.length > 72) {
-      return res.status(400).json({ error: 'Current password cannot exceed 72 characters' });
+    if (currentPassword) {
+      const curPwdVal = validatePasswordInput(currentPassword);
+      if (!curPwdVal.valid) {
+        return res.status(400).json({ error: curPwdVal.error, message: curPwdVal.error });
+      }
     }
 
     const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/;
@@ -1071,6 +1115,10 @@ router.delete('/account', authMiddleware, async (req, res) => {
     if (user.password && user.authProvider !== 'google') {
       if (!password) {
         return res.status(400).json({ error: 'Please enter your account password to confirm deletion.' });
+      }
+      const pwdVal = validatePasswordInput(password);
+      if (!pwdVal.valid) {
+        return res.status(400).json({ error: pwdVal.error, message: pwdVal.error });
       }
       const isMatch = await bcrypt.compare(password, user.password);
       if (!isMatch) {
@@ -1216,6 +1264,10 @@ router.post('/2fa/verify-setup', authMiddleware, async (req, res) => {
     }
 
     const cleanCode = code.trim().replace(/\s+/g, '');
+    const codeVal = validateCodeInput(cleanCode);
+    if (!codeVal.valid) {
+      return res.status(400).json({ error: codeVal.error, message: codeVal.error });
+    }
     const isValid = authenticator.check(cleanCode, secret.trim());
     if (!isValid) {
       return res.status(400).json({ error: 'Invalid verification code. Please check your authenticator app.' });
@@ -1278,6 +1330,10 @@ router.post('/2fa/verify-login', otpLimiter, async (req, res) => {
     }
 
     const cleanCode = code.trim().replace(/\s+/g, '');
+    const codeVal = validateCodeInput(cleanCode);
+    if (!codeVal.valid) {
+      return res.status(400).json({ error: codeVal.error, message: codeVal.error });
+    }
     const decryptedSecret = decrypt2faSecret(user.twoFactorSecret);
 
     let isTotpValid = false;
@@ -1354,6 +1410,10 @@ router.post('/2fa/disable', authMiddleware, async (req, res) => {
       if (!password || typeof password !== 'string') {
         return res.status(400).json({ error: 'Please enter your password to disable 2FA.' });
       }
+      const pwdVal = validatePasswordInput(password);
+      if (!pwdVal.valid) {
+        return res.status(400).json({ error: pwdVal.error, message: pwdVal.error });
+      }
       const isMatch = await bcrypt.compare(password, user.password);
       if (!isMatch) {
         return res.status(400).json({ error: 'Incorrect password.' });
@@ -1363,6 +1423,10 @@ router.post('/2fa/disable', authMiddleware, async (req, res) => {
         return res.status(400).json({ error: 'Please enter your authenticator or backup code to disable 2FA.' });
       }
       const cleanCode = code.trim().replace(/\s+/g, '');
+      const codeVal = validateCodeInput(cleanCode);
+      if (!codeVal.valid) {
+        return res.status(400).json({ error: codeVal.error, message: codeVal.error });
+      }
       const decryptedSecret = decrypt2faSecret(user.twoFactorSecret);
       let isValid = false;
 
@@ -1406,5 +1470,81 @@ router.post('/2fa/disable', authMiddleware, async (req, res) => {
     return res.status(500).json({ error: 'Failed to disable 2FA' });
   }
 });
+
+// ==========================================
+// 10. PROFILE UPDATE (PUT /profile & PUT /name)
+// ==========================================
+const handleProfileUpdate = async (req, res) => {
+  try {
+    const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
+    const { name } = req.body || {};
+    const validation = validateDisplayName(name);
+    if (!validation.valid) {
+      return res.status(400).json({ error: validation.error, message: validation.error });
+    }
+    const user = await User.findById(rawUserId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    user.name = validation.sanitized;
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Display name updated successfully',
+      user: formatUserResponse(user),
+    });
+  } catch (err) {
+    console.error('Update profile error:', err);
+    return res.status(500).json({ error: 'Failed to update profile' });
+  }
+};
+
+router.put('/profile', authMiddleware, handleProfileUpdate);
+router.put('/name', authMiddleware, handleProfileUpdate);
+
+// ==========================================
+// 11. CONTACT & SUPPORT ENDPOINTS
+// ==========================================
+const handleContactInAuth = (req, res) => {
+  try {
+    const { name, email, subject, message } = req.body || {};
+    const cleanName = sanitizePlainText(name, 60);
+    const cleanSubject = sanitizePlainText(subject, 120);
+    const cleanMessage = sanitizePlainText(message, 2000);
+
+    if (!cleanName || !cleanSubject || !cleanMessage) {
+      return res.status(400).json({
+        error: 'Name, subject, and message are required and cannot be empty or script-only.',
+        message: 'Name, subject, and message are required and cannot be empty or script-only.',
+      });
+    }
+
+    if (typeof email !== 'string' || email.trim().length === 0 || email.length > 254) {
+      return res.status(400).json({
+        error: 'A valid email address is required (maximum 254 characters).',
+        message: 'A valid email address is required (maximum 254 characters).',
+      });
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email.trim())) {
+      return res.status(400).json({
+        error: 'Invalid email address format.',
+        message: 'Invalid email address format.',
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Thank you for contacting CloudGuard support. Your message has been received.',
+    });
+  } catch (err) {
+    console.error('Contact endpoint error:', err);
+    return res.status(500).json({ error: 'Failed to process message' });
+  }
+};
+
+router.post('/contact', handleContactInAuth);
+router.post('/support', handleContactInAuth);
 
 module.exports = router;
