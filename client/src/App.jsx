@@ -3785,7 +3785,7 @@ function App() {
             )
           ) : (
             <div className="bg-white dark:bg-[#1e1f20] rounded-xl border border-neutral-200 dark:border-zinc-800/50 shadow-sm dark:text-zinc-300 overflow-visible">
-            <div className="overflow-x-auto overflow-y-visible w-full pb-4 sm:pb-32">
+            <div className="overflow-visible md:overflow-x-auto w-full pb-4 sm:pb-32">
               <table className="w-full text-left md:border-collapse block md:table md:min-w-[800px]">
                 <thead className="hidden md:table-header-group">
                   <tr className="border-b border-neutral-200 dark:border-zinc-800/50 bg-neutral-50/80 dark:bg-[#1e1f20] text-neutral-500 dark:text-neutral-400 text-xs font-semibold uppercase tracking-wider">
@@ -3884,7 +3884,7 @@ function App() {
                       onClick={() => file.isFolder ? setCurrentDirectory(file.diskName || file.name) : handlePreview(file)}
                       onMouseEnter={() => !file.isFolder && prefetchAccessUrl(file._id, token)}
                       onTouchStart={() => !file.isFolder && prefetchAccessUrl(file._id, token)}
-                      className={`flex flex-wrap md:table-row items-center py-2.5 sm:py-3 px-3 sm:px-4 md:p-0 hover:bg-surface-bright dark:hover:bg-zinc-800/70 dark:text-zinc-300 transition-colors group md:h-14 min-h-0 ${
+                      className={`flex flex-wrap md:table-row items-center py-2.5 sm:py-3 px-3 sm:px-4 md:p-0 hover:bg-surface-bright dark:hover:bg-zinc-800/70 dark:text-zinc-300 transition-colors group md:h-14 ${
                         activeMenuId === (file._id || file.id) ? 'relative z-50' : 'relative z-0'
                       } ${
                         selectedFileIds.includes(String(file._id)) ? 'bg-emerald-500/10 dark:bg-emerald-500/15' : ''

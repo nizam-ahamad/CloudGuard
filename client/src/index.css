@@ -2,8 +2,13 @@
 @config "../tailwind.config.js";
 
 @layer base {
+  html {
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
   body {
     @apply bg-surface text-on-surface font-body-md min-h-screen;
+    overflow-x: hidden;
   }
 }
 
