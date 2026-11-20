@@ -658,23 +658,25 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
               </label>
               <div className="relative">
                 <input
-                  type={showCurrentPassword ? 'text' : 'password'}
-                  name="cg-current-pwd-field"
-                  id="cg-current-pwd-field"
+                  type="text"
+                  name="vault-current-secret-entry"
+                  id="vault-current-secret-entry"
+                  style={{ WebkitTextSecurity: showCurrentPassword ? 'none' : 'disc', textSecurity: showCurrentPassword ? 'none' : 'disc' }}
                   maxLength={72}
                   value={currentPassword}
                   onChange={(e) => setCurrentPassword(e.target.value)}
                   required
-                  autoComplete="new-password"
+                  autoComplete="off"
                   autoCorrect="off"
                   autoCapitalize="off"
-                  spellCheck="false"
+                  spellCheck={false}
                   data-lpignore="true"
                   data-1p-ignore="true"
+                  data-bwignore="true"
+                  data-form-type="other"
                   readOnly
-                  onFocus={(e) => {
-                    e.target.readOnly = false;
-                  }}
+                  onFocus={(e) => e.currentTarget.removeAttribute('readOnly')}
+                  onMouseDown={(e) => e.currentTarget.removeAttribute('readOnly')}
                   placeholder="Enter current password"
                   className="w-full h-12 bg-transparent border border-slate-300 dark:border-[#333] focus:border-black dark:focus:border-white outline-none text-black dark:text-white px-4 pr-10 transition-colors"
                 />
@@ -704,23 +706,25 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
             </label>
             <div className="relative">
               <input
-                type={showNewPassword ? 'text' : 'password'}
-                name="cg-new-pwd-field"
-                id="cg-new-pwd-field"
+                type="text"
+                name="vault-new-secret-entry"
+                id="vault-new-secret-entry"
+                style={{ WebkitTextSecurity: showNewPassword ? 'none' : 'disc', textSecurity: showNewPassword ? 'none' : 'disc' }}
                 maxLength={72}
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
                 required
-                autoComplete="new-password"
+                autoComplete="off"
                 autoCorrect="off"
                 autoCapitalize="off"
-                spellCheck="false"
+                spellCheck={false}
                 data-lpignore="true"
                 data-1p-ignore="true"
+                data-bwignore="true"
+                data-form-type="other"
                 readOnly
-                onFocus={(e) => {
-                  e.target.readOnly = false;
-                }}
+                onFocus={(e) => e.currentTarget.removeAttribute('readOnly')}
+                onMouseDown={(e) => e.currentTarget.removeAttribute('readOnly')}
                 placeholder="Must be at least 8 characters"
                 className="w-full h-12 bg-transparent border border-slate-300 dark:border-[#333] focus:border-black dark:focus:border-white outline-none text-black dark:text-white px-4 pr-10 transition-colors"
               />
