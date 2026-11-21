@@ -516,6 +516,30 @@ export default function Pricing() {
 
   const handleSubscribe = executeCheckout;
 
+  // Fallback: Verify order if redirected directly to /pricing?order_id=...
+  useEffect(() => {
+    const orderId = searchParams.get('order_id') || searchParams.get('orderId');
+    if (!orderId) return;
+
+    async function verifyOrderFromUrl() {
+      try {
+        const verifyRes = await api.get(`/payments/verify/${encodeURIComponent(orderId)}`);
+        if (verifyRes.data?.success) {
+          toast.success('Subscription activated! Your storage quota has been upgraded.', {
+            style: { background: '#18181b', color: '#fff', border: '1px solid #27272a' },
+          });
+          window.dispatchEvent(new CustomEvent('cloudguard:subscription-updated'));
+          window.dispatchEvent(new Event('cloudguard:storage-updated'));
+          if (typeof refreshUser === 'function') refreshUser();
+          navigate('/dashboard?upgraded=true', { replace: true });
+        }
+      } catch (err) {
+        console.error('[Pricing URL Verify Error]:', err.response?.data || err.message);
+      }
+    }
+    verifyOrderFromUrl();
+  }, [searchParams, navigate, refreshUser, toast]);
+
   // Auto-Resume Checkout After Login: opens Order Summary modal
   useEffect(() => {
     if (!token || !user) return;

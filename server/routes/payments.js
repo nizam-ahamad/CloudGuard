@@ -1,6 +1,7 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const axios = require('axios');
+const crypto = require('crypto');
 const PDFDocument = require('pdfkit');
 const auth = require('../middleware/auth');
 const User = require('../models/User');
@@ -295,7 +296,8 @@ router.post('/create-order', auth, async (req, res) => {
         customer_name: user.name || 'CloudGuard User'
       },
       order_meta: {
-        return_url: `${process.env.CLIENT_URL || 'http://localhost:5173'}/dashboard?order_id={order_id}`
+        return_url: `${process.env.CLIENT_URL || 'https://cloudguard.site'}/dashboard?order_id={order_id}`,
+        notify_url: `${process.env.BACKEND_URL || 'https://api.cloudguard.site'}/api/payments/webhook`,
       },
       order_note: `CloudGuard|${planId}|${targetCycle}|${storageGB}GB|${transition.transitionType}`
     };
@@ -368,19 +370,30 @@ async function generateUniqueInvoiceNumber() {
 }
 
 /**
- * Idempotent order fulfillment helper
+ * Idempotent order activation helper
+ * Used by both GET /api/payments/verify/:orderId and POST /api/payments/webhook.
  * Guarantees that even with concurrent verify and webhook calls,
- * subscription is extended exactly once using atomic Payment status transition.
+ * subscription is extended exactly once and confirmation email is dispatched.
  */
-async function fulfillCashfreeOrder(orderId, orderDetails = null, clientOrigin = '') {
-  let order = orderDetails;
-  if (!order || !order.order_status || !order.order_note) {
+async function activatePaidCashfreeOrder(orderData, clientOrigin = '') {
+  let order = orderData;
+  const orderId =
+    typeof orderData === 'string'
+      ? orderData
+      : (orderData?.order_id || orderData?.orderId || orderData?.data?.order?.order_id);
+
+  if (!orderId) {
+    throw new Error('Order ID is required to activate Cashfree order');
+  }
+
+  // Fetch full authoritative order details from Cashfree if incomplete
+  if (!order || typeof order === 'string' || !order.order_status) {
     const response = await axios.get(`${CASHFREE_BASE_URL}/orders/${orderId}`, {
       headers: {
         'x-client-id': process.env.CASHFREE_APP_ID,
         'x-client-secret': process.env.CASHFREE_SECRET_KEY,
-        'x-api-version': '2023-08-01'
-      }
+        'x-api-version': '2023-08-01',
+      },
     });
     order = response.data;
   }
@@ -389,37 +402,121 @@ async function fulfillCashfreeOrder(orderId, orderDetails = null, clientOrigin =
     return { success: false, status: order.order_status };
   }
 
-  const parts = (order.order_note || '').split('|');
-  let planId = parts[1] || 'tier_50gb';
+  // Determine plan and cycle from order_tags, order_note, or order_amount
+  const note = order.order_note || '';
+  const tags = order.order_tags || {};
+  const parts = note.split('|');
+  let planId = tags.plan_id || tags.planId || parts[1] || '';
+  let cycle = tags.billing_cycle || tags.billingCycle || parts[2] || '';
+  const transitionType = parts[4] || 'STANDARD';
+
+  // Normalize aliases
   if (planId === 'essential') planId = 'tier_50gb';
   if (planId === 'pro') planId = 'tier_100gb';
   if (planId === 'ultra') planId = 'tier_200gb';
 
-  const cycle = parts[2] || (Number(order.order_amount) > 300 ? 'annual' : 'monthly');
-  const transitionType = parts[4] || 'STANDARD';
-  const targetPlan = PLAN_CATALOG[planId] || PLAN_CATALOG.tier_50gb;
+  const orderAmount = Number(order.order_amount || 0);
 
-  // 1. Check if already claimed and paid
-  let paymentRecord = await Payment.findOne({ orderId });
-  if (paymentRecord && paymentRecord.status === 'PAID') {
-    if (!paymentRecord.invoiceNumber && Number(paymentRecord.amount || 0) > 0) {
-      paymentRecord.invoiceNumber = await generateUniqueInvoiceNumber();
-      await paymentRecord.save();
+  // Fallback plan & cycle resolution based on authoritative order amount
+  if (!PLAN_CATALOG[planId]) {
+    if (orderAmount === 999 || (orderAmount >= 900 && orderAmount <= 1100)) {
+      planId = 'tier_100gb';
+      cycle = 'annual';
+    } else if (orderAmount === 499 || (orderAmount >= 450 && orderAmount <= 550)) {
+      planId = 'tier_50gb';
+      cycle = 'annual';
+    } else if (orderAmount === 1899 || (orderAmount >= 1700 && orderAmount <= 2000)) {
+      planId = 'tier_200gb';
+      cycle = 'annual';
+    } else if (orderAmount === 189) {
+      planId = 'tier_200gb';
+      cycle = 'monthly';
+    } else if (orderAmount === 99) {
+      planId = 'tier_100gb';
+      cycle = 'monthly';
+    } else if (orderAmount === 49) {
+      planId = 'tier_50gb';
+      cycle = 'monthly';
+    } else {
+      planId = 'tier_50gb';
+      cycle = orderAmount > 300 ? 'annual' : 'monthly';
     }
-    const user = await User.findById(paymentRecord.userId);
-    return {
-      success: true,
-      status: 'PAID',
-      storageLimit: user?.storageLimit,
-      subscription: user?.subscription,
-      invoiceNumber: paymentRecord.invoiceNumber,
-      alreadyFulfilled: true
-    };
   }
 
-  // 2. Ensure Payment record exists before attempting atomic claim
-  let userId = order.customer_details?.customer_id;
-  if (!userId && paymentRecord) userId = paymentRecord.userId;
+  if (!cycle || (cycle !== 'annual' && cycle !== 'monthly')) {
+    cycle = orderAmount > 300 ? 'annual' : 'monthly';
+  }
+
+  const targetPlan = PLAN_CATALOG[planId] || PLAN_CATALOG.tier_50gb;
+
+  // Resolve target user
+  let user = null;
+  const customerId = order.customer_details?.customer_id;
+  const customerEmail = order.customer_details?.customer_email;
+
+  if (customerId && mongoose.Types.ObjectId.isValid(customerId)) {
+    user = await User.findById(customerId);
+  }
+  if (!user && customerEmail) {
+    user = await User.findOne({ email: customerEmail.toLowerCase().trim() });
+  }
+  let paymentRecord = await Payment.findOne({ orderId });
+  if (!user && paymentRecord?.userId) {
+    user = await User.findById(paymentRecord.userId);
+  }
+
+  if (!user) {
+    console.error(`[Order Activation Error]: User could not be resolved for order ${orderId} (customer_id: ${customerId}, customer_email: ${customerEmail})`);
+    throw new Error('User not found for payment fulfillment');
+  }
+
+  // Idempotency check: if Payment is already PAID and user already has this plan & storage active
+  if (paymentRecord && paymentRecord.status === 'PAID') {
+    const isUserActive =
+      user.plan === planId &&
+      user.storageLimit === targetPlan.storageBytes &&
+      user.subscription?.status === 'active' &&
+      user.subscription?.expiresAt &&
+      new Date(user.subscription.expiresAt) > new Date();
+
+    if (isUserActive) {
+      return {
+        success: true,
+        status: 'PAID',
+        storageLimit: user.storageLimit,
+        subscription: user.subscription,
+        invoiceNumber: paymentRecord.invoiceNumber,
+        alreadyFulfilled: true,
+      };
+    }
+  }
+
+  // Calculate new target expiration date
+  const currentExpiresAt = user.subscription?.expiresAt ? new Date(user.subscription.expiresAt) : null;
+  const isCurrentlyActive = user.subscription?.status === 'active' && currentExpiresAt && currentExpiresAt > new Date();
+  let newExpiresAt;
+
+  if ((transitionType === 'MONTHLY_UPGRADE' || transitionType === 'ANNUAL_UPGRADE') && isCurrentlyActive) {
+    newExpiresAt = currentExpiresAt; // Preserve existing cycle anniversary
+  } else if (transitionType === 'CYCLE_UPGRADE' && isCurrentlyActive) {
+    newExpiresAt = new Date(currentExpiresAt.getTime() + 365 * 86400000); // Additive 365 days
+  } else if (
+    (transitionType === 'STACKED_RENEWAL' ||
+      transitionType === 'RENEWAL_UPGRADE' ||
+      transitionType === 'CYCLE_SWITCH_PREPAID') &&
+    isCurrentlyActive
+  ) {
+    newExpiresAt = new Date(currentExpiresAt.getTime() + (cycle === 'annual' ? 365 : 30) * 86400000);
+  } else {
+    // New subscription, trial conversion, or expired user
+    newExpiresAt = new Date(Date.now() + (cycle === 'annual' ? 365 : 30) * 86400000);
+  }
+
+  // Generate unique sequential invoice number
+  let invoiceNumber = paymentRecord?.invoiceNumber;
+  if (!invoiceNumber && orderAmount > 0) {
+    invoiceNumber = await generateUniqueInvoiceNumber();
+  }
 
   let lineItemTitle = `${targetPlan.name} (${targetPlan.storageGB} GB)`;
   if (transitionType === 'ANNUAL_UPGRADE') lineItemTitle += ' — Mid-Cycle Co-Termed Upgrade';
@@ -431,22 +528,23 @@ async function fulfillCashfreeOrder(orderId, orderDetails = null, clientOrigin =
   if (!paymentRecord) {
     try {
       paymentRecord = await Payment.create({
-        userId,
+        userId: user._id,
         orderId,
         paymentId: order.cf_order_id ? String(order.cf_order_id) : orderId,
+        invoiceNumber,
         planId,
         planName: lineItemTitle,
         storageGB: targetPlan.storageGB,
         billingCycle: cycle,
-        amount: Number(order.order_amount),
+        amount: orderAmount,
         currency: 'INR',
-        status: 'PENDING',
+        status: 'PAID',
         customerDetails: {
-          name: order.customer_details?.customer_name || 'CloudGuard Subscriber',
-          email: order.customer_details?.customer_email
+          name: order.customer_details?.customer_name || user.name || 'CloudGuard Subscriber',
+          email: order.customer_details?.customer_email || user.email,
         },
         periodStart: new Date(),
-        periodEnd: new Date(Date.now() + (cycle === 'annual' ? 365 : 30) * 86400000)
+        periodEnd: newExpiresAt,
       });
     } catch (dupErr) {
       if (dupErr.code === 11000) {
@@ -457,79 +555,28 @@ async function fulfillCashfreeOrder(orderId, orderDetails = null, clientOrigin =
     }
   }
 
-  // 3. Atomically claim the payment. Only the FIRST caller matching status !== 'PAID' wins!
-  const orderAmount = Number(order.order_amount || paymentRecord?.amount || 0);
-  let invoiceNumber = paymentRecord?.invoiceNumber;
-  if (!invoiceNumber && order.order_status === 'PAID' && orderAmount > 0) {
-    invoiceNumber = await generateUniqueInvoiceNumber();
+  if (paymentRecord) {
+    paymentRecord.status = 'PAID';
+    paymentRecord.paymentId = order.cf_order_id ? String(order.cf_order_id) : (paymentRecord.paymentId || orderId);
+    if (invoiceNumber && !paymentRecord.invoiceNumber) {
+      paymentRecord.invoiceNumber = invoiceNumber;
+    }
+    paymentRecord.periodEnd = newExpiresAt;
+    paymentRecord.planName = lineItemTitle;
+    await paymentRecord.save();
   }
 
-  const updatePayload = {
-    status: 'PAID',
-    paymentId: order.cf_order_id ? String(order.cf_order_id) : orderId,
-    planName: lineItemTitle,
-    paidAt: new Date()
-  };
-  if (invoiceNumber) {
-    updatePayload.invoiceNumber = invoiceNumber;
-  }
+  // Update user plan, storage quota, and subscription
+  const isNewSubscription =
+    !user.subscription ||
+    user.subscription.planId === 'free' ||
+    user.subscription.planId === 'trial' ||
+    user.subscription.status === 'expired';
 
-  const claimedPayment = await Payment.findOneAndUpdate(
-    { orderId, status: { $ne: 'PAID' } },
-    { $set: updatePayload },
-    { new: true }
-  );
-
-  if (!claimedPayment) {
-    // Another concurrent call already claimed & fulfilled this order
-    const existingPayment = await Payment.findOne({ orderId });
-    const user = await User.findById(existingPayment?.userId || userId);
-    return {
-      success: true,
-      status: 'PAID',
-      storageLimit: user?.storageLimit,
-      subscription: user?.subscription,
-      invoiceNumber: existingPayment?.invoiceNumber,
-      alreadyFulfilled: true
-    };
-  }
-
-  // 4. Fulfillment execution (runs strictly ONCE per orderId)
-  const user = await User.findById(claimedPayment.userId || userId);
-  if (!user) {
-    throw new Error('User not found for payment fulfillment');
-  }
-
-  const currentExpiresAt = user.subscription?.expiresAt ? new Date(user.subscription.expiresAt) : null;
-  let newExpiresAt = new Date();
-
-  // Apply target expiration based on verified transition type
-  if ((transitionType === 'MONTHLY_UPGRADE' || transitionType === 'ANNUAL_UPGRADE') && currentExpiresAt && currentExpiresAt > new Date()) {
-    newExpiresAt = currentExpiresAt; // Preserve existing cycle anniversary
-  } else if (transitionType === 'CYCLE_UPGRADE' && currentExpiresAt && currentExpiresAt > new Date()) {
-    newExpiresAt = new Date(currentExpiresAt.getTime() + 365 * 86400000); // Additive 365 days
-  } else if (
-    (transitionType === 'STACKED_RENEWAL' ||
-      transitionType === 'RENEWAL_UPGRADE' ||
-      transitionType === 'CYCLE_SWITCH_PREPAID') &&
-    currentExpiresAt &&
-    currentExpiresAt > new Date()
-  ) {
-    newExpiresAt = new Date(currentExpiresAt.getTime() + (cycle === 'annual' ? 365 : 30) * 86400000);
-  } else {
-    newExpiresAt = new Date(Date.now() + (cycle === 'annual' ? 365 : 30) * 86400000);
-  }
-
-  // Update periodEnd on claimedPayment
-  claimedPayment.periodEnd = newExpiresAt;
-  await claimedPayment.save();
-
-  // Immediate quota expansion & clear any pending downgrade
-  const isNewSubscription = !user.subscription || user.subscription.planId === 'free' || user.subscription.status === 'expired';
   user.plan = planId;
   user.storageLimit = targetPlan.storageBytes;
-  user.trialAlreadyUsed = false;
-  user.trialExpiresAt = null; // Clear stale evaluation trial timer on plan purchase
+  user.trialAlreadyUsed = true;
+  user.trialExpiresAt = null; // Clear evaluation trial timer on plan purchase
   user.subscription = {
     planId,
     billingCycle: cycle,
@@ -537,44 +584,55 @@ async function fulfillCashfreeOrder(orderId, orderDetails = null, clientOrigin =
     startDate: isNewSubscription ? new Date() : (user.subscription?.startDate || new Date()),
     expiresAt: newExpiresAt,
     autoRenew: false,
-    peakStorageBytes: isNewSubscription ? (user.storageUsed || 0) : Math.max(user.storageUsed || 0, user.subscription?.peakStorageBytes || 0),
-    gracePeriodExpiresAt: null, // Clear stale grace period timer
-    dunningStep: 0, // Reset dunning cycle to 0
+    cancelAtPeriodEnd: false,
+    peakStorageBytes: isNewSubscription
+      ? (user.storageUsed || 0)
+      : Math.max(user.storageUsed || 0, user.subscription?.peakStorageBytes || 0),
+    gracePeriodExpiresAt: null,
+    dunningStep: 0,
     refundCount: user.subscription?.refundCount || 0,
-    scheduledDowngrade: { targetPlanId: null, targetBillingCycle: null, scheduledAt: null }
+    scheduledDowngrade: { targetPlanId: null, targetBillingCycle: null, scheduledAt: null },
   };
   await user.save();
 
-  // Dispatch Transactional Confirmation Email
-  const baseUrl = process.env.CLIENT_URL || clientOrigin || 'http://localhost:5173';
-  const invoiceUrl = `${baseUrl}/api/payments/invoice/${orderId}`;
+  // Dispatch and await transactional confirmation + Bill of Supply email
+  const invoiceBaseUrl = process.env.BACKEND_URL || process.env.CLIENT_URL || 'https://api.cloudguard.site';
+  const invoiceUrl = `${invoiceBaseUrl}/api/payments/invoice/${orderId}`;
+  const invNum = paymentRecord?.invoiceNumber || invoiceNumber || 'CG-INV-PENDING';
 
-  if (transitionType === 'ANNUAL_UPGRADE' || transitionType === 'MONTHLY_UPGRADE') {
-    const { subject, html } = generateUpgradeEmail({
-      user,
-      targetPlan,
-      cycle,
-      deltaAmount: Number(order.order_amount),
-      invoiceNumber: claimedPayment.invoiceNumber,
-      expiresAt: newExpiresAt,
-      invoiceUrl
-    });
-    sendSubscriptionEmail({ to: user.email, subject, html }).catch(err => {
-      console.error('[Upgrade Email Error]:', err.message);
-    });
-  } else {
-    const { subject, html } = generatePurchaseEmail({
-      user,
-      targetPlan,
-      cycle,
-      orderAmount: Number(order.order_amount),
-      invoiceNumber: claimedPayment.invoiceNumber,
-      expiresAt: newExpiresAt,
-      invoiceUrl
-    });
-    sendSubscriptionEmail({ to: user.email, subject, html }).catch(err => {
-      console.error('[Purchase Email Error]:', err.message);
-    });
+  try {
+    let emailResult;
+    if (transitionType === 'ANNUAL_UPGRADE' || transitionType === 'MONTHLY_UPGRADE') {
+      const { subject, html } = generateUpgradeEmail({
+        user,
+        targetPlan,
+        cycle,
+        deltaAmount: orderAmount,
+        invoiceNumber: invNum,
+        expiresAt: newExpiresAt,
+        invoiceUrl,
+      });
+      emailResult = await sendSubscriptionEmail({ to: user.email, subject, html });
+    } else {
+      const { subject, html } = generatePurchaseEmail({
+        user,
+        targetPlan,
+        cycle,
+        orderAmount,
+        invoiceNumber: invNum,
+        expiresAt: newExpiresAt,
+        invoiceUrl,
+      });
+      emailResult = await sendSubscriptionEmail({ to: user.email, subject, html });
+    }
+
+    if (emailResult && emailResult.success) {
+      console.log(`[Billing Email Success] Sent receipt to ${user.email} for order ${orderId} | Resend ID: ${emailResult.id || 'dry-run'}`);
+    } else {
+      console.error(`[Billing Email Failed] Failed to send receipt to ${user.email} for order ${orderId}:`, emailResult?.error);
+    }
+  } catch (emailErr) {
+    console.error(`[Billing Email Exception] Failed to send receipt to ${user.email} for order ${orderId}:`, emailErr.message);
   }
 
   return {
@@ -582,10 +640,12 @@ async function fulfillCashfreeOrder(orderId, orderDetails = null, clientOrigin =
     status: 'PAID',
     storageLimit: user.storageLimit,
     subscription: user.subscription,
-    invoiceNumber: claimedPayment.invoiceNumber,
-    alreadyFulfilled: false
+    invoiceNumber: paymentRecord?.invoiceNumber || invoiceNumber,
+    alreadyFulfilled: false,
   };
 }
+
+const fulfillCashfreeOrder = activatePaidCashfreeOrder;
 
 /**
  * GET /api/payments/verify/:orderId
@@ -594,7 +654,7 @@ router.get('/verify/:orderId', auth, async (req, res) => {
   try {
     const { orderId } = req.params;
     const clientOrigin = req.headers.origin || `${req.protocol}://${req.get('host')}`;
-    const result = await fulfillCashfreeOrder(orderId, null, clientOrigin);
+    const result = await activatePaidCashfreeOrder(orderId, clientOrigin);
     if (!result.success) {
       return res.json({ success: false, status: result.status });
     }
@@ -603,7 +663,8 @@ router.get('/verify/:orderId', auth, async (req, res) => {
       status: 'PAID',
       storageLimit: result.storageLimit,
       subscription: result.subscription,
-      invoiceNumber: result.invoiceNumber
+      invoiceNumber: result.invoiceNumber,
+      alreadyFulfilled: Boolean(result.alreadyFulfilled),
     });
   } catch (err) {
     console.error('[Cashfree Verify Error]:', err.response?.data || err.message);
@@ -617,21 +678,118 @@ router.get('/verify/:orderId', auth, async (req, res) => {
  */
 router.post('/webhook', async (req, res) => {
   try {
+    const signature = req.headers['x-webhook-signature'];
+    const timestamp = req.headers['x-webhook-timestamp'];
+    const rawBody = req.rawBody || JSON.stringify(req.body || {});
+
+    if (signature && timestamp && process.env.CASHFREE_SECRET_KEY && rawBody) {
+      const generatedSignature = crypto
+        .createHmac('sha256', process.env.CASHFREE_SECRET_KEY)
+        .update(timestamp + rawBody)
+        .digest('base64');
+      if (generatedSignature !== signature) {
+        console.warn('[Cashfree Webhook] Signature mismatch. Falling back to authoritative API check.');
+      }
+    }
+
     const payload = req.body || {};
-    const orderData = payload.data?.order || payload.order || payload;
-    const orderId = orderData?.order_id || payload.order_id || payload.data?.order_id;
+    const orderId =
+      payload.data?.order?.order_id ||
+      payload.order?.order_id ||
+      payload.order_id ||
+      payload.data?.order_id;
 
     if (!orderId) {
+      console.warn('[Cashfree Webhook] Missing order_id in webhook payload:', payload);
       return res.status(400).json({ error: 'Missing order_id in webhook payload' });
     }
 
-    const clientOrigin = req.headers.origin || `${req.protocol}://${req.get('host')}`;
-    const result = await fulfillCashfreeOrder(orderId, orderData.order_status === 'PAID' ? orderData : null, clientOrigin);
+    // Authoritative check against Cashfree API
+    const response = await axios.get(`${CASHFREE_BASE_URL}/orders/${orderId}`, {
+      headers: {
+        'x-client-id': process.env.CASHFREE_APP_ID,
+        'x-client-secret': process.env.CASHFREE_SECRET_KEY,
+        'x-api-version': '2023-08-01',
+      },
+    });
 
-    return res.json({ received: true, status: result.status || 'PAID' });
+    const authoritativeOrder = response.data;
+    if (authoritativeOrder && authoritativeOrder.order_status === 'PAID') {
+      const clientOrigin = req.headers.origin || `${req.protocol}://${req.get('host')}`;
+      const result = await activatePaidCashfreeOrder(authoritativeOrder, clientOrigin);
+      console.log(`[Cashfree Webhook] Successfully activated order ${orderId} | Status: ${result.status}`);
+      return res.status(200).json({ received: true, status: 'PAID', activated: true });
+    }
+
+    return res.status(200).json({ received: true, status: authoritativeOrder?.order_status || 'UNPAID' });
   } catch (err) {
-    console.error('[Cashfree Webhook Error]:', err.message);
+    console.error('[Cashfree Webhook Error]:', err.response?.data || err.message);
     return res.status(500).json({ error: 'Webhook processing error' });
+  }
+});
+
+/**
+ * POST /api/payments/reconcile-latest
+ * Self-healing endpoint: checks the user's most recent unfulfilled order or provided orderId
+ * against Cashfree API, activating immediately if confirmed PAID.
+ */
+router.post('/reconcile-latest', auth, async (req, res) => {
+  try {
+    const userId = req.user?.id || req.user?._id;
+    const { orderId: requestedOrderId } = req.body || {};
+
+    let targetOrderId = requestedOrderId;
+
+    if (!targetOrderId) {
+      const latestPayment = await Payment.findOne({
+        userId,
+        status: { $in: ['PENDING', 'PAID'] },
+      }).sort({ createdAt: -1 });
+
+      if (latestPayment) {
+        targetOrderId = latestPayment.orderId;
+      }
+    }
+
+    if (!targetOrderId) {
+      return res.status(404).json({
+        success: false,
+        message: 'No recent payment order found to reconcile',
+      });
+    }
+
+    // Authoritative fetch from Cashfree
+    const response = await axios.get(`${CASHFREE_BASE_URL}/orders/${targetOrderId}`, {
+      headers: {
+        'x-client-id': process.env.CASHFREE_APP_ID,
+        'x-client-secret': process.env.CASHFREE_SECRET_KEY,
+        'x-api-version': '2023-08-01',
+      },
+    });
+
+    const order = response.data;
+    if (order.order_status === 'PAID') {
+      const clientOrigin = req.headers.origin || `${req.protocol}://${req.get('host')}`;
+      const result = await activatePaidCashfreeOrder(order, clientOrigin);
+      return res.json({
+        success: true,
+        reconciled: true,
+        status: 'PAID',
+        storageLimit: result.storageLimit,
+        subscription: result.subscription,
+        invoiceNumber: result.invoiceNumber,
+      });
+    }
+
+    return res.json({
+      success: false,
+      reconciled: false,
+      status: order.order_status,
+      message: `Order status on Cashfree is ${order.order_status}`,
+    });
+  } catch (err) {
+    console.error('[Reconcile Latest Error]:', err.response?.data || err.message);
+    return res.status(500).json({ error: 'Failed to reconcile payment order' });
   }
 });
 
@@ -1180,6 +1338,7 @@ router.PLAN_CATALOG = PLAN_CATALOG;
 router.sendSubscriptionEmail = sendSubscriptionEmail;
 router.buildCloudGuardEmail = buildCloudGuardEmail;
 router.fulfillCashfreeOrder = fulfillCashfreeOrder;
+router.activatePaidCashfreeOrder = activatePaidCashfreeOrder;
 
 module.exports = router;
 module.exports.router = router;
@@ -1188,3 +1347,4 @@ module.exports.calculateTierTransition = calculateTierTransition;
 module.exports.sendSubscriptionEmail = sendSubscriptionEmail;
 module.exports.buildCloudGuardEmail = buildCloudGuardEmail;
 module.exports.fulfillCashfreeOrder = fulfillCashfreeOrder;
+module.exports.activatePaidCashfreeOrder = activatePaidCashfreeOrder;

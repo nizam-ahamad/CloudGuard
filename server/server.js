@@ -78,7 +78,12 @@ app.use('/api', apiLimiter);
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
-app.use(express.json({ limit: '15mb' }));
+app.use(express.json({
+  limit: '15mb',
+  verify: (req, _res, buf) => {
+    req.rawBody = buf ? buf.toString('utf8') : '';
+  }
+}));
 app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
 // Centralized defense-in-depth sanitization & validation module

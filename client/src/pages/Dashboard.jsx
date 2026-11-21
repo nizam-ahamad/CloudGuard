@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import axios from 'axios';
+import api from '../utils/api';
 import { UploadCloud, FolderPlus, ChevronDown, FileUp, FolderUp } from 'lucide-react';
 import { formatBytes } from '../utils/formatters';
 import { API_BASE_URL } from '../config';
@@ -274,8 +276,53 @@ export const Dashboard = (props) => {
   } = props;
   const { enqueueFiles } = useUpload();
   const toast = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const isVerifyingOrderRef = useRef(false);
   const [storageStats, setStorageStats] = useState(() => props.storageStats || globalDashboardStorageCache || null);
   const [breadcrumbs, setBreadcrumbs] = useState(() => props.breadcrumbs || [{ id: null, name: 'Home' }]);
+
+  // Self-Healing URL Landing: Verify ?order_id=... from Cashfree return_url
+  useEffect(() => {
+    const orderId = searchParams.get('order_id') || searchParams.get('orderId');
+    if (!orderId || isVerifyingOrderRef.current) return;
+
+    isVerifyingOrderRef.current = true;
+
+    async function verifyOrder() {
+      try {
+        const res = await api.get(`/payments/verify/${encodeURIComponent(orderId)}`);
+        if (res.data?.success) {
+          if (toast && typeof toast.success === 'function') {
+            toast.success('Subscription activated! Your storage quota has been upgraded.', {
+              style: { background: '#18181b', color: '#fff', border: '1px solid #27272a' },
+            });
+          }
+          if (typeof props.fetchStorageStats === 'function') props.fetchStorageStats();
+          if (typeof props.refreshUser === 'function') props.refreshUser();
+          window.dispatchEvent(new CustomEvent('cloudguard:subscription-updated'));
+          window.dispatchEvent(new Event('cloudguard:storage-updated'));
+        }
+      } catch (err) {
+        console.error('[Dashboard Verify Order Error]:', err.response?.data || err.message);
+        if (toast && typeof toast.error === 'function') {
+          toast.error('Payment verification failed. Please contact support if your storage is not updated.');
+        }
+      } finally {
+        const nextParams = new URLSearchParams(window.location.search);
+        nextParams.delete('order_id');
+        nextParams.delete('orderId');
+        const qs = nextParams.toString();
+        const cleanUrl = qs ? `${window.location.pathname}?${qs}` : window.location.pathname;
+        window.history.replaceState({}, '', cleanUrl);
+        if (typeof setSearchParams === 'function') {
+          setSearchParams(nextParams, { replace: true });
+        }
+        isVerifyingOrderRef.current = false;
+      }
+    }
+
+    verifyOrder();
+  }, [searchParams, setSearchParams, toast, props]);
 
   useEffect(() => {
     const urlFolderId = new URLSearchParams(window.location.search).get('folder');
