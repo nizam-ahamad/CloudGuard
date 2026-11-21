@@ -9,8 +9,9 @@ const paymentSchema = new mongoose.Schema({
   },
   invoiceNumber: {
     type: String,
+    unique: true,
     sparse: true,
-    unique: true
+    default: undefined,
   },
   orderId: {
     type: String,

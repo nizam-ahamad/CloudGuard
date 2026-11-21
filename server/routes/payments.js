@@ -20,6 +20,11 @@ const {
 
 const router = express.Router();
 
+// Safely drop legacy non-sparse invoiceNumber_1 index and re-sync sparse index
+Payment.collection.dropIndex('invoiceNumber_1')
+  .catch(() => {})
+  .then(() => Payment.syncIndexes().catch(() => {}));
+
 const isProductionCashfree =
   String(process.env.CASHFREE_ENV || '').trim().toUpperCase() === 'PRODUCTION';
 
