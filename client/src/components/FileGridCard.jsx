@@ -1,6 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Check, MoreVertical, FolderInput, Pencil, Info, Trash2, Play } from 'lucide-react';
+import { Check, MoreVertical, FolderInput, Pencil, Info, Trash2, Play, FileText } from 'lucide-react';
+import JSZip from 'jszip';
+import { fetchAccessUrl } from '../utils/accessUrlCache';
 import { generateCardPreview, getCachedCardPreview, getMediaThumbnail } from '../utils/cardPreviewGenerator';
+
+// In-memory cache for extracted .docx snippets so re-renders/scrolls don't re-parse ZIPs
+const docxSnippetCache = new Map();
 
 /**
  * Returns extension, badge label, and color theme for Google Drive-style document cards.
@@ -132,15 +137,20 @@ export function FileCardPreviewBody({ file, token }) {
 
   const [dynamicPreview, setDynamicPreview] = useState(() => getCachedCardPreview(fileId));
 
+  const lowerName = (file?.name || file?.originalName || '').toLowerCase();
+  const isDocx = lowerName.endsWith('.docx') && Number(file?.size || 0) <= 10 * 1024 * 1024;
+  const isDoc = lowerName.endsWith('.doc') || lowerName.endsWith('.docx');
+  const [docxSnippet, setDocxSnippet] = useState(() => (fileId ? docxSnippetCache.get(String(fileId)) : null));
+
   const isVideo =
     (file?.mimeType && file.mimeType.startsWith('video/')) ||
     (file?.mimetype && file.mimetype.startsWith('video/')) ||
-    /\.(mp4|mkv|mov|avi|webm|wmv|flv|m4v|3gp)$/i.test(file?.name || file?.originalName || '');
+    /\.(mp4|mkv|mov|avi|webm|wmv|flv|m4v|3gp)$/i.test(lowerName);
 
   const isPdf =
     (file?.mimeType && file.mimeType.includes('pdf')) ||
     (file?.mimetype && file.mimetype.includes('pdf')) ||
-    /\.pdf$/i.test(file?.name || file?.originalName || '');
+    /\.pdf$/i.test(lowerName);
 
   const resolvedThumbnail =
     (hasDirectThumbnail ? directThumbnail : null) ||
@@ -177,7 +187,7 @@ export function FileCardPreviewBody({ file, token }) {
   }, [isInView]);
 
   useEffect(() => {
-    if (!isInView || !fileId) return;
+    if (!isInView || !fileId || isDoc) return;
 
     const existingThumb = file?.thumbnailUrl || getMediaThumbnail(fileId) || file?.thumbnail;
     if (existingThumb && !imgError) return;
@@ -200,7 +210,64 @@ export function FileCardPreviewBody({ file, token }) {
     return () => {
       isMounted = false;
     };
-  }, [isInView, fileId, file, token, imgError]);
+  }, [isInView, fileId, file, token, imgError, isDoc]);
+
+  // Clean .docx text snippet extraction via JSZip & DOMParser (first ~400 chars)
+  useEffect(() => {
+    if (!isInView || !fileId || !isDocx) return;
+
+    const key = String(fileId);
+    if (docxSnippetCache.has(key)) {
+      setDocxSnippet(docxSnippetCache.get(key));
+      return;
+    }
+
+    let isMounted = true;
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+
+    (async () => {
+      try {
+        const accessUrl = file?.s3Url || file?.url || (await fetchAccessUrl(fileId, token));
+        if (!accessUrl || !isMounted) return;
+
+        const res = await fetch(accessUrl, { signal: controller?.signal });
+        if (!res.ok) throw new Error('Fetch failed');
+        const arrayBuffer = await res.arrayBuffer();
+        if (!isMounted) return;
+
+        const zip = await JSZip.loadAsync(arrayBuffer);
+        const docXmlFile = zip.file('word/document.xml');
+        if (!docXmlFile) throw new Error('No word/document.xml');
+
+        const xmlText = await docXmlFile.async('text');
+        if (!isMounted) return;
+
+        const parser = new DOMParser();
+        const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
+        const paragraphs = xmlDoc.getElementsByTagName('w:p');
+        const textParts = [];
+        for (let i = 0; i < paragraphs.length; i++) {
+          const pText = paragraphs[i].textContent?.trim();
+          if (pText) {
+            textParts.push(pText);
+            if (textParts.join(' ').length >= 400) break;
+          }
+        }
+        const cleanSnippet = textParts.join('\n').slice(0, 400).trim();
+        if (cleanSnippet && isMounted) {
+          docxSnippetCache.set(key, cleanSnippet);
+          setDocxSnippet(cleanSnippet);
+        }
+      } catch (err) {
+        // Fallback to clean DocumentSheetCard
+      }
+    })();
+
+    return () => {
+      isMounted = false;
+      controller?.abort();
+    };
+  }, [isInView, fileId, isDocx, token, file]);
 
   return (
     <div
@@ -234,6 +301,17 @@ export function FileCardPreviewBody({ file, token }) {
             </div>
           )}
         </>
+      ) : isDoc ? (
+        docxSnippet ? (
+          <TextSnippetSheetCard
+            ext={ext}
+            badgeText={badgeText}
+            badgeColor={badgeColor}
+            snippet={docxSnippet}
+          />
+        ) : (
+          <DocumentSheetCard ext={ext} badgeText={badgeText} badgeColor={badgeColor} />
+        )
       ) : dynamicPreview?.type === 'text' && dynamicPreview.snippet ? (
         <TextSnippetSheetCard
           ext={ext}

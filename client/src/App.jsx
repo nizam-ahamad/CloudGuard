@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Routes, Route, Navigate, useSearchParams, useLocation, useNavigate, NavLink, Link } from 'react-router-dom';
 import axios from 'axios';
+import JSZip from 'jszip';
 import ResetPassword from './ResetPassword';
 import CloudGuardLogo from './CloudGuardLogo';
 import PasswordInput from './PasswordInput';
@@ -77,6 +78,237 @@ class ErrorBoundary extends React.Component {
     if (this.state.hasError) return <tr className="block md:table-row"><td colSpan="6" className="py-4 text-center text-red-500">Error rendering file item.</td></tr>;
     return this.props.children; 
   }
+}
+
+/**
+ * Clean In-Modal .docx Document Preview
+ * Unzips word/document.xml with JSZip and renders structured paragraphs, headings, and tables.
+ */
+function DocxPreviewModal({ previewFile, previewUrl, closePreview, handleDownload, token }) {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [blocks, setBlocks] = useState([]);
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        closePreview();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [closePreview]);
+
+  useEffect(() => {
+    if (!previewFile) return;
+
+    let isMounted = true;
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+
+    setLoading(true);
+    setError(null);
+    setBlocks([]);
+
+    (async () => {
+      try {
+        const fileId = previewFile._id || previewFile.id;
+        const url = previewUrl || (fileId ? await fetchAccessUrl(fileId, token) : null);
+        if (!url) throw new Error('Could not resolve file access URL');
+
+        const response = await fetch(url, { signal: controller?.signal });
+        if (!response.ok) throw new Error(`HTTP error ${response.status}`);
+        const arrayBuffer = await response.arrayBuffer();
+        if (!isMounted) return;
+
+        const zip = await JSZip.loadAsync(arrayBuffer);
+        const docXmlFile = zip.file('word/document.xml');
+        if (!docXmlFile) throw new Error('No word/document.xml found');
+
+        const xmlString = await docXmlFile.async('text');
+        if (!isMounted) return;
+
+        const parser = new DOMParser();
+        const xmlDoc = parser.parseFromString(xmlString, 'text/xml');
+        if (xmlDoc.getElementsByTagName('parsererror').length > 0) {
+          throw new Error('XML parsing failed');
+        }
+
+        const body = xmlDoc.getElementsByTagName('w:body')[0] || xmlDoc.documentElement;
+        const extracted = [];
+
+        function getTextContent(node) {
+          const textNodes = node.getElementsByTagName('w:t');
+          if (textNodes.length > 0) {
+            let str = '';
+            for (let i = 0; i < textNodes.length; i++) {
+              str += textNodes[i].textContent || '';
+            }
+            return str;
+          }
+          return node.textContent || '';
+        }
+
+        function walk(node) {
+          if (!node || !node.children) return;
+          for (let i = 0; i < node.children.length; i++) {
+            const child = node.children[i];
+            const tag = (child.localName || child.nodeName || '').replace(/^.*:/, '');
+
+            if (tag === 'p') {
+              const pStyle = child.getElementsByTagName('w:pStyle')[0] || child.getElementsByTagName('pStyle')[0];
+              const styleVal = (pStyle?.getAttribute('w:val') || pStyle?.getAttribute('val') || '').trim();
+              const isHeading = /heading/i.test(styleVal) || /^Title$/i.test(styleVal) || /^Subtitle$/i.test(styleVal);
+              const text = getTextContent(child).trim();
+              if (text) {
+                extracted.push({
+                  type: isHeading ? 'heading' : 'paragraph',
+                  style: styleVal,
+                  text,
+                });
+              }
+            } else if (tag === 'tbl') {
+              const rows = child.getElementsByTagName('w:tr');
+              const tableRows = [];
+              for (let r = 0; r < rows.length; r++) {
+                const cells = rows[r].getElementsByTagName('w:tc');
+                const rowCells = [];
+                for (let c = 0; c < cells.length; c++) {
+                  rowCells.push(getTextContent(cells[c]).trim());
+                }
+                if (rowCells.some((cell) => cell.length > 0)) {
+                  tableRows.push(rowCells);
+                }
+              }
+              if (tableRows.length > 0) {
+                extracted.push({
+                  type: 'table',
+                  rows: tableRows,
+                });
+              }
+            } else if (tag === 'sdt') {
+              const content = child.getElementsByTagName('w:sdtContent')[0] || child.getElementsByTagName('sdtContent')[0] || child;
+              walk(content);
+            }
+          }
+        }
+
+        walk(body);
+        if (isMounted) {
+          setBlocks(extracted);
+          setLoading(false);
+        }
+      } catch (err) {
+        if (controller?.signal?.aborted) return;
+        if (isMounted) {
+          setError(err?.message || 'Failed to parse document');
+          setLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      isMounted = false;
+      controller?.abort();
+    };
+  }, [previewFile, previewUrl, token]);
+
+  if (!previewFile) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+      onClick={closePreview}
+    >
+      <div
+        className="bg-white dark:bg-[#18181b] rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden border border-neutral-200 dark:border-neutral-800 text-neutral-900 dark:text-neutral-100"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Top Bar */}
+        <div className="flex items-center justify-between p-4 border-b border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900/60 shrink-0">
+          <h3 className="font-title-lg text-neutral-900 dark:text-white font-semibold truncate pr-4" title={previewFile.name}>
+            {previewFile.name}
+          </h3>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => handleDownload && handleDownload(previewFile)}
+              className="bg-primary text-on-primary hover:bg-primary/90 transition-colors p-2 rounded-lg flex items-center justify-center cursor-pointer"
+              title="Download File"
+            >
+              <span className="material-symbols-outlined">download</span>
+            </button>
+            <button
+              onClick={closePreview}
+              className="p-2 text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white hover:bg-neutral-200 dark:hover:bg-neutral-800 rounded-full transition-colors cursor-pointer"
+              title="Close"
+            >
+              <span className="material-symbols-outlined">close</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Body Container */}
+        <div className="relative flex-1 overflow-auto bg-neutral-100 dark:bg-neutral-950 p-4 sm:p-6 flex items-center justify-center">
+          {loading ? (
+            <div className="flex flex-col items-center justify-center py-12 gap-3 text-neutral-400">
+              <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+              <span className="text-xs sm:text-sm font-medium">Parsing Word document...</span>
+            </div>
+          ) : error ? (
+            <div className="text-neutral-500 dark:text-neutral-400 flex flex-col items-center gap-3 text-center max-w-md p-6">
+              <span className="material-symbols-outlined text-4xl text-neutral-400">visibility_off</span>
+              <p className="font-medium text-sm">Preview not available for this file type.</p>
+              <p className="text-xs text-neutral-400">The document may be password-protected, encrypted, or malformed. Download the file to view it in Microsoft Word.</p>
+            </div>
+          ) : (
+            <div className="w-full max-w-3xl max-h-[75vh] overflow-y-auto rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-5 sm:p-8 text-neutral-900 dark:text-neutral-100 shadow-xl space-y-3 text-sm leading-relaxed select-text">
+              {blocks.length === 0 ? (
+                <div className="text-center py-12 text-neutral-400">
+                  <p className="text-sm">This Word document is empty.</p>
+                </div>
+              ) : (
+                blocks.map((block, index) => {
+                  if (block.type === 'heading') {
+                    return (
+                      <h4
+                        key={index}
+                        className="text-base sm:text-lg font-bold text-neutral-900 dark:text-white pt-3 pb-1 border-b border-neutral-200/60 dark:border-neutral-800/60"
+                      >
+                        {block.text}
+                      </h4>
+                    );
+                  }
+                  if (block.type === 'table') {
+                    return (
+                      <div key={index} className="overflow-x-auto my-3 rounded-lg border border-neutral-200 dark:border-neutral-700/80">
+                        <table className="min-w-full divide-y divide-neutral-200 dark:divide-neutral-700 text-xs sm:text-sm">
+                          <tbody className="divide-y divide-neutral-100 dark:divide-neutral-800 bg-white dark:bg-neutral-900">
+                            {block.rows.map((row, rIdx) => (
+                              <tr key={rIdx} className={rIdx === 0 ? 'bg-neutral-50 dark:bg-neutral-800/50 font-semibold' : ''}>
+                                {row.map((cell, cIdx) => (
+                                  <td key={cIdx} className="px-3 py-2 border-r last:border-r-0 border-neutral-200 dark:border-neutral-700/80">
+                                    {cell}
+                                  </td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    );
+                  }
+                  return (
+                    <p key={index} className="text-neutral-800 dark:text-neutral-200 leading-relaxed text-sm sm:text-base">
+                      {block.text}
+                    </p>
+                  );
+                })
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function App() {
@@ -4251,13 +4483,23 @@ function App() {
       />
 
       {/* Preview Modal */}
-      <FilePreviewModal
-        previewFile={previewFile}
-        previewUrl={previewUrl}
-        previewText={previewText}
-        closePreview={closePreview}
-        handleDownload={handleDownload}
-      />
+      {previewFile && (previewFile.name || '').toLowerCase().endsWith('.docx') && Number(previewFile.size || 0) <= 25 * 1024 * 1024 ? (
+        <DocxPreviewModal
+          previewFile={previewFile}
+          previewUrl={previewUrl}
+          closePreview={closePreview}
+          handleDownload={handleDownload}
+          token={token}
+        />
+      ) : (
+        <FilePreviewModal
+          previewFile={previewFile}
+          previewUrl={previewUrl}
+          previewText={previewText}
+          closePreview={closePreview}
+          handleDownload={handleDownload}
+        />
+      )}
 
       {/* Delete Confirmation Modal */}
       <DeleteConfirmModal
