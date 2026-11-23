@@ -485,7 +485,7 @@ export function PreviewVideo({ src, className, ...props }) {
       controls
       autoPlay
       playsInline
-      preload="auto"
+      preload="metadata"
       crossOrigin={typeof src === 'string' && (src.startsWith('https://files.cloudguard.site') || src.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
       className={className}
       {...props}
