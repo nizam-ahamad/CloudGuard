@@ -600,7 +600,7 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
         <div className="space-y-4">
           <div>
             <label className="text-xs font-mono text-slate-500 dark:text-gray-400 uppercase tracking-wider mb-2 block">Display Name</label>
-            <form onSubmit={handleUpdateDisplayName} className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+            <form onSubmit={handleUpdateDisplayName} className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
               <input 
                 type="text" 
                 value={displayName} 
@@ -611,12 +611,12 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
                   setNameSaved(false);
                 }}
                 placeholder="Enter your display name"
-                className="flex-1 h-12 bg-transparent border border-slate-300 dark:border-[#333] focus:border-black dark:focus:border-white outline-none text-black dark:text-white px-4 transition-colors" 
+                className="w-full sm:flex-1 min-h-[42px] px-3.5 py-2.5 text-sm rounded-xl bg-transparent border border-slate-300 dark:border-[#333] focus:border-black dark:focus:border-white outline-none text-black dark:text-white transition-colors" 
               />
               <button
                 type="submit"
                 disabled={isUpdatingName || !displayName.trim() || displayName.trim() === (user?.name || '')}
-                className="h-12 px-5 bg-neutral-900 hover:bg-neutral-800 text-white dark:bg-white dark:text-black dark:hover:bg-neutral-200 text-xs font-semibold uppercase tracking-wider transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0 cursor-pointer"
+                className="w-full sm:w-auto min-h-[42px] px-5 py-2.5 text-xs sm:text-sm font-semibold uppercase tracking-wider rounded-xl bg-neutral-900 hover:bg-neutral-800 text-white dark:bg-white dark:text-black dark:hover:bg-neutral-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0 cursor-pointer flex items-center justify-center"
               >
                 {isUpdatingName ? 'Saving...' : nameSaved ? 'Saved' : 'Save Name'}
               </button>
