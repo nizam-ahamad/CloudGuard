@@ -31,14 +31,17 @@
 
 ## 3. Core Architectural Guardrails
 
-1. **Zero-EC2-Load Rule:**
+1. **Zero-EC2-Load & Zero-Egress Storage Rule:**
    - Never introduce backend image conversion, thumbnail resizing, or video transcoding endpoints on the EC2 server.
+   - Direct browser presigned `PUT`/multipart uploads stream to private Backblaze B2 (`cloudguard-vault-b2`, `eu-central-003`).
+   - Downstream file downloads, media streaming, and thumbnails route through the Cloudflare Worker (`cloudguard-b2-egress` on `files.cloudguard.site`) for `$0/GB` egress.
    - Heavy decoding (e.g. HEIC/HEIF) belongs in `client/src/workers/heicWorker.js` via WebAssembly.
-   - Presigned URLs (`/api/files/:id/access` and `/api/photos`) must be used for direct Backblaze B2 access.
+   - Document previews (e.g. `.docx`) must execute client-side via `jszip` inside `DocxPreviewModal`.
 2. **Single Global Outer Scrollbar Standard:**
    - **Never add `overflow-y-auto`, `overflow-y-scroll`, or inner height caps (`max-h-`, `h-[calc(...)]`) to file or folder list containers.**
    - The outer page scrollbar (`html { overflow-y: auto }`) handles all vertical scrolling.
    - Use `overflow-visible md:overflow-x-auto` on list containers so mobile touch scrolling is never trapped inside nested scroll boundaries.
+   - Modal containers (such as `DocxPreviewModal`) must maintain a single scrollable body container without nested inner document sheet scrollbars.
 3. **Unified Green (`emerald-500`) Selection:**
    - All selection rings, borders, background highlights, and checkboxes across **Photos**, **My Files**, **Recents**, and **Bin** must use `emerald-500`. Do not use blue selection styling.
 4. **Always-Visible Action Menus (`⋮`):**
@@ -48,6 +51,15 @@
    - Cap decoded HEIC canvas dimensions at `2048px` max edge.
    - Maintain LRU caching with automatic `URL.revokeObjectURL()` cleanup.
    - Teardown video streams immediately on slide change (`src = ''`, `load()`).
+6. **CDN Edge Authentication & Session Security (`cg_vault_session`):**
+   - Media access on `files.cloudguard.site` requires an `HttpOnly; Secure; SameSite=None; Domain=.cloudguard.site` HMAC-SHA256 signed session cookie (`cg_vault_session`) issued by `server/utils/edgeAuth.js`.
+   - The Cloudflare Worker edge enforces tenant path isolation (`/uploads/<userId>/`, `/thumbnails/<userId>/`) and Referer validation.
+   - All client `<img>` and `<video>` tags rendering `files.cloudguard.site` assets must specify `crossOrigin="use-credentials"`.
+   - S3 presigned GET URLs are short-lived: 300 seconds for previews/thumbnails and 60 seconds for downloads.
+7. **Instant Frame-1 Video Streaming:**
+   - Video players (`PreviewVideo` in `FilePreviewModal.jsx`) must begin playback immediately on the first decoded frame using `preload="metadata"` and `onLoadedData` playback triggers.
+   - Never add the `autoPlay` attribute to `<video>` as Chromium will block playback until dozens of megabytes are buffered (`HAVE_ENOUGH_DATA`).
+   - Always supply `posterUrl` thumbnails and non-blocking centered buffering spinners.
 
 ---
 

@@ -24,14 +24,16 @@ CloudGuard implements RFC 6238 Time-Based One-Time Password (TOTP) two-factor au
 3. **Single-Use Recovery Codes:** Enabling 2FA generates 8 cryptographically secure 8-character recovery codes (`XXXX-XXXX`) hashed with bcrypt in MongoDB. Using a backup code during a 2FA challenge atomically purges it from the user's array.
 4. **Two-Stage Authentication Flow:** When a user with 2FA enabled submits valid credentials via `/api/auth/login` or Google OAuth (`/api/auth/google`), the backend issues an ephemeral 5-minute JWT (`purpose: '2fa_pending'`). The user must verify a 6-digit TOTP code or recovery code via `/api/auth/2fa/verify-login` (protected by `otpLimiter`) to receive a full 7-day session token.
 
-### ⚡ Zero-EC2-Load Architecture
+### ⚡ Zero-EC2-Load & Zero-Egress Storage Architecture
 
 Traditional cloud storage platforms process and transcode files on expensive backend application servers, driving up compute bills and introducing severe I/O bottlenecks. CloudGuard operates on a radically different architectural model:
 
-1. **Direct Object Storage Transfer:** All bulk file payloads stream directly to and from Backblaze B2 (S3-compatible API) via short-lived or 24-hour presigned URLs. The Node.js EC2 backend never proxies heavy file streams.
+1. **Direct Object Storage Transfer & Zero-Egress CDN:** All bulk file payloads stream directly to private Backblaze B2 (`cloudguard-vault-b2`, `eu-central-003`) via browser-direct presigned `PUT`/multipart uploads. Downstream file downloads, media streaming, and thumbnails are proxied through a specialized Cloudflare Worker (`cloudguard-b2-egress` on `files.cloudguard.site`) enabling $0/GB egress via the Cloudflare Bandwidth Alliance. The Node.js EC2 backend never proxies heavy file streams.
 2. **Client-Side Thumbnail Ingestion:** WebP/JPEG thumbnails (320px, <40 KB) are extracted in the user's browser during upload (`thumbnailHelper.js`), converting HEIC/HEIF via WebAssembly, and pushed directly to `thumbnails/{userId}/` in B2 upon upload finalization.
 3. **Off-Thread Browser Previews:** High-resolution HEIC/HEIF decoding runs off the main UI thread via a dedicated Web Worker (`heicWorker.js`) using WebAssembly `libheif-js`.
 4. **Zero-Server Card Previews:** Grid card visual previews for PDFs (first-page canvas rendering via `pdfjs-dist`), text/code files (first 2 KB HTTP Range requests), and video frame snapshots execute 100% inside the browser (`cardPreviewGenerator.js`).
+5. **Instant Frame-1 Video Streaming & Document Previews:** Videos stream via HTML5 players configured with `preload="metadata"` and programmatic `onLoadedData` playback triggers (avoiding Chromium `autoPlay` buffering stalls) alongside thumbnail posters. Microsoft Word (`.docx`) previews render 100% in-browser via `DocxPreviewModal` using `jszip` with a single outer scrollbar.
+6. **CDN Edge Authentication (`cg_vault_session`):** Downstream media access on `files.cloudguard.site` is guarded at the Cloudflare Worker edge by an `HttpOnly; Secure; SameSite=None; Domain=.cloudguard.site` HMAC-SHA256 signed session cookie (`server/utils/edgeAuth.js`). The edge worker enforces tenant path isolation (`/uploads/<userId>/`, `/thumbnails/<userId>/`), Referer validation, and cross-origin authentication (`crossOrigin="use-credentials"` on client `<img>`/`<video>` elements). Presigned GET URLs are short-lived (300s for previews/thumbnails, 60s for downloads).
 
 ---
 
@@ -39,12 +41,12 @@ Traditional cloud storage platforms process and transcode files on expensive bac
 
 | Layer | Technologies & Services | Hosting & Deployment |
 | :--- | :--- | :--- |
-| **Frontend** | React 19, Vite 8, Tailwind CSS v4, Lucide Icons, PDF.js (`pdfjs-dist`), `libheif-js` (WASM), Framer Motion, Plyr, Axios | **Cloudflare Pages / Vercel** (Continuous deployment from `main`) |
+| **Frontend** | React 19, Vite 8, Tailwind CSS v4, Lucide Icons, PDF.js (`pdfjs-dist`), `libheif-js` (WASM), JSZip, Framer Motion, Axios | **Cloudflare Pages / Vercel** (Continuous deployment from `main`) |
 | **Backend Gateway** | Node.js (>=18), Express 4, Mongoose 8, Multer (memoryStorage), AWS SDK v3 (`@aws-sdk/client-s3`), Helmet, Rate Limiter, Resend API | **AWS EC2** (Ubuntu Linux, Nginx reverse proxy, PM2) |
-| **Cloud Storage** | Backblaze B2 (S3-Compatible Object Storage) | `uploads/` (original files) & `thumbnails/` (WebP previews) |
+| **Cloud Storage & CDN** | Private Backblaze B2 (`cloudguard-vault-b2`, `eu-central-003`) & Cloudflare Worker (`cloudguard-b2-egress` on `files.cloudguard.site`) | Direct browser presigned PUT/multipart uploads & $0/GB egress CDN caching |
 | **Database** | MongoDB (Atlas / Self-Hosted) | High-speed compound indexes (`userId`, `folderId`, `isTrash`) |
 | **Payment Gateway** | Cashfree Payments (REST API & Webhooks) | Essential (50GB), Pro (100GB), Ultra (200GB) subscription tiers |
-| **AI Malware Service** | Python 3, FastAPI, Scikit-learn (Random Forest), Pefile, Boto3 | Isolated microservice performing static structural analysis on PEs |
+| **AI Malware Service** | Python 3, FastAPI, Scikit-learn (Random Forest), Pefile, Boto3 | Isolated microservice performing static structural analysis on PEs (≤ 512 MB) |
 | **Admin & Telemetry** | Founder Monitor (`AdminMonitor.jsx` & `admin.js`) | Real-time system vitals, telemetry, user quotas, and refund controls |
 
 ---
@@ -55,7 +57,7 @@ Traditional cloud storage platforms process and transcode files on expensive bac
 CloudGuard/
 ├── client/                               # Frontend Single-Page Application (React 19 + Vite + Tailwind v4)
 │   ├── src/
-│   │   ├── App.jsx                       # Core dashboard controller, folder navigation, My Files & Recents views
+│   │   ├── App.jsx                       # Core dashboard controller, DocxPreviewModal (single scrollbar), folder navigation
 │   │   ├── main.jsx                      # React root mount
 │   │   ├── index.css                     # Global styles, Tailwind base layer, and page-level scrollbar control
 │   │   ├── config.js                     # Dynamic API base URL configuration
@@ -112,7 +114,8 @@ CloudGuard/
 │   ├── utils/
 │   │   ├── tenantQuery.js                # Multi-tenant MongoDB query builder
 │   │   ├── s3Delete.js                   # Backblaze B2 S3 key and version purging
-│   │   └── emailService.js               # Resend transactional email integration
+│   │   ├── emailService.js               # Resend transactional email integration
+│   │   └── edgeAuth.js                   # HMAC-SHA256 signing for cg_vault_session edge cookie and CDN download URLs
 │   └── package.json
 ├── ai-service/                           # Static PE Malware Detection Microservice
 │   ├── main.py                           # FastAPI application and S3 header scanner
@@ -143,3 +146,14 @@ CloudGuard/
    - **Freeform Content & Search Query Bounds:** Freeform contact/support text undergoes `sanitizePlainText` to strip HTML tags, script blocks, inline handlers, and residual `<`/`>` (name ≤ 60, subject ≤ 120, message ≤ 2000). All search queries (`req.query.search`) are capped at 100 characters before regex escaping to mitigate ReDoS.
    - **Email Domain Verification & Disposable Blocklist:** Replaced static consumer-only domain allowlists with a disposable domain blocklist (`DISPOSABLE_EMAIL_ROOTS`) and real-time DNS MX record resolution (`dns.promises.resolveMx`) with a 2500ms timeout that fails open on transient network errors, welcoming legitimate corporate, university, and custom domains while repelling burner/spam addresses.
    - **Grief-Resistant Account Lockout:** In `POST /api/auth/login`, 7 consecutive incorrect password attempts lock the account for 15 minutes (`lockUntil`), returning HTTP 429. The lockout and failure counter are automatically cleared upon successful password authentication or password reset. Google OAuth logins are never blocked by password lockout.
+9. **Zero-Egress CDN & Edge Cookie Security Standards:**
+   - Storage transfers utilize private Backblaze B2 bucket `cloudguard-vault-b2` (`eu-central-003`) with direct browser presigned `PUT`/multipart uploads.
+   - All file downloads, streaming, and thumbnails route via Cloudflare Worker `cloudguard-b2-egress` on `files.cloudguard.site` for $0/GB egress.
+   - Access to `files.cloudguard.site` is protected by `HttpOnly; Secure; SameSite=None; Domain=.cloudguard.site` cookie `cg_vault_session` issued by `edgeAuth.js`.
+   - The edge worker validates tenant paths (`/uploads/<userId>/`, `/thumbnails/<userId>/`) against the token payload and validates the Referer header.
+   - All client `<img>` and `<video>` tags rendering `files.cloudguard.site` URLs must specify `crossOrigin="use-credentials"`.
+   - Presigned GET URLs are short-lived: 300 seconds for previews/thumbnails and 60 seconds for downloads.
+10. **High-Performance Document & Media Previews:**
+   - Word documents (`.docx`) use client-side in-memory XML parsing via `DocxPreviewModal` (`jszip`) with a single scrollable body container.
+   - Video streaming begins immediately on frame 1 using `preload="metadata"` and `onLoadedData` playback triggers (omitting `autoPlay` to avoid Chromium buffer stalls), supported by `posterUrl` thumbnails and non-blocking centered buffering spinners.
+   - AI malware inspection caps scans at 512 MB; files above this threshold are marked `unverified`.

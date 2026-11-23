@@ -460,10 +460,12 @@ export function HeicPreviewImage({ fileId, src, alt, className, fallbackUrl, thu
  * Abortable video preview component that immediately halts network buffering and
  * detaches media streams when navigating slides or unmounting.
  */
-export function PreviewVideo({ src, className, ...props }) {
+export function PreviewVideo({ src, className, posterUrl, ...props }) {
   const videoRef = React.useRef(null);
+  const [isBuffering, setIsBuffering] = useState(true);
 
   useEffect(() => {
+    setIsBuffering(true);
     const video = videoRef.current;
     return () => {
       if (video) {
@@ -479,19 +481,35 @@ export function PreviewVideo({ src, className, ...props }) {
   }, [src]);
 
   return (
-    <video
-      ref={videoRef}
-      src={src}
-      controls
-      autoPlay
-      playsInline
-      preload="metadata"
-      crossOrigin={typeof src === 'string' && (src.startsWith('https://files.cloudguard.site') || src.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
-      className={className}
-      {...props}
-    >
-      Your browser does not support the video tag.
-    </video>
+    <div className="relative flex items-center justify-center">
+      <video
+        ref={videoRef}
+        src={src}
+        poster={posterUrl || undefined}
+        controls
+        playsInline
+        preload="metadata"
+        crossOrigin={typeof src === 'string' && (src.startsWith('https://files.cloudguard.site') || src.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
+        className={className}
+        onLoadedData={(e) => {
+          setIsBuffering(false);
+          const p = e.currentTarget.play();
+          if (p && typeof p.catch === 'function') p.catch(() => {});
+        }}
+        onPlaying={() => setIsBuffering(false)}
+        onWaiting={() => setIsBuffering(true)}
+        onError={() => setIsBuffering(false)}
+        {...props}
+      >
+        Your browser does not support the video tag.
+      </video>
+      {isBuffering && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/30 pointer-events-none rounded-lg">
+          <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+          <span className="text-xs font-medium text-white/90 drop-shadow">Loading video...</span>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -573,6 +591,7 @@ export default function FilePreviewModal({
 
   // File type detection
   const [activeHeicLoadedId, setActiveHeicLoadedId] = useState(null);
+  const thumbnailUrl = previewFile?.thumbnailUrl || previewFile?.thumbnail;
   const fileExt = (previewFile.type || (previewFile.name || '').split('.').pop() || '').toLowerCase();
   const isHeic = fileExt === 'heic' || fileExt === 'heif' || previewFile?.mimeType === 'image/heic' || previewFile?.mimeType === 'image/heif';
   const isAudio = Boolean(
@@ -690,6 +709,7 @@ export default function FilePreviewModal({
           <PreviewVideo
             key={effectiveUrl}
             src={effectiveUrl}
+            posterUrl={thumbnailUrl || undefined}
             className="max-w-full max-h-[80vh] rounded-lg object-contain shadow-2xl bg-black"
           />
         ) : (

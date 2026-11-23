@@ -17,16 +17,22 @@ flowchart TD
         ThumbGen["thumbnailHelper.js<br/>(320px WebP / JPEG Canvas)"]
         HEIC_Pre["heicDecoder.js / heicWorker.js<br/>(WASM off-thread)"]
         CardGen["cardPreviewGenerator.js<br/>(PDF.js / 2KB Range / Frame)"]
-        Lightbox["FilePreviewModal.jsx<br/>(25-Item LRU + Video Teardown)"]
+        DocxModal["DocxPreviewModal<br/>(Client-side JSZip, Single Scrollbar)"]
+        Lightbox["FilePreviewModal.jsx<br/>(Frame-1 Video + 25-Item LRU)"]
     end
 
     subgraph EC2["EC2 Backend Gateway (Node.js/Express)"]
-        Presign["/api/files/:id/access<br/>(AWS SDK Presigner)"]
+        Presign["/api/files/:id/access<br/>(AWS SDK Presigner + Edge Cookie)"]
         Finalize["/api/files/finalize-upload<br/>(Stores thumbnailKey in MongoDB)"]
-        PhotosAPI["/api/photos<br/>(Returns 24h Presigned Thumbnails)"]
+        PhotosAPI["/api/photos<br/>(Returns Presigned Thumbnails)"]
+        EdgeAuth["server/utils/edgeAuth.js<br/>(cg_vault_session HMAC Cookie)"]
     end
 
-    subgraph B2["Backblaze B2 Object Storage"]
+    subgraph Edge["Cloudflare Worker (files.cloudguard.site)"]
+        CFWorker["cloudguard-b2-egress<br/>($0/GB Egress + Tenant Isolation)"]
+    end
+
+    subgraph B2["Backblaze B2 Object Storage (eu-central-003)"]
         B2_Files[("uploads/{userId}/{s3Key}")]
         B2_Thumbs[("thumbnails/{userId}/{thumbKey}")]
     end
@@ -38,12 +44,14 @@ flowchart TD
     Finalize -->|Store Thumbnail WebP| B2_Thumbs
 
     Lightbox -->|Request Access URL| Presign
-    Presign -->|Presigned GET URL| Lightbox
-    Lightbox -->|Direct Download/Stream| B2_Files
+    Presign -->|Presigned GET URL + Cookie| Lightbox
+    Lightbox -->|Streaming GET with cg_vault_session| CFWorker
+    CFWorker -->|Zero-Egress Fetch| B2_Files
 
     CardGen -->|Batch Thumbnail Lookup| PhotosAPI
     PhotosAPI -->|Presigned WebP URLs| CardGen
-    CardGen -->|Direct WebP Fetch| B2_Thumbs
+    CardGen -->|Direct WebP Fetch with cg_vault_session| CFWorker
+    CFWorker -->|Zero-Egress Fetch| B2_Thumbs
 ```
 
 ### 1.1 Upload-Time Client Thumbnail Generation
@@ -53,9 +61,11 @@ flowchart TD
 - The Node.js server streams this small buffer directly to `thumbnails/{userId}/` in Backblaze B2 and saves `thumbnailKey` on the `File` document.
 - **Zero EC2 CPU cycles** are spent resizing images or transcoding video during uploads.
 
-### 1.2 Direct Presigned Storage Transfers
-- Files are downloaded and streamed directly from Backblaze B2 using short-lived or 24-hour presigned URLs generated via `@aws-sdk/s3-request-presigner`.
-- Media streaming for videos uses HTTP 206 Range requests served directly by B2, bypassing the EC2 application server completely.
+### 1.2 Direct Presigned Storage Transfers & Zero-Egress CDN (`cloudguard-b2-egress`)
+- Files are uploaded directly to the private Backblaze B2 bucket (`cloudguard-vault-b2`, `eu-central-003`) via browser-direct presigned `PUT` and multipart chunked uploads generated via `@aws-sdk/s3-request-presigner`.
+- Downstream downloads, video streaming, and thumbnail requests are proxied through a custom Cloudflare Worker (`cloudguard-b2-egress` on `files.cloudguard.site`).
+- Leveraging the Cloudflare Bandwidth Alliance with Backblaze B2, this architecture provides **$0/GB egress costs** while globally edge-caching media assets.
+- Video streaming uses HTTP 206 Range requests served directly by the CDN edge without touching the EC2 backend.
 
 ### 1.3 Presigned URL Caching & In-Flight Deduplication
 - **`accessUrlCache.js`:** Caches presigned access URLs for 25 minutes with in-flight Promise deduplication (`inFlightPrefetches`). Concurrent requests for the same file coalesce into a single HTTP round-trip.
@@ -70,9 +80,11 @@ flowchart TD
 - **Watchdog Timer:** A 15-second hard timeout begins the moment a job is enqueued, guaranteeing that an unresponsive file can never permanently deadlock the queue.
 - **Eager WASM Worker Pre-Warming:** `warmupHeicWorker()` is triggered as soon as the media lightbox opens, compiling the WebAssembly module in the background so the first HEIC image renders without initialization latency.
 
-### 1.5 Immediate Video Stream Teardown (`PreviewVideo`)
-- In `FilePreviewModal.jsx`, video players wrap an HTML5 `<video>` element with defensive stream abort logic.
-- Upon slide change or modal unmount, the component pauses playback, strips the `src` attribute, and invokes `.load()`. This immediately breaks active HTTP Range connections and releases browser network sockets.
+### 1.5 Instant Frame-1 Video Streaming & Stream Teardown (`PreviewVideo`)
+- In `FilePreviewModal.jsx`, video players wrap an HTML5 `<video>` element with instant frame-1 playback and defensive stream abort logic.
+- **Instant Frame-1 Playback:** Configured with `preload="metadata"` and intentionally omits the HTML `autoPlay` attribute. This allows Chromium and WebKit browsers to parse video headers and trigger `.play()` on `onLoadedData` as soon as the first frame is decoded, completely avoiding Chrome's 50+ MB pre-buffering stalls (`HAVE_ENOUGH_DATA`).
+- **Thumbnail Poster & Non-Blocking Buffering:** Accepts `posterUrl` (using the 320px WebP thumbnail fallback) and manages an internal `isBuffering` state with a centered, non-blocking spinner (`pointer-events-none`) so the user receives immediate visual feedback while frame 1 decodes.
+- **Defensive Stream Teardown:** Upon slide change or modal unmount, the component pauses playback, strips the `src` attribute, and invokes `.load()`. This immediately halts network buffering and releases browser network sockets.
 
 ### 1.6 Client-Side Card Preview Generator (`cardPreviewGenerator.js`)
 - **Viewport-Gated Lazy Rendering:** Grid cards only request visual previews when visible within the viewport.
@@ -82,6 +94,10 @@ flowchart TD
 - **PDF Previews:** First-page canvas rendering executed in-browser via `pdfjs-dist`.
 - **Text & Code Previews:** Fetches strictly the first 2 KB via an HTTP Range request (`bytes=0-2047`) and displays real syntax snippets.
 - **Video Fallbacks:** For videos lacking pre-generated thumbnails, a temporary hidden video element loads metadata only (`preload="metadata"`), captures a frame at `0.1s` onto an offscreen canvas, and immediately unloads the stream.
+
+### 1.7 Single-Scrollbar Client-Side Word Document Previews (`DocxPreviewModal`)
+- **Client-Side In-Memory XML Extraction:** Microsoft Word `.docx` documents unpack directly in the client browser using `jszip`, extracting and formatting `word/document.xml` into clean semantic HTML without uploading or sending files to any third-party conversion API.
+- **Single Global Modal Scrollbar Standard:** Conforms strictly to CloudGuard's single-scrollbar rule: the outer modal card maintains `flex flex-col max-h-[90vh] overflow-hidden` with a fixed header (`shrink-0`) and single scrollable body container (`flex-1 overflow-y-auto`). Inner document sheets expand naturally without nested scrollbars (`max-h-*` and `overflow-y-auto` removed).
 
 ---
 
@@ -138,6 +154,14 @@ sequenceDiagram
 - **Login Flow:** When 2FA is active, initial login returns `{ requires2FA: true, tempToken, email }`. The client switches to the 2FA challenge screen. Verification issues the standard 7-day JWT session token.
 - **Disable Flow:** Requires account password confirmation (or current TOTP / backup code for passwordless OAuth accounts). Erases secret and backup codes from database.
 - **Autofill & Paste Hardening:** Critical verification inputs (Disable 2FA confirmation and Danger Zone account erasure) use masked text inputs (`type="text"` with `WebkitTextSecurity` and accessible `Eye` / `EyeOff` visibility toggle) rather than `type="password"`. This completely eliminates browser saved-credential popups and Chrome's "Suggest strong password" injection while retaining password masking. Inputs initialize with `readOnly` (removed on focus/interaction) and enforce strict paste/drop prevention (`onPaste`, `onDrop`) to require deliberate manual confirmation. Modals mount via `createPortal(..., document.body)` with `fixed inset-0 w-screen h-[100dvh] z-[9999]` and background page scroll locking, ensuring full-viewport backdrop blur without container clipping. Mobile layout ensures full-width action buttons and responsive stacking.
+
+### 2.2 CDN Edge Authentication (`cg_vault_session`) & Tenant Path Isolation
+To protect file downloads and media streaming on `files.cloudguard.site` against logged-out URL sharing, hotlinking, and unauthorized access, CloudGuard enforces edge session authentication:
+- **`HttpOnly` Edge Cookie:** `server/utils/edgeAuth.js` issues `cg_vault_session` cookie via `attachVaultEdgeCookie(res, userId)`. In production environments (`cloudguard.site`), the cookie is signed and scoped with `{ httpOnly: true, secure: true, sameSite: 'none', domain: '.cloudguard.site', path: '/', maxAge: 86400000 }`.
+- **HMAC-SHA256 Token Payload:** `${userId}.${exp}.${hmacHex}` generated with `CDN_EDGE_SECRET || JWT_SECRET`.
+- **Cloudflare Worker Edge Enforcement (`cloudguard-b2-egress`):** The edge worker intercepts requests on `files.cloudguard.site`, validates the HMAC signature, and checks that the requested path starts with `/uploads/<userId>/` or `/thumbnails/<userId>/` matching the authenticated `userId`. Requests from cross-tenant users or unauthenticated clients are rejected with HTTP 403 Forbidden.
+- **Media Cross-Origin Authentication:** Client `<img>` and `<video>` tags rendering `files.cloudguard.site` URLs pass `crossOrigin="use-credentials"` so edge session cookies are attached across subdomains (`cloudguard.site` -> `files.cloudguard.site`).
+- **Short-Lived S3 Presigned GET URLs:** Presigned GET URLs generated via `@aws-sdk/s3-request-presigner` are reduced to 300 seconds for previews/thumbnails and 60 seconds for downloads.
 
 ---
 
@@ -223,7 +247,13 @@ To protect against MongoDB NoSQL operator injection, ASCII control-character cor
 
 | Commit | Date | Milestone Description |
 | :--- | :--- | :--- |
-| `HEAD` | 2026-11-20 | **Account Lockout, MX Verification, & Upload Colon Normalization:** Added 15-minute account lockout after 7 failed password attempts, replaced static email allowlist with disposable blocklist + DNS MX resolution (2500ms timeout fail-open), auto-normalized macOS/Linux colons to hyphens on uploads, and synced reactive name character filtering in Auth forms. |
+| `HEAD` | 2026-11-23 | **Instant Frame-1 Video Playback & Context Documentation Sync:** Replaced `autoPlay` with `preload="metadata"` + `onLoadedData` play trigger, `posterUrl` fallback, non-blocking buffering overlay in `FilePreviewModal.jsx`, and synchronized `PROJECT_CONTEXT.md`, `AGENTS.md`, and `DESIGN.md`. |
+| `e149da3` | 2026-11-23 | **Video Preload Optimization:** Switched video preview preload from auto to metadata. |
+| `aef763b` | 2026-11-23 | **CDN Edge Media Credentials:** Added `crossOrigin="use-credentials"` to `<video>` and `<img>` tags for `files.cloudguard.site` and scoped `cg_vault_session` to `.cloudguard.site`. |
+| `fe3d972` | 2026-11-23 | **CDN Edge Authentication (`cg_vault_session`):** Hardened `files.cloudguard.site` with HMAC-SHA256 HttpOnly session cookie, tenant path isolation, and reduced presigned GET TTL (300s/60s). |
+| `bc01993` | 2026-11-23 | **Single-Scrollbar DOCX Preview Modal:** Added in-memory client-side `.docx` preview with `jszip` and eliminated nested inner document sheet scrollbars. |
+| `14be812` | 2026-11-23 | **AI Malware Scan 512 MB Threshold:** Restored 512 MB static PE scan cap, marking larger files `unverified` with responsive status badges. |
+| `a37b38e` | 2026-11-20 | **Account Lockout, MX Verification, & Upload Colon Normalization:** Added 15-minute account lockout after 7 failed password attempts, replaced static email allowlist with disposable blocklist + DNS MX resolution (2500ms timeout fail-open), auto-normalized macOS/Linux colons to hyphens on uploads, and synced reactive name character filtering in Auth forms. |
 | `4ecf19c` | 2026-11-20 | **Defense-in-Depth Input Sanitization & Character Policy:** Created centralized `sanitize.js` middleware with recursive NoSQL ($ and .) key stripping, control-character cleaner, raw password preservation, display name constraints (2..60, no < > { } [ ] ;), vault item constraints (1..120, no filesystem forbidden chars), and search query length caps. |
 | `a42217f` | 2026-11-20 | **Opt-In TOTP Two-Factor Authentication (2FA):** Implemented RFC 6238 TOTP 2FA with AES-256-GCM encrypted secrets, 8 single-use hashed recovery backup codes, profile setup & disable workflows, and login challenge screen. |
 | `bc44968` | 2026-11-20 | **Scrollbar-Free Sticky Legal TOC:** Completely eliminated inner sidebar scrollbars and pinned left TOC sidebar at `lg:top-20 lg:self-start` with compact spacing fitting ~600px viewports. |
