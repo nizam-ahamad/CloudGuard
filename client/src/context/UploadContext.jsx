@@ -13,7 +13,7 @@ const isMobileDevice = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|And
 const isIOS = typeof navigator !== 'undefined' && /iPhone|iPad|iPod/i.test(navigator.userAgent || '');
 const MAX_CONCURRENT_UPLOADS = 2;
 const MULTIPART_THRESHOLD = 25 * 1024 * 1024; // 25 MB
-const MULTIPART_PART_CONCURRENCY = 5;
+const MULTIPART_PART_CONCURRENCY = 6;
 const MULTIPART_WORKERS = MULTIPART_PART_CONCURRENCY;
 const MAX_PART_RETRIES = 6; // Up to 6 retries with backoff on network stall/timeout
 const TERMINAL_STATUSES = new Set(['clean', 'unverified', 'threat_purged', 'error']);
