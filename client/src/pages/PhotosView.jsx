@@ -931,6 +931,7 @@ export default function PhotosView({ token: propToken }) {
                                 alt={item.name}
                                 loading="lazy"
                                 decoding="async"
+                                crossOrigin={typeof displayThumbnail === 'string' && (displayThumbnail.startsWith('https://files.cloudguard.site') || displayThumbnail.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
                                 className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                                 onError={(e) => {
                                   // Fallback if image URL fails to load
@@ -1030,6 +1031,7 @@ export default function PhotosView({ token: propToken }) {
                                     className="w-full h-full object-cover object-center"
                                     loading="lazy"
                                     decoding="async"
+                                    crossOrigin={typeof displayThumbnail === 'string' && (displayThumbnail.startsWith('https://files.cloudguard.site') || displayThumbnail.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
                                     onError={(e) => {
                                       e.currentTarget.style.display = 'none';
                                     }}
@@ -1232,6 +1234,7 @@ export default function PhotosView({ token: propToken }) {
                     <img
                       src={currentPreviewItem.thumbnailUrl || currentPreviewItem.url}
                       alt={currentPreviewItem.name}
+                      crossOrigin={typeof (currentPreviewItem.thumbnailUrl || currentPreviewItem.url) === 'string' && ((currentPreviewItem.thumbnailUrl || currentPreviewItem.url).startsWith('https://files.cloudguard.site') || (currentPreviewItem.thumbnailUrl || currentPreviewItem.url).includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
                       className="max-h-[80vh] max-w-full object-contain rounded-lg filter blur-sm opacity-60"
                     />
                   )}
@@ -1261,6 +1264,7 @@ export default function PhotosView({ token: propToken }) {
                       <img
                         src={currentPreviewItem.thumbnailUrl || currentPreviewItem.accessUrl || currentPreviewItem.url}
                         alt={currentPreviewItem.name}
+                        crossOrigin={typeof (currentPreviewItem.thumbnailUrl || currentPreviewItem.accessUrl || currentPreviewItem.url) === 'string' && ((currentPreviewItem.thumbnailUrl || currentPreviewItem.accessUrl || currentPreviewItem.url).startsWith('https://files.cloudguard.site') || (currentPreviewItem.thumbnailUrl || currentPreviewItem.accessUrl || currentPreviewItem.url).includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
                         className={`max-h-[80vh] max-w-full object-contain rounded-lg shadow-2xl transition-opacity duration-300 ${
                           fullMediaUrl ? 'opacity-0 absolute' : 'opacity-100'
                         }`}
@@ -1272,6 +1276,7 @@ export default function PhotosView({ token: propToken }) {
                         key={fullMediaUrl}
                         src={fullMediaUrl}
                         alt={currentPreviewItem.name}
+                        crossOrigin={typeof fullMediaUrl === 'string' && (fullMediaUrl.startsWith('https://files.cloudguard.site') || fullMediaUrl.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
                         className="max-h-[80vh] max-w-full object-contain rounded-lg shadow-2xl transition-opacity duration-300 opacity-100"
                       />
                     )}

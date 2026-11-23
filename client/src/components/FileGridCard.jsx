@@ -285,6 +285,7 @@ export function FileCardPreviewBody({ file, token }) {
             alt={file?.name || ''}
             loading="lazy"
             decoding="async"
+            crossOrigin={typeof resolvedThumbnail === 'string' && (resolvedThumbnail.startsWith('https://files.cloudguard.site') || resolvedThumbnail.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
             onError={() => setImgError(true)}
             className={`w-full h-full ${
               dynamicPreview?.isPdf || isPdf ? 'object-cover object-top' : 'object-cover'

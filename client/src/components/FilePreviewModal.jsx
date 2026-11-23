@@ -422,6 +422,7 @@ export function HeicPreviewImage({ fileId, src, alt, className, fallbackUrl, thu
           <img
             src={effectiveFallback}
             alt={alt}
+            crossOrigin={typeof effectiveFallback === 'string' && (effectiveFallback.startsWith('https://files.cloudguard.site') || effectiveFallback.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
             className={`${className} filter blur-[2px] opacity-70`}
           />
         )}
@@ -435,7 +436,14 @@ export function HeicPreviewImage({ fileId, src, alt, className, fallbackUrl, thu
 
   if (hasError || !blobUrl) {
     if (effectiveFallback && !/\.(heic|heif)(\?|$)/i.test(effectiveFallback)) {
-      return <img src={effectiveFallback} alt={alt} className={className} />;
+      return (
+        <img
+          src={effectiveFallback}
+          alt={alt}
+          crossOrigin={typeof effectiveFallback === 'string' && (effectiveFallback.startsWith('https://files.cloudguard.site') || effectiveFallback.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
+          className={className}
+        />
+      );
     }
     return (
       <div className="flex flex-col items-center justify-center p-8 gap-3 text-neutral-500 dark:text-neutral-400">
@@ -478,6 +486,7 @@ export function PreviewVideo({ src, className, ...props }) {
       autoPlay
       playsInline
       preload="auto"
+      crossOrigin={typeof src === 'string' && (src.startsWith('https://files.cloudguard.site') || src.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
       className={className}
       {...props}
     >
@@ -756,7 +765,12 @@ export default function FilePreviewModal({
             />
           ) : ['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'].includes(fileExt) ? (
             effectiveUrl ? (
-              <img src={effectiveUrl} alt={previewFile.name} className="max-w-full max-h-[70vh] object-contain shadow-sm rounded" />
+              <img
+                src={effectiveUrl}
+                alt={previewFile.name}
+                crossOrigin={typeof effectiveUrl === 'string' && (effectiveUrl.startsWith('https://files.cloudguard.site') || effectiveUrl.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
+                className="max-w-full max-h-[70vh] object-contain shadow-sm rounded"
+              />
             ) : (
               <div className="flex flex-col items-center justify-center gap-2 text-neutral-400 min-h-[200px]">
                 <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
@@ -791,6 +805,7 @@ export default function FilePreviewModal({
                 autoPlay
                 preload="metadata"
                 src={effectiveUrl}
+                crossOrigin={typeof effectiveUrl === 'string' && (effectiveUrl.startsWith('https://files.cloudguard.site') || effectiveUrl.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
                 className="w-full max-w-md"
               />
             </div>

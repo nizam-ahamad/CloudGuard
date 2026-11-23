@@ -4188,6 +4188,7 @@ function App() {
                                 className="w-full h-full object-cover rounded"
                                 loading="lazy"
                                 decoding="async"
+                                crossOrigin={typeof (file.thumbnailUrl || getMediaThumbnail(file._id) || file.thumbnail) === 'string' && ((file.thumbnailUrl || getMediaThumbnail(file._id) || file.thumbnail).startsWith('https://files.cloudguard.site') || (file.thumbnailUrl || getMediaThumbnail(file._id) || file.thumbnail).includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
                                 onError={(e) => {
                                   e.currentTarget.style.display = 'none';
                                   if (e.currentTarget.nextElementSibling) {

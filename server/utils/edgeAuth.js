@@ -20,8 +20,11 @@ function signEdgePayload(userId, ttlSeconds = 86400) {
 function attachVaultEdgeCookie(res, userId) {
   if (!res || !userId) return;
   const token = signEdgePayload(userId, 86400);
-  const isProd = process.env.NODE_ENV === 'production';
-  const cookieOptions = isProd
+  const isProdDomain =
+    process.env.NODE_ENV === 'production' ||
+    (process.env.CDN_DOWNLOAD_URL || '').includes('cloudguard.site') ||
+    (process.env.CLIENT_URL || '').includes('cloudguard.site');
+  const cookieOptions = isProdDomain
     ? { httpOnly: true, secure: true, sameSite: 'none', domain: '.cloudguard.site', path: '/', maxAge: 86400 * 1000 }
     : { httpOnly: true, sameSite: 'lax', path: '/', maxAge: 86400 * 1000 };
   res.cookie('cg_vault_session', token, cookieOptions);
@@ -32,9 +35,12 @@ function attachVaultEdgeCookie(res, userId) {
  */
 function clearVaultEdgeCookie(res) {
   if (!res) return;
-  const isProd = process.env.NODE_ENV === 'production';
-  if (isProd) {
-    res.clearCookie('cg_vault_session', { domain: '.cloudguard.site', path: '/', secure: true, sameSite: 'none' });
+  const isProdDomain =
+    process.env.NODE_ENV === 'production' ||
+    (process.env.CDN_DOWNLOAD_URL || '').includes('cloudguard.site') ||
+    (process.env.CLIENT_URL || '').includes('cloudguard.site');
+  if (isProdDomain) {
+    res.clearCookie('cg_vault_session', { httpOnly: true, secure: true, sameSite: 'none', domain: '.cloudguard.site', path: '/' });
   }
   res.clearCookie('cg_vault_session', { path: '/' });
 }
