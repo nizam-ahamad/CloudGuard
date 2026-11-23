@@ -550,11 +550,21 @@ router.post('/presigned-url', authMiddleware, async (req, res) => {
 
     const fileSize = req.body.fileSize !== undefined ? req.body.fileSize : req.body.size;
     const mimeType = req.body.mimeType || req.body.type || req.body.contentType || 'application/octet-stream';
-    const activeFolder = req.body.folderId || req.body.folder || null;
-    const validFolder = (activeFolder && mongoose.Types.ObjectId.isValid(String(activeFolder)))
-      ? activeFolder
-      : null;
     const userId = req.user.id || req.user._id;
+    const activeFolder = req.body.folderId || req.body.folder || null;
+    let validFolder = null;
+    if (activeFolder && activeFolder !== 'null' && activeFolder !== 'undefined' && activeFolder !== '') {
+      if (!mongoose.Types.ObjectId.isValid(String(activeFolder))) {
+        return res.status(404).json({ error: 'Target folder not found or access denied' });
+      }
+      const targetFolder = await Folder.findOne(
+        buildTenantQuery(userId, { _id: activeFolder, isTrash: { $ne: true } })
+      ).select('_id').lean();
+      if (!targetFolder) {
+        return res.status(404).json({ error: 'Target folder not found or access denied' });
+      }
+      validFolder = targetFolder._id;
+    }
 
     const parsedFileSize = Number(fileSize);
     if (!Number.isFinite(parsedFileSize) || parsedFileSize <= 0) {
@@ -695,9 +705,19 @@ router.post('/multipart/init', authMiddleware, async (req, res) => {
 
     const userId = req.user.id || req.user._id;
     const activeFolder = folderId || folder || null;
-    const validFolder = (activeFolder && mongoose.Types.ObjectId.isValid(String(activeFolder)))
-      ? activeFolder
-      : null;
+    let validFolder = null;
+    if (activeFolder && activeFolder !== 'null' && activeFolder !== 'undefined' && activeFolder !== '') {
+      if (!mongoose.Types.ObjectId.isValid(String(activeFolder))) {
+        return res.status(404).json({ error: 'Target folder not found or access denied' });
+      }
+      const targetFolder = await Folder.findOne(
+        buildTenantQuery(userId, { _id: activeFolder, isTrash: { $ne: true } })
+      ).select('_id').lean();
+      if (!targetFolder) {
+        return res.status(404).json({ error: 'Target folder not found or access denied' });
+      }
+      validFolder = targetFolder._id;
+    }
 
     const parsedFileSize = Number(fileSize);
     if (!Number.isFinite(parsedFileSize) || parsedFileSize <= 0) {

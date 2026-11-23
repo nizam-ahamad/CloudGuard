@@ -329,3 +329,7 @@ def health():
         "threat_engine": "MalwareBazaar + Random Forest",
         "rf_model_loaded": rf_model is not None
     }
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=False)

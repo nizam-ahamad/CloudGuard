@@ -62,8 +62,10 @@ flowchart TD
 - **Zero EC2 CPU cycles** are spent resizing images or transcoding video during uploads.
 
 ### 1.2 Direct Presigned Storage Transfers & Zero-Egress CDN (`cloudguard-b2-egress`)
-- Files are uploaded directly to the private Backblaze B2 bucket (`cloudguard-vault-b2`, `eu-central-003`) via browser-direct presigned `PUT` and multipart chunked uploads generated via `@aws-sdk/s3-request-presigner`.
-- Downstream downloads, video streaming, and thumbnail requests are proxied through a custom Cloudflare Worker (`cloudguard-b2-egress` on `files.cloudguard.site`).
+- Files are uploaded directly to the private Backblaze B2 bucket (`cloudguard-vault-b2`, `eu-central-003`) via browser-direct presigned `PUT` (< 25 MB) and 6-stream multipart chunked uploads (≥ 25 MB) generated via `@aws-sdk/s3-request-presigner`.
+- **Adaptive 10–16 MB Multipart Chunking:** Files < 250 MB use 10 MB chunks; files 250 MB to < 1 GB use 12 MB chunks; files ≥ 1 GB use 16 MB chunks (6 concurrent × 16 MB = 96 MB active RAM cap), maintaining steady mobile throughput and avoiding 5G socket stalls.
+- **Strict Tenant Folder Ownership Verification:** Both `POST /api/files/presigned-url` and `POST /api/files/multipart/init` strictly verify folder ownership via `Folder.findOne(buildTenantQuery(userId, { _id: folderId, isTrash: { $ne: true } }))`. If a truthy `folderId` is passed that does not exist or does not belong to `userId`, the request is immediately rejected with HTTP 404 before presigning or creating pending database records.
+- **Zero-Egress CDN Edge:** Downstream downloads, video streaming, and thumbnail requests are proxied through a custom Cloudflare Worker (`cloudguard-b2-egress` on `files.cloudguard.site`).
 - Leveraging the Cloudflare Bandwidth Alliance with Backblaze B2, this architecture provides **$0/GB egress costs** while globally edge-caching media assets.
 - Video streaming uses HTTP 206 Range requests served directly by the CDN edge without touching the EC2 backend.
 
@@ -247,7 +249,9 @@ To protect against MongoDB NoSQL operator injection, ASCII control-character cor
 
 | Commit | Date | Milestone Description |
 | :--- | :--- | :--- |
-| `HEAD` | 2026-11-23 | **Instant Frame-1 Video Playback & Context Documentation Sync:** Replaced `autoPlay` with `preload="metadata"` + `onLoadedData` play trigger, `posterUrl` fallback, non-blocking buffering overlay in `FilePreviewModal.jsx`, and synchronized `PROJECT_CONTEXT.md`, `AGENTS.md`, and `DESIGN.md`. |
+| `HEAD` | 2026-11-23 | **Security Hardening & Documentation Sync:** Enforced strict tenant folder ownership on upload init (`/presigned-url` and `/multipart/init`), explicitly bound AI microservice to loopback (`127.0.0.1:8000`), wrote comprehensive public `README.md` with mandatory auto-update rule, and synchronized `DESIGN.md`. |
+| `07c8a58` | 2026-11-23 | **Multipart 16 MB Chunking & 6-Stream Concurrency:** Set adaptive 10–16 MB chunk sizing in `files.js` and 6 concurrent streaming workers in `UploadContext.jsx` for sustained mobile throughput. |
+| `54c0f43` | 2026-11-23 | **Instant Frame-1 Video Playback & Context Documentation Sync:** Replaced `autoPlay` with `preload="metadata"` + `onLoadedData` play trigger, `posterUrl` fallback, non-blocking buffering overlay in `FilePreviewModal.jsx`, and synchronized `PROJECT_CONTEXT.md`, `AGENTS.md`, and `DESIGN.md`. |
 | `e149da3` | 2026-11-23 | **Video Preload Optimization:** Switched video preview preload from auto to metadata. |
 | `aef763b` | 2026-11-23 | **CDN Edge Media Credentials:** Added `crossOrigin="use-credentials"` to `<video>` and `<img>` tags for `files.cloudguard.site` and scoped `cg_vault_session` to `.cloudguard.site`. |
 | `fe3d972` | 2026-11-23 | **CDN Edge Authentication (`cg_vault_session`):** Hardened `files.cloudguard.site` with HMAC-SHA256 HttpOnly session cookie, tenant path isolation, and reduced presigned GET TTL (300s/60s). |
