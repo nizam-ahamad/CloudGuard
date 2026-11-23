@@ -65,6 +65,10 @@
    - Server authentication (`server/middleware/auth.js`) prioritizes `req.cookies?.cg_auth_token` with fallback to `Authorization: Bearer <token>` and query parameter token.
    - Origin CSRF verification middleware (`server/server.js`) guards all state-changing methods (`POST`, `PUT`, `PATCH`, `DELETE`) for cookie-authenticated requests lacking an explicit Bearer header, validating incoming `Origin`/`Referer` against `ALLOWED_ORIGINS`. Machine-to-machine webhooks (`/api/payments/webhook`) are exempted.
    - Client persists `localStorage.setItem('cg_session_active', '1')` without storing sensitive raw JWTs in storage, verifying session freshness on initial mount via `GET /api/auth/me`. Session termination (logout or account deletion) clears both `cg_auth_token` and `cg_vault_session` cookies and increments `tokenVersion` to invalidate any existing tokens.
+9. **DPDP-Compliant Deletion Audit & Abuse Prevention (`DeletedAccountLog`):**
+   - Upon permanent account deletion (`DELETE /api/auth/account`), all personal data, files, and folders are purged immediately. To prevent repeat free-trial farming and refund cycling without retaining plaintext PII, a one-way HMAC-SHA256 salted hash (`emailHash = hashDeletedEmail(email)`) is upserted into `DeletedAccountLog` alongside `hadTrial: true`, `claimedRefund: boolean`, and `deletedAt`.
+   - On re-registration or Google auth provisioning with a previously deleted email, account creation is permitted, but the free trial is marked consumed (`trialAlreadyUsed: true`, `plan: 'free'`, `trialExpiresAt = new Date()`, `storageLimit = 0`, `subscription.status = 'expired'`).
+   - Prior refund claims (`claimedRefund: true`) permanently transfer to prevent repeat 7-day annual refunds (`hasPriorRefund = true` in `server/routes/payments.js`).
 
 ---
 

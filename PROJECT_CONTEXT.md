@@ -31,6 +31,12 @@ To eliminate XSS-based session hijacking risks:
 3. **Dual Authentication Support:** `server/middleware/auth.js` checks `req.cookies?.cg_auth_token` first, retaining backward-compatible fallback to `Authorization: Bearer` headers and query token strings.
 4. **Instant Invalidation via `tokenVersion`:** Session revocation (logout, password change, account deletion) increments `tokenVersion` in MongoDB and clears both `cg_auth_token` and `cg_vault_session` cookies, instantly invalidating active sessions.
 
+### 🛡️ DPDP-Compliant Deletion Audit & Abuse Prevention
+To prevent repeat free-trial farming and refund cycling after account deletion without retaining plaintext PII:
+1. **One-Way Salted HMAC-SHA256 Email Logging (`DeletedAccountLog`):** When a user triggers account erasure (`DELETE /api/auth/account`), their personal details, files, and database records are permanently erased. Simultaneously, a salted HMAC-SHA256 digest (`hashDeletedEmail(email)`) is upserted into `DeletedAccountLog` with `hadTrial: true`, `claimedRefund: boolean`, and `deletedAt: Date`.
+2. **Free-Trial Consumption on Re-Signup:** If a previously deleted email re-registers via local registration or Google OAuth, the system permits account creation but immediately marks the trial as consumed (`trialAlreadyUsed: true`, `plan: 'free'`, `trialExpiresAt = new Date()`, `storageLimit = 0`, `subscription.status = 'expired'`). The user cannot upload assets until subscribing to a paid plan.
+3. **Persistent Refund Abuse Mitigation:** Prior refund history (`claimedRefund: true`) persists across account cycles, permanently preventing repeat 7-day annual refunds (`server/routes/payments.js`).
+
 ### ⚡ Zero-EC2-Load & Zero-Egress Storage Architecture
 
 Traditional cloud storage platforms process and transcode files on expensive backend application servers, driving up compute bills and introducing severe I/O bottlenecks. CloudGuard operates on a radically different architectural model:

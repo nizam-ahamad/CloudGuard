@@ -6,6 +6,8 @@ const PDFDocument = require('pdfkit');
 const auth = require('../middleware/auth');
 const User = require('../models/User');
 const Payment = require('../models/Payment');
+const DeletedAccountLog = require('../models/DeletedAccountLog');
+const { hashDeletedEmail } = require('../models/DeletedAccountLog');
 const {
   sendSubscriptionEmail,
   buildCloudGuardEmail,
@@ -842,8 +844,15 @@ router.get('/subscription-status', auth, async (req, res) => {
     const daysSinceStart = startDate ? (Date.now() - startDate.getTime()) / (1000 * 60 * 60 * 24) : Infinity;
     const peakBytes = sub?.peakStorageBytes !== undefined ? sub.peakStorageBytes : (user.storageUsed || 0);
 
-    // Check if user has claimed a prior refund
+    // Check if user has claimed a prior refund (including prior accounts via DeletedAccountLog)
     let hasPriorRefund = (sub?.refundCount || 0) >= 1;
+    if (!hasPriorRefund && user.email) {
+      const emailHash = hashDeletedEmail(user.email);
+      const priorLog = await DeletedAccountLog.findOne({ emailHash }).select('claimedRefund refundCount').lean();
+      if (priorLog?.claimedRefund || (priorLog?.refundCount || 0) >= 1) {
+        hasPriorRefund = true;
+      }
+    }
     if (!hasPriorRefund) {
       const userEmailRegex = user.email ? new RegExp(`^${user.email.trim()}$`, 'i') : null;
       const priorRefundPayment = await Payment.findOne({

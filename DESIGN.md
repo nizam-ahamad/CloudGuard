@@ -249,13 +249,19 @@ To protect against MongoDB NoSQL operator injection, ASCII control-character cor
 - **Origin CSRF Protection:** State-changing HTTP verbs (`POST`, `PUT`, `PATCH`, `DELETE`) verified via lightweight middleware. For requests authenticated via cookie without an explicit `Bearer` header, the incoming `Origin` (or `Referer` origin) must match `ALLOWED_ORIGINS` (`http://localhost:5173`, `https://cloud-guard-self.vercel.app`, `https://cloudguard-app.duckdns.org`, `https://cloudguard.site`, `https://www.cloudguard.site`), otherwise returning `403 Forbidden`. Machine-to-machine webhooks (`/api/payments/webhook`) are exempted.
 - **Client Session Flag & Dynamic Validation:** Frontend replaces raw JWT storage with `localStorage.setItem('cg_session_active', '1')`, validating session status against `GET /api/auth/me` on mount. Logout and account deletion clear both `cg_auth_token` and `cg_vault_session` cookies and increment `tokenVersion` in MongoDB to invalidate existing sessions across all devices.
 
+### 3.4. DPDP-Compliant Deletion Audit & Abuse Prevention (`DeletedAccountLog`)
+- **Zero-PII Hashed Deletion Log:** When an account is permanently deleted (`DELETE /api/auth/account`), personal records, files, and folders are purged. To prevent repeat 14-day trial farming and refund cycling without storing plaintext PII, a salted HMAC-SHA256 digest of the normalized email (`hashDeletedEmail`) is recorded in `DeletedAccountLog` with `hadTrial: true`, `claimedRefund: boolean`, and `deletedAt`.
+- **Trial Consumption on Re-Registration:** If an email associated with a deleted account re-registers via local signup or Google OAuth, account creation succeeds normally, but the free trial is marked as consumed (`trialAlreadyUsed: true`, `plan: 'free'`, `trialExpiresAt = new Date()`, `storageLimit = 0`, `subscription.status = 'expired'`), requiring a paid subscription to upload assets.
+- **Refund Claim Persistence:** Prior refund claims (`claimedRefund: true`) carry over to block repeat 7-day annual refunds (`hasPriorRefund = true` in `/api/payments/subscription-status`).
+
 ---
 
 ## 4. Changelog & Architectural Milestones
 
 | Commit | Date | Milestone Description |
 | :--- | :--- | :--- |
-| `HEAD` | 2026-11-23 | **HttpOnly Session Auth Migration & CSRF Guard (Phase 2):** Migrated primary API session JWT from localStorage to HttpOnly SameSite=None cookie (`cg_auth_token`) with Origin CSRF protection, Bearer header fallback, tokenVersion revocation, and `cg_session_active` client state. |
+| `HEAD` | 2026-11-24 | **Repeat Trial & Refund Cycling Prevention (Phase 3):** Implemented DPDP-compliant zero-PII salted HMAC-SHA256 deletion log (`DeletedAccountLog`), consumed-trial gating on re-registration (`storageLimit: 0`), and persistent refund claim tracking in `payments.js`. |
+| `99cb172` | 2026-11-23 | **HttpOnly Session Auth Migration & CSRF Guard (Phase 2):** Migrated primary API session JWT from localStorage to HttpOnly SameSite=None cookie (`cg_auth_token`) with Origin CSRF protection, Bearer header fallback, tokenVersion revocation, and `cg_session_active` client state. |
 | `2a2bf10` | 2026-11-23 | **Security Hardening & Documentation Sync (Phase 1):** Enforced strict tenant folder ownership on upload init (`/presigned-url` and `/multipart/init`), explicitly bound AI microservice to loopback (`127.0.0.1:8000`), wrote comprehensive public `README.md` with mandatory auto-update rule, and synchronized `DESIGN.md`. |
 | `07c8a58` | 2026-11-23 | **Multipart 16 MB Chunking & 6-Stream Concurrency:** Set adaptive 10–16 MB chunk sizing in `files.js` and 6 concurrent streaming workers in `UploadContext.jsx` for sustained mobile throughput. |
 | `54c0f43` | 2026-11-23 | **Instant Frame-1 Video Playback & Context Documentation Sync:** Replaced `autoPlay` with `preload="metadata"` + `onLoadedData` play trigger, `posterUrl` fallback, non-blocking buffering overlay in `FilePreviewModal.jsx`, and synchronized `PROJECT_CONTEXT.md`, `AGENTS.md`, and `DESIGN.md`. |
