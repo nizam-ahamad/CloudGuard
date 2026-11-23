@@ -809,15 +809,9 @@ router.post('/multipart/init', authMiddleware, async (req, res) => {
       return res.status(502).json({ error: 'Storage provider error initiating multipart session. Please retry.' });
     }
 
-    // 4. Mobile-optimized part sizing: strictly 10 MB–25 MB (well above Backblaze B2's 5 MB minimum, avoids 5G socket stalls)
-    // S3/B2 supports up to 10,000 parts: 25 MB * 10,000 = 250 GB, covering all CloudGuard plan quotas
-    let partSize = 10 * 1024 * 1024; // 10 MB default chunk size for smaller multipart files
-    if (numericFileSize >= 250 * 1024 * 1024) {
-      partSize = 25 * 1024 * 1024; // 25 MB chunk size for files >= 250 MB
-    }
-    if (numericFileSize > 9000 * 25 * 1024 * 1024) {
-      partSize = Math.ceil(numericFileSize / 9000); // Scale up only if > 225 GB to stay under 10k parts
-    }
+    // 4. Mobile-optimized part sizing: strictly 10 MB per part (well above Backblaze B2's 5 MB minimum, avoids 5G socket stalls)
+    // S3/B2 supports up to 10,000 parts: 10 MB * 10,000 = 100 GB, covering all CloudGuard plan quotas
+    const partSize = 10 * 1024 * 1024;
     const totalParts = Math.ceil(numericFileSize / partSize);
 
     let partUrls;

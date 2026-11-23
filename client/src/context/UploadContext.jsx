@@ -13,8 +13,9 @@ const isMobileDevice = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|And
 const isIOS = typeof navigator !== 'undefined' && /iPhone|iPad|iPod/i.test(navigator.userAgent || '');
 const MAX_CONCURRENT_UPLOADS = 2;
 const MULTIPART_THRESHOLD = 25 * 1024 * 1024; // 25 MB
-const MULTIPART_WORKERS = 4;
-const MAX_PART_RETRIES = 3; // Up to 3 retries with backoff on network stall/timeout
+const MULTIPART_PART_CONCURRENCY = 5;
+const MULTIPART_WORKERS = MULTIPART_PART_CONCURRENCY;
+const MAX_PART_RETRIES = 6; // Up to 6 retries with backoff on network stall/timeout
 const TERMINAL_STATUSES = new Set(['clean', 'threat_purged', 'error']);
 
 // Dedicated Axios instance without default Authorization header for direct S3 PUTs
@@ -111,6 +112,38 @@ export function waitForOnlineAndVisible(abortSignal) {
         document.removeEventListener('visibilitychange', visibilityHandler);
       }
     };
+  });
+}
+
+// Sleep with immediate wakeup when browser fires window 'online' event
+export function sleepOrOnline(ms, abortSignal) {
+  return new Promise((resolve) => {
+    let timer = null;
+    let cleanup = null;
+
+    const wakeUp = () => {
+      if (cleanup) cleanup();
+      resolve();
+    };
+
+    cleanup = () => {
+      if (timer) clearTimeout(timer);
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('online', wakeUp);
+      }
+      if (abortSignal) {
+        abortSignal.removeEventListener('abort', wakeUp);
+      }
+    };
+
+    timer = setTimeout(wakeUp, ms);
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('online', wakeUp, { once: true });
+    }
+    if (abortSignal) {
+      abortSignal.addEventListener('abort', wakeUp, { once: true });
+    }
   });
 }
 
@@ -771,7 +804,7 @@ export function UploadProvider({ children }) {
     ]).catch(() => null);
 
     const { fileId, s3Key, uploadId, partSize, chunkSize, partUrls } = initRes.data;
-    const effectivePartSize = partSize || chunkSize || (file.size >= 250 * 1024 * 1024 ? 25 * 1024 * 1024 : 10 * 1024 * 1024);
+    const effectivePartSize = partSize || chunkSize || 10 * 1024 * 1024;
     activeTicketsRef.current.set(id, { fileId, s3Key, uploadId });
 
     // If batch was cancelled while multipart/init was in-flight, immediately abort the B2 session
@@ -782,30 +815,38 @@ export function UploadProvider({ children }) {
       throw new Error('Upload cancelled');
     }
 
-    let completedBytes = 0;
-    const inFlightBytesRef = { current: {} };
+    let highWaterBytes = 0;
+    const partProgressMap = new Array(partUrls.length).fill(0);
     const completedParts = new Array(partUrls.length);
 
     let lastProgressTime = 0;
-    const syncAggregateProgress = () => {
+    const syncAggregateProgress = (force = false) => {
       if (isAborted || abortController.signal.aborted) return;
-      const inFlightTotal = Object.values(inFlightBytesRef.current).reduce((a, b) => a + (b || 0), 0);
-      const totalUploadedBytes = Math.min(file.size, completedBytes + inFlightTotal);
-      const percent = file.size > 0 ? Math.min(99, Math.round((totalUploadedBytes / file.size) * 100)) : 0;
+      const totalLoaded = Math.min(
+        file.size,
+        partProgressMap.reduce((sum, b) => sum + (b || 0), 0)
+      );
+      if (totalLoaded > highWaterBytes) {
+        highWaterBytes = totalLoaded;
+      }
+      const percent =
+        file.size > 0
+          ? Math.min(95, Math.max(1, Math.round((highWaterBytes * 100) / file.size)))
+          : 0;
       const now = Date.now();
-      if (now - lastProgressTime >= 250 || percent >= 99 || (lastProgressTime === 0 && totalUploadedBytes > 0)) {
+      if (force || now - lastProgressTime >= 200 || (lastProgressTime === 0 && highWaterBytes > 0)) {
         lastProgressTime = now;
         updateItem(id, {
           progress: percent,
-          uploadedBytes: totalUploadedBytes,
+          uploadedBytes: highWaterBytes,
           statusLabel: null,
         });
         trackByteSpeedTick();
       }
     };
 
-    const onPartProgress = (partNumber, loaded) => {
-      inFlightBytesRef.current[partNumber] = loaded;
+    const onPartProgress = (partIndex, loaded) => {
+      partProgressMap[partIndex] = loaded;
       syncAggregateProgress();
     };
 
@@ -851,7 +892,7 @@ export function UploadProvider({ children }) {
             currentPartMeta.uploadUrl = targetUrl;
           }
 
-          inFlightBytesRef.current[partNumber] = 0;
+          partProgressMap[index] = 0;
 
           // Native XMLHttpRequest provides zero-copy streaming and true real-time onprogress byte ticks
           const eTag = await new Promise((resolve, reject) => {
@@ -875,7 +916,7 @@ export function UploadProvider({ children }) {
             xhr.upload.onprogress = (e) => {
               if (isAborted || abortController.signal.aborted || batchCancelledRef.current || cancelledIdsRef.current.has(id)) return;
               if (e.lengthComputable) {
-                onPartProgress(partNumber, e.loaded);
+                onPartProgress(index, e.loaded);
               }
             };
 
@@ -915,13 +956,12 @@ export function UploadProvider({ children }) {
             xhr.send(bodyToSend);
           });
 
-          completedBytes += partBytes;
-          delete inFlightBytesRef.current[partNumber];
           completedParts[index] = { PartNumber: partNumber, ETag: eTag };
-          syncAggregateProgress();
+          partProgressMap[index] = partBytes;
+          syncAggregateProgress(true);
           return;
         } catch (err) {
-          delete inFlightBytesRef.current[partNumber];
+          partProgressMap[index] = 0;
           syncAggregateProgress();
 
           if (
@@ -1004,18 +1044,18 @@ export function UploadProvider({ children }) {
             throw err;
           }
 
-          // Jittered exponential backoff for connection recovery (up to 3 retries)
+          // Jittered exponential backoff with instant wakeup upon 'online' event
           const backoffMs =
             Math.min(8000, 1000 * Math.pow(2, attempt - 1)) +
             Math.floor(Math.random() * 500);
-          await new Promise((r) => setTimeout(r, backoffMs));
+          await sleepOrOnline(backoffMs, abortController.signal);
         }
       }
     };
 
     try {
-      // 2. Strict 4-Worker Concurrency Pool (Never more than 4 chunk PUT requests in flight at once)
-      const CONCURRENCY = 4;
+      // 2. Strict 5-Worker Concurrency Pool (High-throughput parallel chunk streaming)
+      const CONCURRENCY = MULTIPART_PART_CONCURRENCY;
       const workerCount = Math.min(CONCURRENCY, partUrls.length);
       let cursor = 0;
       const workers = Array.from({ length: workerCount }, async () => {
@@ -1026,6 +1066,13 @@ export function UploadProvider({ children }) {
         }
       });
       await Promise.all(workers);
+
+      // Transition to final assembly stage
+      updateItem(id, {
+        progress: 98,
+        uploadedBytes: file.size,
+        statusLabel: 'Assembling vault blocks...',
+      });
 
       const hashPromise = computeFileSHA256(file);
       const sha256 = await Promise.race([
