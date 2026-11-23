@@ -233,6 +233,9 @@ export async function downloadBatchZipWithProgress(
       const xhr = new XMLHttpRequest();
       currentXhr = xhr;
       xhr.open('GET', targetUrl, true);
+      if (typeof targetUrl === 'string' && targetUrl.startsWith('https://files.cloudguard.site')) {
+        xhr.withCredentials = true;
+      }
       xhr.responseType = 'blob';
 
       let lastLoadedForFile = 0;

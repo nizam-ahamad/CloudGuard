@@ -230,7 +230,11 @@ export function FileCardPreviewBody({ file, token }) {
         const accessUrl = file?.s3Url || file?.url || (await fetchAccessUrl(fileId, token));
         if (!accessUrl || !isMounted) return;
 
-        const res = await fetch(accessUrl, { signal: controller?.signal });
+        const isFilesCdn = typeof accessUrl === 'string' && (accessUrl.startsWith('https://files.cloudguard.site') || accessUrl.includes('.cloudguard.site'));
+        const res = await fetch(accessUrl, {
+          signal: controller?.signal,
+          ...(isFilesCdn ? { credentials: 'include' } : {}),
+        });
         if (!res.ok) throw new Error('Fetch failed');
         const arrayBuffer = await res.arrayBuffer();
         if (!isMounted) return;

@@ -7,6 +7,7 @@ const File = require('../models/File');
 const authMiddleware = require('../middleware/auth');
 const { buildTenantQuery } = require('../utils/tenantQuery');
 const { applyCdnToUrl } = require('../utils/cdnHelper');
+const { attachVaultEdgeCookie, formatCdnDownloadUrl } = require('../utils/edgeAuth');
 
 const s3Client = new S3Client({
   region: process.env.AWS_REGION || 'eu-central-003',
@@ -26,6 +27,7 @@ const handleGetPhotos = async (req, res) => {
     if (!rawUserId) {
       return res.status(401).json({ error: 'Authentication required' });
     }
+    attachVaultEdgeCookie(res, rawUserId);
 
     const mediaFilter = {
       isTrash: { $ne: true },
@@ -58,9 +60,9 @@ const handleGetPhotos = async (req, res) => {
                 Bucket: bucket,
                 Key: item.thumbnailKey,
               }),
-              { expiresIn: 86400 } // 24 hours
+              { expiresIn: 300 } // 5 minutes for thumbnails
             );
-            thumbnailUrl = applyCdnToUrl(thumbnailUrl);
+            thumbnailUrl = formatCdnDownloadUrl(thumbnailUrl, req, rawUserId);
           } catch (e) {
             console.warn(`Failed to sign thumbnail URL for ${item.name}:`, e.message);
           }

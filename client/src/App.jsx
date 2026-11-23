@@ -115,7 +115,11 @@ function DocxPreviewModal({ previewFile, previewUrl, closePreview, handleDownloa
         const url = previewUrl || (fileId ? await fetchAccessUrl(fileId, token) : null);
         if (!url) throw new Error('Could not resolve file access URL');
 
-        const response = await fetch(url, { signal: controller?.signal });
+        const isFilesCdn = typeof url === 'string' && (url.startsWith('https://files.cloudguard.site') || url.includes('.cloudguard.site'));
+        const response = await fetch(url, {
+          signal: controller?.signal,
+          ...(isFilesCdn ? { credentials: 'include' } : {}),
+        });
         if (!response.ok) throw new Error(`HTTP error ${response.status}`);
         const arrayBuffer = await response.arrayBuffer();
         if (!isMounted) return;
@@ -673,6 +677,9 @@ function App() {
   };
 
   const handleLogout = () => {
+    try {
+      axios.post(`${API_BASE_URL}/api/auth/logout`, {}, { withCredentials: true }).catch(() => {});
+    } catch (e) {}
     globalStorageStatsCache = null;
     localStorage.removeItem('token');
     localStorage.removeItem('user');

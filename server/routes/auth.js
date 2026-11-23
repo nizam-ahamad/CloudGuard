@@ -18,6 +18,7 @@ const Folder = require('../models/Folder');
 const Payment = require('../models/Payment');
 const DeletedAccountLog = require('../models/DeletedAccountLog');
 const authMiddleware = require('../middleware/auth');
+const { attachVaultEdgeCookie, clearVaultEdgeCookie } = require('../utils/edgeAuth');
 const { sendActivationOtp, sendResetOtp, sendWelcomeEmail, sendNotificationEmail, sendAccountDeletedEmail } = require('../utils/emailService');
 const { authLimiter, otpLimiter } = require('../middleware/rateLimiter');
 const { permanentlyDeleteS3Keys } = require('../utils/s3Delete');
@@ -322,6 +323,7 @@ router.post('/google', async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: '7d' }
     );
+    attachVaultEdgeCookie(res, user._id);
     return res.status(200).json({ token, user: formatUserResponse(user) });
   } catch (err) {
     console.error('Google Auth Error:', err);
@@ -572,6 +574,7 @@ router.post('/verify-activation-otp', otpLimiter, async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: '7d' }
     );
+    attachVaultEdgeCookie(res, user._id);
     return res.status(200).json({
       token,
       user: formatUserResponse(user),
@@ -697,6 +700,7 @@ router.post('/verify-otp', otpLimiter, async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: '7d' }
     );
+    attachVaultEdgeCookie(res, user._id);
     return res.status(200).json({
       message: 'Email verified successfully!',
       token,
@@ -880,6 +884,7 @@ router.post('/login', authLimiter, async (req, res) => {
 
     console.log(`[Auth Success] User logged in successfully: ${normalizedEmail}`);
 
+    attachVaultEdgeCookie(res, user._id);
     return res.status(200).json({
       success: true,
       token,
@@ -900,6 +905,7 @@ router.post('/logout', authMiddleware, async (req, res) => {
     if (rawUserId) {
       await User.updateOne({ _id: rawUserId }, { $inc: { tokenVersion: 1 } });
     }
+    clearVaultEdgeCookie(res);
     return res.status(200).json({ success: true, message: 'Logged out successfully' });
   } catch (err) {
     console.error('Logout Error:', err);
@@ -1486,6 +1492,7 @@ router.post('/2fa/verify-login', otpLimiter, async (req, res) => {
       { expiresIn: '7d' }
     );
 
+    attachVaultEdgeCookie(res, user._id);
     return res.status(200).json({
       success: true,
       token,

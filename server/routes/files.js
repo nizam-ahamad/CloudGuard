@@ -23,12 +23,13 @@ const Folder = require('../models/Folder');
 const { buildTenantQuery } = require('../utils/tenantQuery');
 const { permanentlyDeleteS3Keys, purgeAllVersionsUnderPrefix } = require('../utils/s3Delete');
 const { applyCdnToUrl } = require('../utils/cdnHelper');
+const { attachVaultEdgeCookie, formatCdnDownloadUrl } = require('../utils/edgeAuth');
 const { validateVaultItemName } = require('../middleware/sanitize');
 
-// In-memory cache for presigned preview/access URLs (30-minute TTL)
+// In-memory cache for presigned preview/access URLs (4-minute TTL safe within 300s presigned expiry)
 // Key: `${file._id}:${file.s3Key}` -> Value: { url: string, expiresAt: number }
 const accessUrlCache = new Map();
-const ACCESS_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const ACCESS_CACHE_TTL_MS = 240 * 1000; // 4 minutes
 
 const escapeRegex = (string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -332,6 +333,7 @@ async function checkMalwareBazaarNode(sha256) {
 router.get('/:id/access', authMiddleware, async (req, res) => {
   try {
     const rawUserId = req.user.id || req.user._id || req.user.userId;
+    attachVaultEdgeCookie(res, rawUserId);
     const userIdObj = mongoose.Types.ObjectId.isValid(rawUserId)
       ? new mongoose.Types.ObjectId(rawUserId)
       : rawUserId;
@@ -395,14 +397,15 @@ router.get('/:id/access', authMiddleware, async (req, res) => {
       ResponseContentDisposition: disposition,
     });
 
-    // 2-hour signature validity (7200 seconds) so Cloudflare and browser can cache responses
-    const rawUrl = await getSignedUrl(s3Client, command, { expiresIn: 7200 });
-    const accessUrl = applyCdnToUrl(rawUrl);
+    // Presigned GET expiry: 60s for explicit download, 300s (5m) for preview
+    const expiresIn = isDownload ? 60 : 300;
+    const rawUrl = await getSignedUrl(s3Client, command, { expiresIn });
+    const accessUrl = formatCdnDownloadUrl(rawUrl, req, rawUserId);
 
     if (!isDownload) {
       accessUrlCache.set(cacheKey, {
         url: accessUrl,
-        expiresAt: Date.now() + ACCESS_CACHE_TTL_MS, // 30-minute TTL
+        expiresAt: Date.now() + ACCESS_CACHE_TTL_MS, // 4-minute TTL
       });
 
       // Periodic memory guard
@@ -436,6 +439,7 @@ router.get('/', authMiddleware, async (req, res) => {
     if (!rawUserId) {
       return res.status(401).json({ error: 'Authentication required' });
     }
+    attachVaultEdgeCookie(res, rawUserId);
 
     const isRecent = req.query.recent === 'true';
     const searchQuery = (req.query.search || '').trim().slice(0, 100);
@@ -2214,11 +2218,13 @@ const handleGetDownloadUrl = async (req, res) => {
       ResponseContentDisposition: contentDisposition,
     });
 
-    const downloadUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
+    attachVaultEdgeCookie(res, rawUserId);
+    const downloadUrl = await getSignedUrl(s3Client, command, { expiresIn: 60 });
+    const formattedUrl = formatCdnDownloadUrl(downloadUrl, req, rawUserId);
     return res.json({
       success: true,
-      downloadUrl: applyCdnToUrl(downloadUrl),
-      url: applyCdnToUrl(downloadUrl),
+      downloadUrl: formattedUrl,
+      url: formattedUrl,
       name: fileName,
       size: file.size || 0
     });

@@ -81,6 +81,7 @@ export async function loadMediaThumbnails(token) {
 
       const res = await axios.get(`${API_BASE_URL}/api/photos`, {
         headers: { Authorization: `Bearer ${authToken}` },
+        withCredentials: true,
       });
 
       const list = Array.isArray(res.data) ? res.data : (res.data?.photos || []);
@@ -244,9 +245,11 @@ async function generateTextSnippet(accessUrl) {
     const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
     const timeoutId = setTimeout(() => controller?.abort(), 6000);
 
+    const isFilesCdn = typeof accessUrl === 'string' && (accessUrl.startsWith('https://files.cloudguard.site') || accessUrl.includes('.cloudguard.site'));
     const res = await fetch(accessUrl, {
       headers: { Range: 'bytes=0-2048' },
       signal: controller?.signal,
+      ...(isFilesCdn ? { credentials: 'include' } : {}),
     });
     clearTimeout(timeoutId);
 
