@@ -18,8 +18,8 @@ const MULTIPART_WORKERS = MULTIPART_PART_CONCURRENCY;
 const MAX_PART_RETRIES = 6; // Up to 6 retries with backoff on network stall/timeout
 const TERMINAL_STATUSES = new Set(['clean', 'unverified', 'threat_purged', 'error']);
 
-// Dedicated Axios instance without default Authorization header for direct S3 PUTs
-const s3Axios = axios.create();
+// Dedicated Axios instance without default Authorization header for direct S3 PUTs (credential-free)
+const s3Axios = axios.create({ withCredentials: false });
 
 // Format raw bytes into readable units
 export function formatBytes(bytes) {
