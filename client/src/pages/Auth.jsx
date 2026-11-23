@@ -132,7 +132,9 @@ export default function AuthPage() {
         return;
       }
 
-      localStorage.setItem('token', res.data.token);
+      localStorage.setItem('cg_session_active', '1');
+      localStorage.removeItem('token');
+      sessionStorage.removeItem('token');
       localStorage.setItem('user', JSON.stringify(res.data.user));
 
       window.dispatchEvent(new Event('cloudguard:auth-changed'));
@@ -174,7 +176,9 @@ export default function AuthPage() {
         return;
       }
 
-      localStorage.setItem('token', res.data.token);
+      localStorage.setItem('cg_session_active', '1');
+      localStorage.removeItem('token');
+      sessionStorage.removeItem('token');
       localStorage.setItem('user', JSON.stringify(res.data.user));
 
       window.dispatchEvent(new Event('cloudguard:auth-changed'));
@@ -293,8 +297,10 @@ export default function AuthPage() {
       });
 
       // 1. Immediately persist authentication session
-      if (res.data?.token) {
-        localStorage.setItem('token', res.data.token);
+      if (res.data?.token || res.data?.user) {
+        localStorage.setItem('cg_session_active', '1');
+        localStorage.removeItem('token');
+        sessionStorage.removeItem('token');
         localStorage.setItem('user', JSON.stringify(res.data.user));
 
         // Notify App.jsx listeners of the authentication update
@@ -341,8 +347,10 @@ export default function AuthPage() {
         code: enteredCode,
       });
 
-      if (res.data?.token) {
-        localStorage.setItem('token', res.data.token);
+      if (res.data?.token || res.data?.user) {
+        localStorage.setItem('cg_session_active', '1');
+        localStorage.removeItem('token');
+        sessionStorage.removeItem('token');
         localStorage.setItem('user', JSON.stringify(res.data.user));
 
         window.dispatchEvent(new Event('cloudguard:auth-changed'));
@@ -538,7 +546,9 @@ export default function AuthPage() {
       }
 
       // 1. Store authentication tokens
-      localStorage.setItem('token', res.data.token);
+      localStorage.setItem('cg_session_active', '1');
+      localStorage.removeItem('token');
+      sessionStorage.removeItem('token');
       localStorage.setItem('user', JSON.stringify(res.data.user || { email: formData.email }));
 
       // 2. Dispatch custom event for any listening components

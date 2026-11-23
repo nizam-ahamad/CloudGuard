@@ -243,13 +243,20 @@ To protect against MongoDB NoSQL operator injection, ASCII control-character cor
 - **Vault Item Name Constraints:** Files and folders are validated via `validateVaultItemName` (length 1..120), rejecting `.` / `..`, control characters, and filesystem-breaking symbols `[<>:"/\\|?*]`.
 - **Freeform Content & Search Query Bounds:** Freeform contact/support text is sanitized via `sanitizePlainText` (name ≤ 60, subject ≤ 120, message ≤ 2000), stripping complete script blocks, style tags, HTML markup, and event handlers. All search queries are capped at 100 characters before regex escaping to prevent ReDoS.
 
+### 3.3. HttpOnly Session Authentication & Origin CSRF Guard
+- **HttpOnly Session Cookie (`cg_auth_token`):** On authentication (`/login`, `/google`, `/verify-activation-otp`, `/verify-otp`, `/2fa/verify-login`), `attachAuthCookie` issues a 7-day JWT cookie configured with `{ httpOnly: true, secure: true, sameSite: 'none', domain: '.cloudguard.site', path: '/' }` in production (`SameSite=Lax` in local development).
+- **Bearer Header Fallback:** Server authentication middleware (`authMiddleware`) prioritizes `req.cookies?.cg_auth_token`, smoothly falling back to `Authorization: Bearer <token>` and query parameter token.
+- **Origin CSRF Protection:** State-changing HTTP verbs (`POST`, `PUT`, `PATCH`, `DELETE`) verified via lightweight middleware. For requests authenticated via cookie without an explicit `Bearer` header, the incoming `Origin` (or `Referer` origin) must match `ALLOWED_ORIGINS` (`http://localhost:5173`, `https://cloud-guard-self.vercel.app`, `https://cloudguard-app.duckdns.org`, `https://cloudguard.site`, `https://www.cloudguard.site`), otherwise returning `403 Forbidden`. Machine-to-machine webhooks (`/api/payments/webhook`) are exempted.
+- **Client Session Flag & Dynamic Validation:** Frontend replaces raw JWT storage with `localStorage.setItem('cg_session_active', '1')`, validating session status against `GET /api/auth/me` on mount. Logout and account deletion clear both `cg_auth_token` and `cg_vault_session` cookies and increment `tokenVersion` in MongoDB to invalidate existing sessions across all devices.
+
 ---
 
 ## 4. Changelog & Architectural Milestones
 
 | Commit | Date | Milestone Description |
 | :--- | :--- | :--- |
-| `HEAD` | 2026-11-23 | **Security Hardening & Documentation Sync:** Enforced strict tenant folder ownership on upload init (`/presigned-url` and `/multipart/init`), explicitly bound AI microservice to loopback (`127.0.0.1:8000`), wrote comprehensive public `README.md` with mandatory auto-update rule, and synchronized `DESIGN.md`. |
+| `HEAD` | 2026-11-23 | **HttpOnly Session Auth Migration & CSRF Guard (Phase 2):** Migrated primary API session JWT from localStorage to HttpOnly SameSite=None cookie (`cg_auth_token`) with Origin CSRF protection, Bearer header fallback, tokenVersion revocation, and `cg_session_active` client state. |
+| `2a2bf10` | 2026-11-23 | **Security Hardening & Documentation Sync (Phase 1):** Enforced strict tenant folder ownership on upload init (`/presigned-url` and `/multipart/init`), explicitly bound AI microservice to loopback (`127.0.0.1:8000`), wrote comprehensive public `README.md` with mandatory auto-update rule, and synchronized `DESIGN.md`. |
 | `07c8a58` | 2026-11-23 | **Multipart 16 MB Chunking & 6-Stream Concurrency:** Set adaptive 10–16 MB chunk sizing in `files.js` and 6 concurrent streaming workers in `UploadContext.jsx` for sustained mobile throughput. |
 | `54c0f43` | 2026-11-23 | **Instant Frame-1 Video Playback & Context Documentation Sync:** Replaced `autoPlay` with `preload="metadata"` + `onLoadedData` play trigger, `posterUrl` fallback, non-blocking buffering overlay in `FilePreviewModal.jsx`, and synchronized `PROJECT_CONTEXT.md`, `AGENTS.md`, and `DESIGN.md`. |
 | `e149da3` | 2026-11-23 | **Video Preload Optimization:** Switched video preview preload from auto to metadata. |

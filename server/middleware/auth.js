@@ -2,7 +2,7 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
 const authMiddleware = async (req, res, next) => {
-  const token = req.headers?.authorization?.split(' ')[1] || req.query?.token;
+  const token = req.cookies?.cg_auth_token || req.headers?.authorization?.split(' ')[1] || req.query?.token;
   if (!token) {
     return res.status(401).json({ error: 'Access denied. Please log in.', message: 'Access denied. Please log in.' });
   }

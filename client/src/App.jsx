@@ -377,16 +377,16 @@ function App() {
     robotsMeta.setAttribute('content', isPublic ? 'index, follow' : 'noindex, nofollow');
   }, [location.pathname]);
 
-  const [token, setToken] = useState(() => localStorage.getItem('token') || sessionStorage.getItem('token'));
+  // Dynamic token verification helper (supports legacy token & HttpOnly cookie session):
+  const getActiveToken = () => {
+    return localStorage.getItem('token') || sessionStorage.getItem('token') || (localStorage.getItem('cg_session_active') === '1' ? 'cookie-session' : null);
+  };
+
+  const [token, setToken] = useState(() => getActiveToken());
   const [user, setUser] = useState(() => {
     const userStr = localStorage.getItem('user') || sessionStorage.getItem('user');
     return userStr ? JSON.parse(userStr) : null;
   });
-
-  // Dynamic token verification helper:
-  const getActiveToken = () => {
-    return localStorage.getItem('token') || sessionStorage.getItem('token') || null;
-  };
 
   // Listen for cross-component auth changes
   useEffect(() => {
@@ -408,6 +408,32 @@ function App() {
       window.removeEventListener('storage', syncAuth);
     };
   }, [location.pathname]);
+
+  // Validate active session on mount with HttpOnly cookie
+  useEffect(() => {
+    const isSessionActive = localStorage.getItem('cg_session_active') === '1' || Boolean(localStorage.getItem('token') || sessionStorage.getItem('token'));
+    if (!isSessionActive) return;
+
+    axios.get(`${API_BASE_URL}/api/auth/me`, { withCredentials: true })
+      .then((res) => {
+        if (res.data?.user) {
+          setUser(res.data.user);
+          localStorage.setItem('user', JSON.stringify(res.data.user));
+        }
+      })
+      .catch((err) => {
+        if (err.response?.status === 401) {
+          localStorage.removeItem('cg_session_active');
+          localStorage.removeItem('token');
+          localStorage.removeItem('user');
+          sessionStorage.removeItem('token');
+          sessionStorage.removeItem('user');
+          setToken(null);
+          setUser(null);
+          setIsAdmin(false);
+        }
+      });
+  }, []);
 
   const [isAdmin, setIsAdmin] = useState(null);
   const fetchedAdminTokenRef = useRef(null);
@@ -474,7 +500,7 @@ function App() {
             subscription: res.data.subscription || prev?.subscription,
             storageLimit: res.data.storageLimit || prev?.storageLimit
           };
-          if (localStorage.getItem('token')) {
+          if (localStorage.getItem('token') || localStorage.getItem('cg_session_active')) {
             localStorage.setItem('user', JSON.stringify(updated));
           } else {
             sessionStorage.setItem('user', JSON.stringify(updated));
@@ -595,7 +621,7 @@ function App() {
 
   const fetchStorageStats = useCallback(async () => {
     try {
-      const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+      const token = getActiveToken();
       if (!token) return;
 
       const res = await axios.get(`${API_BASE_URL}/api/storage-stats`, {
@@ -681,6 +707,7 @@ function App() {
       axios.post(`${API_BASE_URL}/api/auth/logout`, {}, { withCredentials: true }).catch(() => {});
     } catch (e) {}
     globalStorageStatsCache = null;
+    localStorage.removeItem('cg_session_active');
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     sessionStorage.removeItem('token');
@@ -1334,7 +1361,7 @@ function App() {
       setIsFilesLoading(true);
       setIsContentLoading(true);
 
-      const authToken = token || localStorage.getItem('token') || sessionStorage.getItem('token');
+      const authToken = getActiveToken();
       const isRecentTab = searchParams.get('tab') === 'recent' || viewMode === 'recent' || new URLSearchParams(window.location.search).get('tab') === 'recent';
       
       const queryParams = {};
@@ -1397,7 +1424,7 @@ function App() {
 
     try {
       const nextSkip = files.length;
-      const authToken = token || localStorage.getItem('token') || sessionStorage.getItem('token');
+      const authToken = getActiveToken();
       const res = await axios.get(`${API_BASE_URL}/api/files`, {
         params: { recent: 'true', limit: RECENT_PAGE_SIZE, skip: nextSkip },
         headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
@@ -1532,7 +1559,7 @@ function App() {
   // Undo Move Function
   const handleUndoMove = async (movedItems, sourceFolderId) => {
     try {
-      const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+      const token = getActiveToken();
 
       const folderIds = movedItems
         .filter((i) => i.type === 'folder' || i.isFolder || i.parentId !== undefined)
@@ -1591,7 +1618,7 @@ function App() {
       const destinationName = destinationFolderObj?.name || (destinationId ? (moveFolders.find(f => String(f._id) === String(destinationId))?.name || 'Folder') : 'Home');
       const sourceFolderId = currentFolderId || null;
 
-      const authToken = token || localStorage.getItem('token') || sessionStorage.getItem('token');
+      const authToken = getActiveToken();
 
       // Separate into folder and file IDs
       const folderIds = [];
@@ -1692,7 +1719,7 @@ function App() {
 
   // Navigation & route listener effect (Single Source of Truth for Folder Navigation):
   useEffect(() => {
-    const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+    const token = getActiveToken();
     if (!token) return;
 
     // Strict route guard: Only run on the main dashboard view
@@ -1807,7 +1834,7 @@ function App() {
 
   // Separate trigger ONLY for search query or viewMode changes (never on folder navigation)
   useEffect(() => {
-    const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+    const token = getActiveToken();
     if (!token) return;
 
     const currentPath = window.location.pathname;
@@ -1874,7 +1901,7 @@ function App() {
   // Dedicated Undo Delete Handler
   const handleUndoDelete = async (itemsToRestore) => {
     try {
-      const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+      const token = getActiveToken();
       const headers = { Authorization: `Bearer ${token}` };
 
       const folderIds = (itemsToRestore || []).filter(checkIsFolder).map((i) => i._id || i.id);
@@ -2028,7 +2055,7 @@ function App() {
       }
 
       try {
-        const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+        const token = getActiveToken();
         const headers = { Authorization: `Bearer ${token}` };
 
         // 2. Call dedicated folder or file delete endpoint
@@ -2078,7 +2105,7 @@ function App() {
       }
 
       try {
-        const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+        const token = getActiveToken();
         const headers = { Authorization: `Bearer ${token}` };
 
         await axios.post(
@@ -2148,7 +2175,7 @@ function App() {
 
         // 1. Request presigned direct S3 upload ticket with quota enforcement
         const presignRes = await axios.post(`${API_BASE_URL}/api/files/presigned-url`, payload, {
-          headers: { Authorization: `Bearer ${localStorage.getItem('token') || token}` },
+          headers: { Authorization: `Bearer ${getActiveToken()}` },
         });
         const presignedUrl = presignRes.data.presignedUrl || presignRes.data.signedUrl;
         const fileId = presignRes.data.fileId;
@@ -2387,7 +2414,7 @@ function App() {
 
   const processFolderUpload = async (itemsWithPaths) => {
     if (!itemsWithPaths || itemsWithPaths.length === 0) return;
-    const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+    const token = getActiveToken();
 
     // 1. Pre-flight quota check: storageUsed + totalBatchBytes > storageLimit
     const totalBatchBytes = itemsWithPaths.reduce((sum, item) => sum + (item.file?.size || 0), 0);
@@ -2765,7 +2792,7 @@ function App() {
     </div>
   ) : null;
 
-  const activeToken = token || localStorage.getItem('token') || sessionStorage.getItem('token');
+  const activeToken = token || getActiveToken();
   if (!activeToken) {
     const authContent = (() => {
       if (window.location.pathname.startsWith('/reset-password/')) {
@@ -2779,10 +2806,12 @@ function App() {
             <OTPVerification 
               email={authForm.email} 
               onVerifySuccess={(token, user) => {
-                if (token && user) {
-                  localStorage.setItem('token', token);
+                if (user) {
+                  localStorage.setItem('cg_session_active', '1');
+                  localStorage.removeItem('token');
+                  sessionStorage.removeItem('token');
                   localStorage.setItem('user', JSON.stringify(user));
-                  setToken(token);
+                  setToken('cookie-session');
                   setUser(user);
                 } else {
                   setAuthMode('login');

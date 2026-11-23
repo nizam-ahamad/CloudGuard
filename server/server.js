@@ -57,12 +57,75 @@ app.use(
   })
 );
 
+const ALLOWED_ORIGINS = [
+  'http://localhost:5173',
+  'https://cloud-guard-self.vercel.app',
+  'https://cloudguard-app.duckdns.org',
+  'https://cloudguard.site',
+  'https://www.cloudguard.site',
+];
+
 // Configure CORS for Vite frontend (Mounted before rate limiters to handle OPTIONS preflights cleanly)
 app.use(cors({
-  origin: ['http://localhost:5173', 'https://cloud-guard-self.vercel.app', 'https://cloudguard-app.duckdns.org', 'https://cloudguard.site', 'https://www.cloudguard.site'],
+  origin: ALLOWED_ORIGINS,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
   credentials: true
 }));
+
+// Lightweight cookie parser middleware
+app.use((req, res, next) => {
+  if (!req.cookies) {
+    req.cookies = {};
+    const cookieHeader = req.headers?.cookie;
+    if (cookieHeader) {
+      const pairs = cookieHeader.split(';');
+      for (let i = 0; i < pairs.length; i++) {
+        const idx = pairs[i].indexOf('=');
+        if (idx !== -1) {
+          const key = pairs[i].slice(0, idx).trim();
+          const val = pairs[i].slice(idx + 1).trim();
+          try {
+            req.cookies[key] = decodeURIComponent(val);
+          } catch {
+            req.cookies[key] = val;
+          }
+        }
+      }
+    }
+  }
+  next();
+});
+
+// CSRF verification for cookie-authenticated state-changing requests
+const CSRF_STATE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+app.use((req, res, next) => {
+  if (!CSRF_STATE_METHODS.has(req.method)) {
+    return next();
+  }
+  // Exemption for machine-to-machine webhooks
+  const targetPath = req.path || req.originalUrl || '';
+  if (targetPath.startsWith('/api/payments/webhook')) {
+    return next();
+  }
+  // Only enforce CSRF if authenticated via cookie and no explicit Authorization Bearer header is present
+  const hasCookieAuth = Boolean(req.cookies?.cg_auth_token);
+  const authHeader = req.headers?.authorization || '';
+  const hasBearerHeader = authHeader.startsWith('Bearer ') && authHeader.slice(7).trim().length > 0;
+  if (hasCookieAuth && !hasBearerHeader) {
+    let requestOrigin = req.headers.origin;
+    if (!requestOrigin && req.headers.referer) {
+      try {
+        requestOrigin = new URL(req.headers.referer).origin;
+      } catch {
+        // malformed referer
+      }
+    }
+    if (!requestOrigin || !ALLOWED_ORIGINS.includes(requestOrigin)) {
+      return res.status(403).json({ error: 'CSRF validation failed: Invalid or missing origin' });
+    }
+  }
+  next();
+});
 
 // Enforce dynamic freshness on all API routes
 app.use('/api', (req, res, next) => {

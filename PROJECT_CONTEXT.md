@@ -24,6 +24,13 @@ CloudGuard implements RFC 6238 Time-Based One-Time Password (TOTP) two-factor au
 3. **Single-Use Recovery Codes:** Enabling 2FA generates 8 cryptographically secure 8-character recovery codes (`XXXX-XXXX`) hashed with bcrypt in MongoDB. Using a backup code during a 2FA challenge atomically purges it from the user's array.
 4. **Two-Stage Authentication Flow:** When a user with 2FA enabled submits valid credentials via `/api/auth/login` or Google OAuth (`/api/auth/google`), the backend issues an ephemeral 5-minute JWT (`purpose: '2fa_pending'`). The user must verify a 6-digit TOTP code or recovery code via `/api/auth/2fa/verify-login` (protected by `otpLimiter`) to receive a full 7-day session token.
 
+### 🍪 HttpOnly Session Authentication & Origin CSRF Guard
+To eliminate XSS-based session hijacking risks:
+1. **HttpOnly Cookie Storage (`cg_auth_token`):** Primary API session JWTs are stored in an `HttpOnly; Secure; SameSite=None; Domain=.cloudguard.site` cookie issued with a 7-day lifetime (`SameSite=Lax` in local development). JavaScript cannot access the session JWT.
+2. **Origin CSRF Protection:** All state-changing requests (`POST`, `PUT`, `PATCH`, `DELETE`) that rely on the cookie session without an explicit `Authorization: Bearer` header must pass strict Origin/Referer matching against `ALLOWED_ORIGINS`. Machine-to-machine endpoints (like `/api/payments/webhook`) are exempted.
+3. **Dual Authentication Support:** `server/middleware/auth.js` checks `req.cookies?.cg_auth_token` first, retaining backward-compatible fallback to `Authorization: Bearer` headers and query token strings.
+4. **Instant Invalidation via `tokenVersion`:** Session revocation (logout, password change, account deletion) increments `tokenVersion` in MongoDB and clears both `cg_auth_token` and `cg_vault_session` cookies, instantly invalidating active sessions.
+
 ### ⚡ Zero-EC2-Load & Zero-Egress Storage Architecture
 
 Traditional cloud storage platforms process and transcode files on expensive backend application servers, driving up compute bills and introducing severe I/O bottlenecks. CloudGuard operates on a radically different architectural model:

@@ -54,6 +54,44 @@ function clearVaultEdgeCookie(res) {
 }
 
 /**
+ * Attaches the HttpOnly cg_auth_token session cookie for API authentication.
+ */
+function attachAuthCookie(res, jwtToken) {
+  if (!res || !jwtToken) return;
+  const reqHost = res.req?.headers?.host || (typeof res.req?.get === 'function' ? res.req.get('host') : '') || '';
+  const reqOrigin = res.req?.headers?.origin || (typeof res.req?.get === 'function' ? res.req.get('origin') : '') || '';
+  const isProdDomain =
+    process.env.NODE_ENV === 'production' ||
+    (process.env.CDN_DOWNLOAD_URL || '').includes('cloudguard.site') ||
+    (process.env.CLIENT_URL || '').includes('cloudguard.site') ||
+    reqHost.includes('cloudguard.site') ||
+    reqOrigin.includes('cloudguard.site');
+  const cookieOptions = isProdDomain
+    ? { httpOnly: true, secure: true, sameSite: 'none', domain: '.cloudguard.site', path: '/', maxAge: 7 * 24 * 60 * 60 * 1000 }
+    : { httpOnly: true, sameSite: 'lax', path: '/', maxAge: 7 * 24 * 60 * 60 * 1000 };
+  res.cookie('cg_auth_token', jwtToken, cookieOptions);
+}
+
+/**
+ * Clears the cg_auth_token session cookie across production and local domains.
+ */
+function clearAuthCookie(res) {
+  if (!res) return;
+  const reqHost = res.req?.headers?.host || (typeof res.req?.get === 'function' ? res.req.get('host') : '') || '';
+  const reqOrigin = res.req?.headers?.origin || (typeof res.req?.get === 'function' ? res.req.get('origin') : '') || '';
+  const isProdDomain =
+    process.env.NODE_ENV === 'production' ||
+    (process.env.CDN_DOWNLOAD_URL || '').includes('cloudguard.site') ||
+    (process.env.CLIENT_URL || '').includes('cloudguard.site') ||
+    reqHost.includes('cloudguard.site') ||
+    reqOrigin.includes('cloudguard.site');
+  if (isProdDomain) {
+    res.clearCookie('cg_auth_token', { httpOnly: true, secure: true, sameSite: 'none', domain: '.cloudguard.site', path: '/' });
+  }
+  res.clearCookie('cg_auth_token', { path: '/' });
+}
+
+/**
  * Rewrites S3 presigned URL to CDN download domain and appends _cgt for localhost:5173.
  */
 function formatCdnDownloadUrl(rawUrl, req, userId) {
@@ -72,5 +110,7 @@ module.exports = {
   signEdgePayload,
   attachVaultEdgeCookie,
   clearVaultEdgeCookie,
+  attachAuthCookie,
+  clearAuthCookie,
   formatCdnDownloadUrl,
 };

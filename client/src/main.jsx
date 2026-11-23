@@ -9,8 +9,18 @@ import { ToastProvider } from './context/ToastContext'
 import { DownloadProvider } from './context/DownloadContext'
 import { UploadProvider } from './context/UploadContext'
 
-// Ensure cross-origin Set-Cookie (cg_vault_session) from api.cloudguard.site is sent & received on all API requests
+// Ensure cross-origin Set-Cookie (cg_vault_session, cg_auth_token) from api.cloudguard.site is sent & received on all API requests
 axios.defaults.withCredentials = true;
+
+// Strip dummy cookie-session placeholder from Authorization header to rely on HttpOnly cg_auth_token cookie
+axios.interceptors.request.use((config) => {
+  const authHeader = config.headers?.Authorization || config.headers?.authorization;
+  if (typeof authHeader === 'string' && authHeader.includes('cookie-session')) {
+    if (config.headers?.Authorization) delete config.headers.Authorization;
+    if (config.headers?.authorization) delete config.headers.authorization;
+  }
+  return config;
+});
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
 

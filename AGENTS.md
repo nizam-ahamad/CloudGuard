@@ -60,6 +60,11 @@
    - Video players (`PreviewVideo` in `FilePreviewModal.jsx`) must begin playback immediately on the first decoded frame using `preload="metadata"` and `onLoadedData` playback triggers.
    - Never add the `autoPlay` attribute to `<video>` as Chromium will block playback until dozens of megabytes are buffered (`HAVE_ENOUGH_DATA`).
    - Always supply `posterUrl` thumbnails and non-blocking centered buffering spinners.
+8. **API Session Security & HttpOnly Auth Cookie (`cg_auth_token`):**
+   - API session JWTs are issued in an `HttpOnly; Secure; SameSite=None; Domain=.cloudguard.site` cookie (`cg_auth_token`) via `server/utils/edgeAuth.js` (`attachAuthCookie`) with a 7-day TTL (or `SameSite=Lax` in local development).
+   - Server authentication (`server/middleware/auth.js`) prioritizes `req.cookies?.cg_auth_token` with fallback to `Authorization: Bearer <token>` and query parameter token.
+   - Origin CSRF verification middleware (`server/server.js`) guards all state-changing methods (`POST`, `PUT`, `PATCH`, `DELETE`) for cookie-authenticated requests lacking an explicit Bearer header, validating incoming `Origin`/`Referer` against `ALLOWED_ORIGINS`. Machine-to-machine webhooks (`/api/payments/webhook`) are exempted.
+   - Client persists `localStorage.setItem('cg_session_active', '1')` without storing sensitive raw JWTs in storage, verifying session freshness on initial mount via `GET /api/auth/me`. Session termination (logout or account deletion) clears both `cg_auth_token` and `cg_vault_session` cookies and increments `tokenVersion` to invalidate any existing tokens.
 
 ---
 

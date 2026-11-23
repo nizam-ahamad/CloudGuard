@@ -18,7 +18,7 @@ const Folder = require('../models/Folder');
 const Payment = require('../models/Payment');
 const DeletedAccountLog = require('../models/DeletedAccountLog');
 const authMiddleware = require('../middleware/auth');
-const { attachVaultEdgeCookie, clearVaultEdgeCookie } = require('../utils/edgeAuth');
+const { attachVaultEdgeCookie, clearVaultEdgeCookie, attachAuthCookie, clearAuthCookie } = require('../utils/edgeAuth');
 const { sendActivationOtp, sendResetOtp, sendWelcomeEmail, sendNotificationEmail, sendAccountDeletedEmail } = require('../utils/emailService');
 const { authLimiter, otpLimiter } = require('../middleware/rateLimiter');
 const { permanentlyDeleteS3Keys } = require('../utils/s3Delete');
@@ -323,6 +323,7 @@ router.post('/google', async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: '7d' }
     );
+    attachAuthCookie(res, token);
     attachVaultEdgeCookie(res, user._id);
     return res.status(200).json({ token, user: formatUserResponse(user) });
   } catch (err) {
@@ -574,6 +575,7 @@ router.post('/verify-activation-otp', otpLimiter, async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: '7d' }
     );
+    attachAuthCookie(res, token);
     attachVaultEdgeCookie(res, user._id);
     return res.status(200).json({
       token,
@@ -700,6 +702,7 @@ router.post('/verify-otp', otpLimiter, async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: '7d' }
     );
+    attachAuthCookie(res, token);
     attachVaultEdgeCookie(res, user._id);
     return res.status(200).json({
       message: 'Email verified successfully!',
@@ -884,6 +887,7 @@ router.post('/login', authLimiter, async (req, res) => {
 
     console.log(`[Auth Success] User logged in successfully: ${normalizedEmail}`);
 
+    attachAuthCookie(res, token);
     attachVaultEdgeCookie(res, user._id);
     return res.status(200).json({
       success: true,
@@ -905,6 +909,7 @@ router.post('/logout', authMiddleware, async (req, res) => {
     if (rawUserId) {
       await User.updateOne({ _id: rawUserId }, { $inc: { tokenVersion: 1 } });
     }
+    clearAuthCookie(res);
     clearVaultEdgeCookie(res);
     return res.status(200).json({ success: true, message: 'Logged out successfully' });
   } catch (err) {
@@ -1309,6 +1314,9 @@ router.delete('/account', authMiddleware, async (req, res) => {
 
     await User.findByIdAndDelete(rawUserId);
 
+    clearAuthCookie(res);
+    clearVaultEdgeCookie(res);
+
     sendAccountDeletedEmail(userEmail, userName).catch((err) =>
       console.error('[Account Deleted Email Error]', err.message)
     );
@@ -1492,6 +1500,7 @@ router.post('/2fa/verify-login', otpLimiter, async (req, res) => {
       { expiresIn: '7d' }
     );
 
+    attachAuthCookie(res, token);
     attachVaultEdgeCookie(res, user._id);
     return res.status(200).json({
       success: true,
