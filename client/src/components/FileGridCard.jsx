@@ -438,17 +438,20 @@ export default function FileGridCard({
           <span className="truncate">
             {file.date || '—'} • {typeof formatSize === 'function' ? formatSize(file.size) : file.size}
           </span>
-          {file.status === 'Safe' ? (
+          {file.status === 'Safe' && file.securityStatus !== 'unverified' && Number(file.size || 0) <= 512 * 1024 * 1024 ? (
             <span title="Safe" className="text-emerald-600 dark:text-emerald-400 shrink-0 ml-1">
               <span className="material-symbols-outlined text-[13px]">check_circle</span>
             </span>
-          ) : file.status === 'Malicious' || file.status === 'malware' ? (
+          ) : file.status === 'Malicious' || file.status === 'malware' || file.isMalicious || file.securityStatus === 'threat_purged' ? (
             <span title="Malicious" className="text-red-500 shrink-0 ml-1">
               <span className="material-symbols-outlined text-[13px]">warning</span>
             </span>
-          ) : file.status === 'unscanned_too_large' ? (
-            <span title="Unscanned (Too Large)" className="text-neutral-400 dark:text-neutral-500 shrink-0 ml-1">
-              <span className="material-symbols-outlined text-[13px]">info</span>
+          ) : file.status === 'unverified' || file.securityStatus === 'unverified' || file.status === 'unscanned_too_large' || file.securityStatus === 'unscanned_too_large' || Number(file.size || 0) > 512 * 1024 * 1024 ? (
+            <span
+              title={Number(file.size || 0) > 512 * 1024 * 1024 ? 'Unverified — Exceeds 512 MB scan limit' : 'Unverified — Deep scan incomplete'}
+              className="text-amber-500 shrink-0 ml-1"
+            >
+              <span className="material-symbols-outlined text-[13px]">warning</span>
             </span>
           ) : null}
         </div>

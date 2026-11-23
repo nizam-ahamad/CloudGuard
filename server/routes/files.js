@@ -507,6 +507,7 @@ router.get('/', authMiddleware, async (req, res) => {
       mtimeMs: new Date(file.uploadedAt || file.createdAt || Date.now()).getTime(),
       size: file.size,
       status: (file.securityStatus === 'clean' || file.securityStatus === 'Safe') ? 'Safe' : (file.securityStatus || 'Safe'),
+      securityStatus: file.securityStatus || (file.status === 'Safe' ? 'clean' : file.status),
       type: (file.originalName || file.name || '').split('.').pop()
     }));
 
@@ -1349,6 +1350,52 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
       } catch (eicarErr) {
         console.warn('[EICAR Content Check Notice]:', eicarErr.message);
       }
+    }
+
+    // 2.8 512 MB AI Scan Size Threshold Check
+    const MAX_AI_SCAN_BYTES = 512 * 1024 * 1024; // 512 MB
+    if (!isMalicious && (actualBytes > MAX_AI_SCAN_BYTES || Number(file.size || 0) > MAX_AI_SCAN_BYTES)) {
+      console.log(`[CloudGuard Security] File exceeds 512 MB scan limit (${actualBytes} bytes). Marking unverified without AI scan.`);
+
+      const claimedFile = await File.findOneAndUpdate(
+        buildTenantQuery(rawUserId, { _id: file._id, securityStatus: 'pending_scan' }),
+        {
+          $set: {
+            securityStatus: 'unverified',
+            isMalicious: false,
+            status: 'unverified',
+            size: actualBytes,
+            ...(file.thumbnailKey ? { thumbnailKey: file.thumbnailKey } : {}),
+          },
+        },
+        { new: true }
+      );
+
+      if (claimedFile) {
+        const u = await User.findByIdAndUpdate(
+          rawUserId || file.userId,
+          { $inc: { storageUsed: claimedFile.size } },
+          { new: true }
+        );
+        if (u) {
+          const newStorageUsed = u.storageUsed || 0;
+          await User.findByIdAndUpdate(rawUserId || file.userId, {
+            $max: {
+              peakStorageBytes: newStorageUsed,
+              'subscription.peakStorageBytes': newStorageUsed,
+            },
+          });
+        }
+      }
+
+      const returnFile = claimedFile || (await File.findOne(buildTenantQuery(rawUserId, { _id: file._id }))) || file;
+      return res.status(200).json({
+        success: true,
+        isMalicious: false,
+        securityStatus: 'unverified',
+        warning: 'Exceeds 512 MB scan limit. Marked unverified.',
+        file: returnFile,
+      });
     }
 
     // 3. AI Service Deep Scan (Extended 20s timeout for large binaries like AC4BFSP.exe)

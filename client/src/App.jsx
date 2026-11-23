@@ -3978,15 +3978,18 @@ function App() {
                       <td className="hidden md:table-cell py-3 px-6 text-on-surface-variant dark:text-[#c4c7c5]">{formatSize(file.size)}</td>
                       <td className="block md:table-cell ml-auto md:ml-0 md:py-3 md:px-6 shrink-0">
                         {!file.isFolder && (
-                          file.status === 'Safe' ? (
+                          file.status === 'Safe' && file.securityStatus !== 'unverified' && Number(file.size || 0) <= 512 * 1024 * 1024 ? (
                             <div className="inline-flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-full bg-[#dcfce7] text-[#166534] border border-[#bbf7d0]" title="Safe">
                               <span className="material-symbols-outlined text-[14px]">check_circle</span>
                               <span className="font-label-md text-[11px] hidden sm:inline">Safe</span>
                             </div>
-                          ) : file.status === 'unscanned_too_large' ? (
-                            <div className="inline-flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-full bg-neutral-200 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300 border border-neutral-300 dark:border-neutral-700" title="Unscanned (Too Large)">
-                              <span className="material-symbols-outlined text-[14px]">info</span>
-                              <span className="font-label-md text-[11px] hidden sm:inline">Unscanned (Too Large)</span>
+                          ) : (file.status === 'unverified' || file.securityStatus === 'unverified' || file.status === 'unscanned_too_large' || file.securityStatus === 'unscanned_too_large' || Number(file.size || 0) > 512 * 1024 * 1024) && file.status !== 'Malicious' && file.status !== 'malware' && !file.isMalicious ? (
+                            <div
+                              className="inline-flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/25"
+                              title={Number(file.size || 0) > 512 * 1024 * 1024 ? 'Unverified — Exceeds 512 MB scan limit' : 'Unverified — Deep scan incomplete'}
+                            >
+                              <span className="material-symbols-outlined text-[14px] shrink-0">warning</span>
+                              <span className="font-label-md text-[11px] hidden sm:inline">Unverified</span>
                             </div>
                           ) : file.status === 'Malicious' || file.status === 'malware' ? (
                             <div className="inline-flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-full bg-error/10 text-error border border-error/20" title="Malicious">

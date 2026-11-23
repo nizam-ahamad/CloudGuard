@@ -99,12 +99,22 @@ export default function FileDetailsModal({ file, locationPath = 'My Files', onCl
   const formattedSize = formatFileSize(file.size);
   const sha256Hash = file.sha256 || file.hash || file.checksum || null;
 
-  const isMalicious = Boolean(
+  const isThreat = Boolean(
     file.isMalicious ||
     file.status === 'Malicious' ||
+    file.status === 'malware' ||
     file.status === 'threat' ||
     file.securityStatus === 'threat_detected' ||
+    file.securityStatus === 'threat_purged' ||
     file.securityStatus === 'malicious'
+  );
+  const isOverScanLimit = Number(file.size || 0) > 512 * 1024 * 1024;
+  const isUnverified = !isThreat && (
+    file.securityStatus === 'unverified' ||
+    file.status === 'unverified' ||
+    file.status === 'unscanned_too_large' ||
+    file.securityStatus === 'unscanned_too_large' ||
+    isOverScanLimit
   );
 
   const handleCopyHash = async () => {
@@ -223,11 +233,21 @@ export default function FileDetailsModal({ file, locationPath = 'My Files', onCl
                 Security Status
               </span>
               <div>
-                {isMalicious ? (
+                {isThreat ? (
                   <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20">
                     <AlertTriangle size={12} className="shrink-0" />
                     Threat Blocked
                   </span>
+                ) : isUnverified ? (
+                  <div className="flex flex-col items-start gap-1">
+                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                      <AlertTriangle size={12} className="shrink-0" />
+                      Unverified
+                    </span>
+                    <span className="text-[11px] leading-tight text-neutral-500 dark:text-neutral-400">
+                      {isOverScanLimit ? 'Exceeds 512 MB scan limit' : 'Deep scan incomplete'}
+                    </span>
+                  </div>
                 ) : (
                   <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
                     <ShieldCheck size={12} className="shrink-0" />

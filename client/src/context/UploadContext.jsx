@@ -16,7 +16,7 @@ const MULTIPART_THRESHOLD = 25 * 1024 * 1024; // 25 MB
 const MULTIPART_PART_CONCURRENCY = 5;
 const MULTIPART_WORKERS = MULTIPART_PART_CONCURRENCY;
 const MAX_PART_RETRIES = 6; // Up to 6 retries with backoff on network stall/timeout
-const TERMINAL_STATUSES = new Set(['clean', 'threat_purged', 'error']);
+const TERMINAL_STATUSES = new Set(['clean', 'unverified', 'threat_purged', 'error']);
 
 // Dedicated Axios instance without default Authorization header for direct S3 PUTs
 const s3Axios = axios.create();
@@ -265,6 +265,7 @@ export function UploadProvider({ children }) {
     error: (msg, opts) => (toastCtx?.error ? toastCtx.error(msg, opts) : console.error(msg)),
     success: (msg, opts) => (toastCtx?.success ? toastCtx.success(msg, opts) : console.log(msg)),
     info: (msg, opts) => (toastCtx?.info ? toastCtx.info(msg, opts) : console.log(msg)),
+    warning: (msg, opts) => (toastCtx?.warning ? toastCtx.warning(msg, opts) : (toastCtx?.info ? toastCtx.info(msg, opts) : console.log(msg))),
   };
 
   const dispatchThrottledUpdates = useCallback((folderId, immediate = false) => {
@@ -1523,6 +1524,8 @@ export function UploadProvider({ children }) {
       const finalFile = finalizeRes.data?.file;
       const finalStatus = finalFile?.securityStatus || finalizeRes.data?.securityStatus;
       const isBulkUpload = batchTotalRef.current > 5 || (queueRef.current || []).length > 5;
+      const isLargeUnverified = uploadFile.size > 512 * 1024 * 1024;
+      const isUnverifiedVerdict = finalStatus === 'unverified' || isLargeUnverified;
 
       if (finalizeRes.data?.isMalicious || finalStatus === 'threat_purged') {
         updateItem(id, {
@@ -1536,14 +1539,22 @@ export function UploadProvider({ children }) {
             duration: 5000,
           });
         }
-      } else if (finalStatus === 'unverified') {
+      } else if (isUnverifiedVerdict) {
         updateItem(id, { status: 'unverified', progress: 100 });
         batchSuccessCountRef.current += 1;
         currentBatchCompletedRef.current += 1;
         if (!isBulkUpload && !batchCancelledRef.current && !controller.signal.aborted) {
-          toast.info
-            ? toast.info(`Deep scan incomplete. "${file.name}" marked unverified.`, { duration: 4000 })
-            : toast.error(`Deep scan incomplete. "${file.name}" marked unverified.`, { duration: 4000 });
+          if (isLargeUnverified) {
+            (toast.warning || toast.info)(`"${file.name}" uploaded (Unverified — exceeds 512 MB scan limit).`, {
+              icon: '⚠️',
+              duration: 4500,
+            });
+          } else {
+            (toast.warning || toast.info)(`Deep scan incomplete. "${file.name}" marked unverified.`, {
+              icon: '⚠️',
+              duration: 4000,
+            });
+          }
         }
       } else {
         updateItem(id, { status: 'clean', progress: 100 });
@@ -1881,7 +1892,7 @@ export const HeaderUploadButton = () => {
 
     if (TERMINAL_STATUSES.has(item.status) || item.status === 'completed' || item.status === 'malicious' || item.status === 'failed') {
       uploadedBytes += size;
-      if (item.status === 'completed' || item.status === 'clean') {
+      if (item.status === 'completed' || item.status === 'clean' || item.status === 'unverified') {
         completedCount++;
       } else if (item.status === 'threat_purged' || item.status === 'malicious') {
         purgedCount++;
@@ -2134,6 +2145,7 @@ export const HeaderUploadButton = () => {
                         {item.status === 'queued' && `${formatBytes(item.file?.size || item.size)} • Queued`}
                         {item.status === 'paused_for_upgrade' && `${formatBytes(item.file?.size || item.size)} • Paused (Upgrade Required)`}
                         {(item.status === 'completed' || item.status === 'clean') && `${formatBytes(item.file?.size || item.size)} • Safe`}
+                        {item.status === 'unverified' && `${formatBytes(item.file?.size || item.size)} • Unverified`}
                         {(item.status === 'malicious' || item.status === 'threat_purged') && `${formatBytes(item.file?.size || item.size)} • Deleted`}
                         {(item.status === 'error' || item.status === 'failed') && `${formatBytes(item.file?.size || item.size)} • ${item.error || 'Failed'}`}
                       </span>
@@ -2143,6 +2155,13 @@ export const HeaderUploadButton = () => {
                       <span className="text-[10px] text-neutral-500 dark:text-neutral-400 font-medium tabular-nums">
                         {item.status === 'completed' || item.status === 'clean'
                           ? 'Done'
+                          : item.status === 'unverified'
+                          ? (
+                            <span className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400 font-medium">
+                              <AlertTriangle className="w-3 h-3 shrink-0" />
+                              Unverified
+                            </span>
+                          )
                           : item.status === 'malicious' || item.status === 'threat_purged'
                           ? 'Deleted'
                           : item.status === 'paused_for_upgrade'
