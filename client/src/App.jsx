@@ -247,20 +247,20 @@ function DocxPreviewModal({ previewFile, previewUrl, closePreview, handleDownloa
         </div>
 
         {/* Body Container */}
-        <div className="relative flex-1 overflow-auto bg-neutral-100 dark:bg-neutral-950 p-4 sm:p-6 flex items-center justify-center">
+        <div className="relative flex-1 overflow-y-auto bg-neutral-100 dark:bg-neutral-950 p-4 sm:p-6 flex justify-center items-start">
           {loading ? (
-            <div className="flex flex-col items-center justify-center py-12 gap-3 text-neutral-400">
+            <div className="flex flex-col items-center justify-center py-12 gap-3 text-neutral-400 my-auto">
               <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
               <span className="text-xs sm:text-sm font-medium">Parsing Word document...</span>
             </div>
           ) : error ? (
-            <div className="text-neutral-500 dark:text-neutral-400 flex flex-col items-center gap-3 text-center max-w-md p-6">
+            <div className="text-neutral-500 dark:text-neutral-400 flex flex-col items-center gap-3 text-center max-w-md p-6 my-auto">
               <span className="material-symbols-outlined text-4xl text-neutral-400">visibility_off</span>
               <p className="font-medium text-sm">Preview not available for this file type.</p>
               <p className="text-xs text-neutral-400">The document may be password-protected, encrypted, or malformed. Download the file to view it in Microsoft Word.</p>
             </div>
           ) : (
-            <div className="w-full max-w-3xl max-h-[75vh] overflow-y-auto rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-5 sm:p-8 text-neutral-900 dark:text-neutral-100 shadow-xl space-y-3 text-sm leading-relaxed select-text">
+            <div className="w-full max-w-3xl mx-auto rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-5 sm:p-8 text-neutral-900 dark:text-neutral-100 shadow-xl space-y-3 text-sm leading-relaxed select-text">
               {blocks.length === 0 ? (
                 <div className="text-center py-12 text-neutral-400">
                   <p className="text-sm">This Word document is empty.</p>
