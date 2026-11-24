@@ -365,17 +365,14 @@ export default function AuthPage() {
     setOtpError('');
     const targetEmail = pendingEmail || formData.email;
     try {
-      if (isForgotPassword) {
-        await axios.post(`${API_BASE_URL}/api/auth/forgot-password`, { email: targetEmail });
-      } else {
-        await axios.post(`${API_BASE_URL}/api/auth/register`, {
-          name: formData.name || targetEmail.split('@')[0],
+      await axios.post(
+        `${API_BASE_URL}/api/auth/resend-otp`,
+        {
           email: targetEmail,
-          password: formData.password || 'tempFallback123',
-          consentGiven: true,
-          isAdultConfirmed: true,
-        });
-      }
+          type: isForgotPassword ? 'reset' : 'activation',
+        },
+        { withCredentials: true }
+      );
       setTimer(60);
       setOtpValues(['', '', '', '', '', '']);
       setOtpAttempts(0);
@@ -423,13 +420,9 @@ export default function AuthPage() {
 
       toast.success(`Welcome to CloudGuard, ${res.data?.user?.name || ''}!`);
 
-      // 2. Transition to destination
+      // 2. Transition to destination via hard reload (initializes App.jsx cleanly with HttpOnly cookies)
       const dest = getPostAuthDestination();
-      if (dest.includes('/pricing')) {
-        window.location.href = dest;
-      } else {
-        navigate(dest, { replace: true });
-      }
+      window.location.href = dest;
     } catch (err) {
       console.error('Activation OTP Error:', err);
       const newAttempts = otpAttempts + 1;
