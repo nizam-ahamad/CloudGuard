@@ -50,8 +50,12 @@ export const fetchAccessUrl = async (fileId, token) => {
   const fetchPromise = (async () => {
     try {
       const authToken = token || (typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null);
+      const headers = authToken && authToken !== 'null' && authToken !== 'undefined' && authToken !== 'cookie-session'
+        ? { Authorization: `Bearer ${authToken}` }
+        : {};
       const res = await axios.get(`${API_BASE_URL}/api/files/${idStr}/access`, {
-        headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+        headers,
+        withCredentials: true,
       });
       const url = res.data?.accessUrl || res.data?.url || res.data?.downloadUrl;
       if (url) {

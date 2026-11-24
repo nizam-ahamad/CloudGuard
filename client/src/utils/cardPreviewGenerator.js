@@ -80,11 +80,16 @@ export async function loadMediaThumbnails(token) {
 
   photosFetchPromise = (async () => {
     try {
+      const isSessionActive = typeof localStorage !== 'undefined' && (localStorage.getItem('cg_session_active') === '1' || Boolean(localStorage.getItem('token')));
+      if (!isSessionActive && !token) return mediaThumbnailMap;
+
       const authToken = token || (typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null);
-      if (!authToken) return mediaThumbnailMap;
+      const headers = authToken && authToken !== 'null' && authToken !== 'undefined' && authToken !== 'cookie-session'
+        ? { Authorization: `Bearer ${authToken}` }
+        : {};
 
       const res = await axios.get(`${API_BASE_URL}/api/photos`, {
-        headers: { Authorization: `Bearer ${authToken}` },
+        headers,
         withCredentials: true,
       });
 

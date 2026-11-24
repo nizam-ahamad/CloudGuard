@@ -245,7 +245,7 @@ export function UploadProvider({ children }) {
     }
 
     const token = localStorage.getItem('token');
-    const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
+    const authHeaders = token && token !== 'null' && token !== 'undefined' && token !== 'cookie-session' ? { Authorization: `Bearer ${token}` } : {};
     axios
       .post(
         `${API_BASE_URL || ''}/api/files/cancel-upload`,
@@ -254,7 +254,7 @@ export function UploadProvider({ children }) {
           s3Key: ticket.s3Key,
           uploadId: ticket.uploadId || null,
         },
-        { headers: authHeaders }
+        { headers: authHeaders, withCredentials: true }
       )
       .catch(() => {});
   }, []);
@@ -1208,7 +1208,9 @@ export function UploadProvider({ children }) {
         if (status === 403) {
           console.warn(`[Single PUT ${id}] Presigned URL expired (HTTP 403). Refreshing URL...`);
           try {
-            const authHdr = headers || (localStorage.getItem('token') ? { Authorization: `Bearer ${localStorage.getItem('token')}` } : {});
+            const token = localStorage.getItem('token');
+            const tokenHdr = token && token !== 'null' && token !== 'undefined' && token !== 'cookie-session' ? { Authorization: `Bearer ${token}` } : {};
+            const authHdr = headers || tokenHdr;
             const refreshRes = await axios.post(
               `${API_BASE_URL || ''}/api/files/presigned-url`,
               {
@@ -1217,7 +1219,7 @@ export function UploadProvider({ children }) {
                 mimeType: uploadFile.type || 'application/octet-stream',
                 folderId: folderId || null,
               },
-              { headers: authHdr, signal: controller.signal }
+              { headers: authHdr, signal: controller.signal, withCredentials: true }
             );
             if (refreshRes.data?.presignedUrl) {
               currentPresignedUrl = refreshRes.data.presignedUrl;
@@ -1321,7 +1323,7 @@ export function UploadProvider({ children }) {
     }
 
     const token = localStorage.getItem('token');
-    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    const headers = token && token !== 'null' && token !== 'undefined' && token !== 'cookie-session' ? { Authorization: `Bearer ${token}` } : {};
 
     try {
       let fileId, s3Key, sha256, thumbnail;

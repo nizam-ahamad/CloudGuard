@@ -132,10 +132,14 @@ export async function createFolderHierarchy(
       headers = tokenOrHeaders;
     }
   } else if (typeof tokenOrHeaders === 'string') {
-    headers = { Authorization: `Bearer ${tokenOrHeaders}` };
+    if (tokenOrHeaders !== 'null' && tokenOrHeaders !== 'undefined' && tokenOrHeaders !== 'cookie-session') {
+      headers = { Authorization: `Bearer ${tokenOrHeaders}` };
+    }
   } else {
     const activeToken = localStorage.getItem('token') || sessionStorage.getItem('token');
-    if (activeToken) headers = { Authorization: `Bearer ${activeToken}` };
+    if (activeToken && activeToken !== 'null' && activeToken !== 'undefined' && activeToken !== 'cookie-session') {
+      headers = { Authorization: `Bearer ${activeToken}` };
+    }
   }
 
   const { onProgress, signal } = opts;
@@ -194,7 +198,7 @@ export async function createFolderHierarchy(
           baseParentId: baseParentId || null,
           paths: chunk,
         },
-        { headers, signal }
+        { headers, signal, withCredentials: true }
       );
 
       if (res.data?.success && res.data?.folderMap) {
@@ -275,7 +279,7 @@ export async function createFolderHierarchy(
             name: dirName,
             parentId: resolvedParentId || null,
           },
-          { headers, signal }
+          { headers, signal, withCredentials: true }
         );
         const createdId = res.data?._id || res.data?.id;
         if (createdId) {
@@ -299,6 +303,7 @@ export async function createFolderHierarchy(
                 params,
                 headers,
                 signal,
+                withCredentials: true,
               });
               existingList = Array.isArray(listRes.data) ? listRes.data : [];
               parentListingCache.set(cacheKey, existingList);

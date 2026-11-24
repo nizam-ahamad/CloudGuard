@@ -10,22 +10,25 @@ export default function SubscriptionAlertBanner() {
   const [dismissedStages, setDismissedStages] = useState({});
 
   const fetchStatus = useCallback(async () => {
-    const token = localStorage.getItem('token') || sessionStorage.getItem('token');
-    if (!token) {
+    const isSessionActive = typeof localStorage !== 'undefined' && (localStorage.getItem('cg_session_active') === '1' || Boolean(localStorage.getItem('token') || sessionStorage.getItem('token')));
+    if (!isSessionActive) {
       setSubData(null);
       setLoading(false);
       return;
     }
     try {
+      const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+      const headers = token && token !== 'null' && token !== 'undefined' && token !== 'cookie-session' ? { Authorization: `Bearer ${token}` } : {};
       const res = await axios.get(`${API_BASE_URL}/api/payments/subscription-status`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers,
+        withCredentials: true,
       });
       if (res.data?.success) {
         setSubData(res.data);
       }
     } catch (err) {
       // Fail silently on banner status fetch error
-      console.warn('[SubscriptionAlertBanner] Failed to fetch subscription status:', err.message);
+      console.warn('[SubscriptionAlertBanner] Failed to fetch subscription status:', err?.message || err);
     } finally {
       setLoading(false);
     }

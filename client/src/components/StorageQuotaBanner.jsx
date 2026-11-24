@@ -34,10 +34,13 @@ export default function StorageQuotaBanner({
   // Fetch or refresh storage stats on mount and on custom events
   const refreshStats = useCallback(async () => {
     try {
+      const isSessionActive = typeof localStorage !== 'undefined' && (localStorage.getItem('cg_session_active') === '1' || Boolean(localStorage.getItem('token') || sessionStorage.getItem('token')));
+      if (!isSessionActive) return;
       const token = localStorage.getItem('token') || sessionStorage.getItem('token');
-      if (!token) return;
-      const res = await axios.get(`${API_BASE_URL}/api/storage-stats`, {
-        headers: { Authorization: `Bearer ${token}` },
+      const headers = token && token !== 'null' && token !== 'undefined' && token !== 'cookie-session' ? { Authorization: `Bearer ${token}` } : {};
+      const res = await axios.get(`${API_BASE_URL}/api/files/storage-stats`, {
+        headers,
+        withCredentials: true,
       });
       if (res.data) {
         const used = res.data.storageUsed || res.data.usedBytes || res.data.used || 0;

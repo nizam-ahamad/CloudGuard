@@ -37,9 +37,11 @@ export async function getFreshDownloadUrl(file) {
   const fileId = file._id || file.id;
   if (fileId) {
     const token = localStorage.getItem('token') || sessionStorage.getItem('token');
-    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    const headers = token && token !== 'null' && token !== 'undefined' && token !== 'cookie-session'
+      ? { Authorization: `Bearer ${token}` }
+      : {};
     try {
-      const res = await fetch(`${API_BASE_URL}/api/files/${fileId}/download-url`, { headers });
+      const res = await fetch(`${API_BASE_URL}/api/files/${fileId}/download-url`, { headers, credentials: 'include' });
       if (res.ok) {
         const data = await res.json();
         if (data.downloadUrl) return data.downloadUrl;
@@ -50,7 +52,7 @@ export async function getFreshDownloadUrl(file) {
     }
 
     try {
-      const res2 = await fetch(`${API_BASE_URL}/api/files/${fileId}/download`, { headers });
+      const res2 = await fetch(`${API_BASE_URL}/api/files/${fileId}/download`, { headers, credentials: 'include' });
       if (res2.ok) {
         const data2 = await res2.json();
         if (data2.downloadUrl) return data2.downloadUrl;
@@ -59,7 +61,7 @@ export async function getFreshDownloadUrl(file) {
     } catch (e) {}
 
     try {
-      const res3 = await fetch(`${API_BASE_URL}/api/files/${fileId}/access?download=true`, { headers });
+      const res3 = await fetch(`${API_BASE_URL}/api/files/${fileId}/access?download=true`, { headers, credentials: 'include' });
       if (res3.ok) {
         const data3 = await res3.json();
         if (data3.url) return data3.url;

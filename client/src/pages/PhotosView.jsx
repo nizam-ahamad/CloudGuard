@@ -230,9 +230,11 @@ export default function PhotosView({ token: propToken }) {
       if (!globalPhotosCache || forceReload) {
         setLoading(true);
       }
-      const token = propToken || localStorage.getItem('token');
+      const rawToken = propToken || localStorage.getItem('token');
+      const token = rawToken && rawToken !== 'null' && rawToken !== 'undefined' && rawToken !== 'cookie-session' ? rawToken : null;
       const res = await axios.get(`${API_BASE_URL}/api/photos`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
+        withCredentials: true,
       });
 
       const list = Array.isArray(res.data) ? res.data : (res.data?.photos || []);
@@ -636,13 +638,14 @@ export default function PhotosView({ token: propToken }) {
   // Undo Delete (Restore from Bin)
   const handleUndoDelete = async (itemsToRestore) => {
     try {
-      const token = propToken || localStorage.getItem('token');
+      const rawToken = propToken || localStorage.getItem('token');
+      const token = rawToken && rawToken !== 'null' && rawToken !== 'undefined' && rawToken !== 'cookie-session' ? rawToken : null;
       const fileIds = itemsToRestore.map((i) => i._id);
 
       await axios.post(
         `${API_BASE_URL}/api/files/restore-batch`,
         { fileIds, folderIds: [] },
-        { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+        { headers: token ? { Authorization: `Bearer ${token}` } : {}, withCredentials: true }
       );
 
       showPillToast({ message: 'Restored from Bin', duration: 3000 });
@@ -673,13 +676,14 @@ export default function PhotosView({ token: propToken }) {
     setIsDeletingItems(true);
 
     try {
-      const token = propToken || localStorage.getItem('token');
+      const rawToken = propToken || localStorage.getItem('token');
+      const token = rawToken && rawToken !== 'null' && rawToken !== 'undefined' && rawToken !== 'cookie-session' ? rawToken : null;
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
       await axios.post(
         `${API_BASE_URL}/api/files/delete-batch`,
         { fileIds, folderIds: [] },
-        { headers }
+        { headers, withCredentials: true }
       );
 
       const fileIdSet = new Set(fileIds.map(String));

@@ -122,8 +122,12 @@ export default function FolderDetailsModal({
       setError(null);
       try {
         const authToken = token || localStorage.getItem('token') || sessionStorage.getItem('token');
+        const headers = authToken && authToken !== 'null' && authToken !== 'undefined' && authToken !== 'cookie-session'
+          ? { Authorization: `Bearer ${authToken}` }
+          : {};
         const res = await axios.get(`${API_BASE_URL}/api/folders/${targetId}/details`, {
-          headers: authToken ? { Authorization: `Bearer ${authToken}` } : {}
+          headers,
+          withCredentials: true,
         });
 
         if (isMounted) {
@@ -137,8 +141,12 @@ export default function FolderDetailsModal({
         if (isMounted) {
           try {
             const authToken = token || localStorage.getItem('token') || sessionStorage.getItem('token');
+            const headers = authToken && authToken !== 'null' && authToken !== 'undefined' && authToken !== 'cookie-session'
+              ? { Authorization: `Bearer ${authToken}` }
+              : {};
             const fallbackRes = await axios.get(`${API_BASE_URL}/api/folders/${targetId}/stats`, {
-              headers: authToken ? { Authorization: `Bearer ${authToken}` } : {}
+              headers,
+              withCredentials: true,
             });
             if (isMounted) {
               const data = fallbackRes.data?.folder || fallbackRes.data?.data || fallbackRes.data || {};

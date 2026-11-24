@@ -21,7 +21,7 @@ let globalDashboardStorageCache = null;
  */
 export const uploadFileDirectlyToS3 = async (file, targetFolderId, onProgress) => {
   const token = localStorage.getItem('token');
-  const headers = token ? { Authorization: `Bearer ${token}` } : {};
+  const headers = token && token !== 'null' && token !== 'undefined' && token !== 'cookie-session' ? { Authorization: `Bearer ${token}` } : {};
 
   // Step 1: Request presigned upload ticket from backend (~5ms)
   const { data: ticket } = await axios.post(
@@ -32,7 +32,7 @@ export const uploadFileDirectlyToS3 = async (file, targetFolderId, onProgress) =
       mimeType: file.type || 'application/octet-stream',
       folderId: targetFolderId || null,
     },
-    { headers }
+    { headers, withCredentials: true }
   );
 
   if (!ticket || !ticket.presignedUrl) {
@@ -147,8 +147,10 @@ export const processQueueItem = async ({
     };
 
     const token = localStorage.getItem('token');
+    const headers = token && token !== 'null' && token !== 'undefined' && token !== 'cookie-session' ? { Authorization: `Bearer ${token}` } : {};
     const presignRes = await axios.post(`${apiBaseUrl}/api/files/presigned-url`, payload, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {}
+      headers,
+      withCredentials: true,
     });
 
     const presignedUrl = presignRes.data.presignedUrl || presignRes.data.signedUrl;
@@ -181,7 +183,8 @@ export const processQueueItem = async ({
       sha256: computedHash || undefined,
       thumbnail: thumbnail || undefined
     }, {
-      signal: abortSignal
+      signal: abortSignal,
+      withCredentials: true,
     });
 
     return finalizeRes.data;
@@ -335,9 +338,11 @@ export const Dashboard = (props) => {
     }
 
     const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+    const headers = token && token !== 'null' && token !== 'undefined' && token !== 'cookie-session' ? { Authorization: `Bearer ${token}` } : {};
     axios
       .get(`${API_BASE_URL}/api/folders/${urlFolderId}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers,
+        withCredentials: true,
       })
       .then((res) => {
         const folderData = res.data;

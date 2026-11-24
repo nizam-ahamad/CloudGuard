@@ -57,6 +57,13 @@ function getFileIcon(mimeType = '', fileName = '') {
   return File;
 }
 
+function getAuthHeaders(tok) {
+  if (tok && tok !== 'null' && tok !== 'undefined' && tok !== 'cookie-session') {
+    return { Authorization: `Bearer ${tok}` };
+  }
+  return {};
+}
+
 export default function BinView({ onStorageUpdate, searchQuery = '', token: propToken }) {
   const token = propToken || (typeof window !== 'undefined' ? (localStorage.getItem('token') || sessionStorage.getItem('token')) : null);
   const appToast = useToast();
@@ -81,7 +88,8 @@ export default function BinView({ onStorageUpdate, searchQuery = '', token: prop
       setLoading(true);
       const token = localStorage.getItem('token') || sessionStorage.getItem('token');
       const res = await axios.get(`${API_BASE_URL}/api/files/bin`, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: getAuthHeaders(token),
+        withCredentials: true
       });
       if (res.data?.success) {
         setData({
@@ -172,7 +180,8 @@ export default function BinView({ onStorageUpdate, searchQuery = '', token: prop
       const payload = isFolder ? { folderIds: [item._id] } : { fileIds: [item._id] };
 
       const res = await axios.post(`${API_BASE_URL}/api/files/bin/restore`, payload, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: getAuthHeaders(token),
+        withCredentials: true
       });
 
       if (res.data?.success) {
@@ -198,7 +207,7 @@ export default function BinView({ onStorageUpdate, searchQuery = '', token: prop
       const res = await axios.post(
         `${API_BASE_URL}/api/files/bin/restore`,
         { fileIds: selectedFileIds, folderIds: selectedFolderIds },
-        { headers: { Authorization: `Bearer ${token}` } }
+        { headers: getAuthHeaders(token), withCredentials: true }
       );
 
       if (res.data?.success) {
@@ -222,7 +231,7 @@ export default function BinView({ onStorageUpdate, searchQuery = '', token: prop
       const res = await axios.post(
         `${API_BASE_URL}/api/files/bin/restore`,
         { restoreAll: true },
-        { headers: { Authorization: `Bearer ${token}` } }
+        { headers: getAuthHeaders(token), withCredentials: true }
       );
 
       if (res.data?.success) {
@@ -261,7 +270,8 @@ export default function BinView({ onStorageUpdate, searchQuery = '', token: prop
       }
 
       const res = await axios.delete(`${API_BASE_URL}/api/files/bin/permanent`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: getAuthHeaders(token),
+        withCredentials: true,
         data: payload
       });
 

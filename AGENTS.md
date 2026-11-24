@@ -108,6 +108,10 @@
     - All profile endpoints (`/auth/profile`, `/auth/2fa/*`, `/payments/reactivate-subscription`, `/payments/cancel-subscription`, `/payments/cancel-scheduled-downgrade`, `/auth/account`, `/auth/password`) authenticate via HttpOnly session cookies with `withCredentials: true`.
     - Active, cancelled, and past_due paid plans (`tier_50gb`, `tier_100gb`, `tier_200gb`) render their canonical names (`Essential Vault (50 GB)`, `Pro Vault (100 GB)`, `Ultra Vault (200 GB)`), billing cycle, next renewal / cycle end dates, and Plan Change / Cancel Subscription (or Resume Subscription) controls instead of falling back to `Free Trial (5 GB)`.
     - In the Billing History table, official receipts link directly to `${API_BASE_URL}/api/payments/invoice/${item.orderId}` (`target="_blank" rel="noopener noreferrer"`).
+17. **Full-Client Cookie Auth & Production `API_BASE_URL` Alignment:**
+    - `client/src/config.js` guarantees that `API_BASE_URL` resolves to `https://api.cloudguard.site` whenever `window.location.hostname` ends with `cloudguard.site` or `import.meta.env.PROD` is true, eliminating blank-string fallbacks that triggered relative `/api/...` 404s on Cloudflare Pages.
+    - All remaining client modules making backend API calls (`Dashboard.jsx`, `PhotosView.jsx`, `UploadContext.jsx`, `downloadHelper.js`, `BinView.jsx`, `StorageQuotaBanner.jsx`, `SubscriptionAlertBanner.jsx`, `FolderDetailsModal.jsx`, `MoveModal.jsx`, `MediaCarouselModal.jsx`, `Settings.jsx`, `api.js`, `accessUrlCache.js`, `folderUpload.js`, `cardPreviewGenerator.js`) enforce `{ withCredentials: true }` (or `credentials: 'include'`) and systematically strip or omit invalid `Authorization: Bearer null` / `Bearer cookie-session` placeholders.
+    - Status and stats polling (`StorageQuotaBanner.jsx`, `SubscriptionAlertBanner.jsx`, `cardPreviewGenerator.js`) inspect active session status (`cg_session_active === '1'`) instead of aborting early on missing raw `localStorage` tokens.
 
 ---
 

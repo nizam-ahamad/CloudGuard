@@ -6,10 +6,14 @@ import { API_BASE_URL } from '../config';
 const api = {
   get: (endpoint, config = {}) => {
     const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+    const authHeaders = token && token !== 'null' && token !== 'undefined' && token !== 'cookie-session'
+      ? { Authorization: `Bearer ${token}` }
+      : {};
     return axios.get(`${API_BASE_URL}/api${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`, {
       ...config,
+      withCredentials: true,
       headers: {
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...authHeaders,
         ...config.headers
       }
     });

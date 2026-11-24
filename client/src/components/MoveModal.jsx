@@ -196,10 +196,13 @@ function MoveModalContent({
 
     try {
       const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+      const headers = token && token !== 'null' && token !== 'undefined' && token !== 'cookie-session'
+        ? { Authorization: `Bearer ${token}` }
+        : {};
       const res = await axios.post(
         `${API_BASE_URL}/api/folders`,
         { name: trimmed, parentId: activeFolderId || null },
-        { headers: { Authorization: `Bearer ${token}` } }
+        { headers, withCredentials: true }
       );
 
       const createdFolder = res.data;

@@ -3,10 +3,8 @@ const envApiUrl = import.meta.env.VITE_API_URL
   : '';
 
 export const API_BASE_URL = envApiUrl || (
-  import.meta.env.PROD 
+  (typeof window !== 'undefined' && window.location.hostname.endsWith('cloudguard.site')) || import.meta.env.PROD 
     ? 'https://api.cloudguard.site' 
-    : (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1' 
-        ? '' 
-        : 'http://localhost:5000')
+    : 'http://localhost:5000'
 );
 

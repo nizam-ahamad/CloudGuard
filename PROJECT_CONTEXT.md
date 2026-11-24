@@ -200,3 +200,7 @@ CloudGuard/
    - Syncs subscription status (`GET /api/payments/subscription-status`) and history (`GET /api/payments/history`) on mount and when `cloudguard:subscription-updated` triggers.
    - Paid plans (`tier_50gb`, `tier_100gb`, `tier_200gb`) display canonical names (`Essential Vault (50 GB)`, `Pro Vault (100 GB)`, `Ultra Vault (200 GB)`), billing cycle, and expiration/renewal dates with **Change Plan** and **Cancel Subscription** (or **Resume Subscription**) controls.
    - Official invoice links in Billing History target `${API_BASE_URL}/api/payments/invoice/:orderId` in new tabs.
+13. **Full-Client HttpOnly Cookie Auth & Production API_BASE_URL Alignment:**
+   - `client/src/config.js` deterministically maps `API_BASE_URL` to `https://api.cloudguard.site` on all `cloudguard.site` hosts or in production builds, preventing empty-string fallbacks from breaking relative `/api/...` calls on Cloudflare Pages.
+   - All client-side API requests across dashboard, photos, upload/download contexts, bin view, banners, and modals specify `withCredentials: true` (or `credentials: 'include'`) and sanitize Authorization headers so `Bearer null` / `Bearer cookie-session` is never transmitted.
+   - Telemetry and quota sync routines rely on `cg_session_active` rather than raw storage tokens, maintaining live meters and banners under pure HttpOnly cookie authentication.
