@@ -1,10 +1,10 @@
 /**
  * CloudGuard High-DPI Thumbnail Engine with Automatic EXIF Orientation
- * Generates compact, upright WebP thumbnails (max 512px, quality 0.78)
- * Optimized for Retina displays, HEIC/HEIF uploads, and photo/video galleries.
+ * Generates compact, upright 320px WebP thumbnails (quality 0.78)
+ * Supports JPEG, PNG, WebP, GIF, BMP, SVG, AVIF, HEIC, HEIF, TIFF, ICO, and video files.
  */
 
-// Cached dynamic loader for heic2any to keep non-HEIC uploads fast and bundle size optimal
+// Cached dynamic loader for heic2any fallback
 let heic2anyLoader = null;
 async function getHeic2any() {
   if (!heic2anyLoader) {
@@ -12,6 +12,8 @@ async function getHeic2any() {
   }
   return heic2anyLoader;
 }
+
+export const IMAGE_EXTENSIONS_REGEX = /\.(jpe?g|png|webp|gif|bmp|svg|avif|heic|heif|tiff?|ico)$/i;
 
 /**
  * Helper to identify HEIC / HEIF files by MIME type or file extension,
@@ -22,113 +24,134 @@ export const isHeicFile = (fileOrName) => {
   if (typeof fileOrName === 'string') {
     return /\.(heic|heif)$/i.test(fileOrName);
   }
-  const type = fileOrName.type || '';
-  const name = fileOrName.name || '';
+  const type = fileOrName.type || fileOrName.mimeType || fileOrName.mimetype || '';
+  const name = fileOrName.name || fileOrName.originalName || '';
   return /^image\/(heic|heif)(-sequence)?$/i.test(type) || /\.(heic|heif)$/i.test(name);
 };
 
 /**
- * CloudGuard High-DPI Thumbnail Engine with Automatic EXIF Orientation
- * Generates compact, upright WebP thumbnails (< 40 KB, max 512px)
- * Supports JPEG, PNG, WebP, GIF, HEIC/HEIF, and video files.
+ * Renders a decoded ImageBitmap or HTMLImageElement onto a 320px max-edge canvas
+ * and exports an image/webp data URL (with JPEG fallback if WebP canvas encoding is unavailable).
  */
-export async function generateMediaThumbnail(file, maxDimension = 512, quality = 0.78) {
+function drawSourceToWebpDataUrl(source, rawWidth, rawHeight, maxDimension, quality) {
+  let width = rawWidth || maxDimension;
+  let height = rawHeight || maxDimension;
+
+  if (width > height) {
+    if (width > maxDimension) {
+      height = Math.max(1, Math.round((height * maxDimension) / width));
+      width = maxDimension;
+    }
+  } else if (height > maxDimension) {
+    width = Math.max(1, Math.round((width * maxDimension) / height));
+    height = maxDimension;
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, width);
+  canvas.height = Math.max(1, height);
+
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+
+  let dataUrl = null;
+  try {
+    dataUrl = canvas.toDataURL('image/webp', quality);
+  } catch (_) {}
+  if (!dataUrl || !dataUrl.startsWith('data:image/webp')) {
+    try {
+      dataUrl = canvas.toDataURL('image/jpeg', quality);
+    } catch (_) {
+      dataUrl = null;
+    }
+  }
+  return dataUrl;
+}
+
+/**
+ * CloudGuard High-DPI Thumbnail Engine with Automatic EXIF Orientation
+ * Generates compact, upright WebP thumbnails (max 320px, quality 0.78)
+ * Supports JPEG, PNG, WebP, GIF, BMP, SVG, AVIF, HEIC/HEIF, TIFF, ICO, and video files.
+ */
+export async function generateMediaThumbnail(file, maxDimension = 320, quality = 0.78) {
   if (!file) return null;
 
-  // 1. HEIC / HEIF detection & browser-side conversion via heic2any
+  // 1. HEIC / HEIF detection & off-thread WASM decoding via heicDecoder.js (with heic2any fallback)
   const isHeic = isHeicFile(file);
   let imageSource = file;
 
   if (isHeic) {
     try {
-      const heic2any = await getHeic2any();
-      const converted = await heic2any({
-        blob: file,
-        toType: 'image/jpeg',
+      const { decodeHeicToBlob } = await import('./heicDecoder');
+      imageSource = await decodeHeicToBlob(file, {
         quality: 0.85,
+        maxDimension: Math.max(maxDimension, 512),
+        priority: 'high',
       });
-      imageSource = Array.isArray(converted) ? converted[0] : converted;
-    } catch (err) {
-      console.warn('[Thumbnail] HEIC decoding failed on upload:', err);
-      return null;
+    } catch (workerErr) {
+      try {
+        const heic2any = await getHeic2any();
+        const converted = await heic2any({
+          blob: file,
+          toType: 'image/jpeg',
+          quality: 0.85,
+        });
+        imageSource = Array.isArray(converted) ? converted[0] : converted;
+      } catch (err) {
+        console.warn('[Thumbnail] HEIC decoding failed on upload:', err);
+        return null;
+      }
     }
   }
 
-  // 2. Image Thumbnail Extraction with Automatic EXIF Orientation
-  const isImage = isHeic || file.type?.startsWith('image/') || /\.(jpe?g|png|webp|gif|bmp|tiff?)$/i.test(file.name || '');
+  // 2. Image Thumbnail Extraction (JPEG, PNG, WebP, GIF, BMP, SVG, AVIF, HEIC, HEIF, TIFF, ICO)
+  const isImage =
+    isHeic ||
+    Boolean(file.type?.startsWith('image/')) ||
+    IMAGE_EXTENSIONS_REGEX.test(file.name || '');
+
   if (isImage) {
     try {
       const bitmap = await createImageBitmap(imageSource, { imageOrientation: 'from-image' });
-      let { width, height } = bitmap;
-
-      if (width > height) {
-        if (width > maxDimension) {
-          height = Math.round((height * maxDimension) / width);
-          width = maxDimension;
-        }
-      } else if (height > maxDimension) {
-        width = Math.round((width * maxDimension) / height);
-        height = maxDimension;
+      const dataUrl = drawSourceToWebpDataUrl(bitmap, bitmap.width, bitmap.height, maxDimension, quality);
+      if (typeof bitmap.close === 'function') {
+        try {
+          bitmap.close();
+        } catch (_) {}
       }
-
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-
-      const ctx = canvas.getContext('2d', { alpha: false });
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
-      ctx.drawImage(bitmap, 0, 0, width, height);
-
-      let dataUrl = null;
-      try {
-        dataUrl = canvas.toDataURL('image/webp', quality);
-      } catch (_) {}
-      if (!dataUrl || !dataUrl.startsWith('data:image/webp')) {
-        dataUrl = canvas.toDataURL('image/jpeg', quality);
-      }
-      return dataUrl;
-    } catch (e) {
-      return new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onload = (ev) => {
-          const img = new Image();
-          img.onload = () => {
-            let { width, height } = img;
-            if (width > height) {
-              if (width > maxDimension) {
-                height = Math.round((height * maxDimension) / width);
-                width = maxDimension;
-              }
-            } else if (height > maxDimension) {
-              width = Math.round((width * maxDimension) / height);
-              height = maxDimension;
-            }
-
-            const canvas = document.createElement('canvas');
-            canvas.width = width;
-            canvas.height = height;
-            const ctx = canvas.getContext('2d', { alpha: false });
-            ctx.imageSmoothingEnabled = true;
-            ctx.imageSmoothingQuality = 'high';
-            ctx.drawImage(img, 0, 0, width, height);
-
-            let dataUrl = null;
-            try {
-              dataUrl = canvas.toDataURL('image/webp', quality);
-            } catch (_) {}
-            if (!dataUrl || !dataUrl.startsWith('data:image/webp')) {
-              dataUrl = canvas.toDataURL('image/jpeg', quality);
-            }
-            resolve(dataUrl);
-          };
-          img.onerror = () => resolve(null);
-          img.src = ev.target.result;
-        };
-        reader.onerror = () => resolve(null);
-        reader.readAsDataURL(imageSource);
-      });
+      if (dataUrl) return dataUrl;
+    } catch (_) {
+      // Fallback for formats where createImageBitmap throws (e.g., SVG, ICO, or older Safari builds)
     }
+
+    return new Promise((resolve) => {
+      const objectUrl = URL.createObjectURL(imageSource);
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const width = img.naturalWidth || img.width || maxDimension;
+          const height = img.naturalHeight || img.height || maxDimension;
+          const dataUrl = drawSourceToWebpDataUrl(img, width, height, maxDimension, quality);
+          resolve(dataUrl);
+        } catch (_) {
+          resolve(null);
+        } finally {
+          try {
+            URL.revokeObjectURL(objectUrl);
+          } catch (_) {}
+        }
+      };
+      img.onerror = () => {
+        try {
+          URL.revokeObjectURL(objectUrl);
+        } catch (_) {}
+        resolve(null);
+      };
+      img.src = objectUrl;
+    });
   }
 
   // 3. Video Poster Frame Extraction (Default 5.0s seeker)
@@ -174,36 +197,13 @@ export async function generateMediaThumbnail(file, maxDimension = 512, quality =
       };
 
       video.onseeked = () => {
-        let width = video.videoWidth || 320;
-        let height = video.videoHeight || 180;
-
-        if (width > height) {
-          if (width > maxDimension) {
-            height = Math.round((height * maxDimension) / width);
-            width = maxDimension;
-          }
-        } else if (height > maxDimension) {
-          width = Math.round((width * maxDimension) / height);
-          height = maxDimension;
-        }
-
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-
-        const ctx = canvas.getContext('2d', { alpha: false });
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(video, 0, 0, width, height);
-
-        let dataUrl = null;
-        try {
-          dataUrl = canvas.toDataURL('image/webp', quality);
-        } catch (_) {}
-        if (!dataUrl || !dataUrl.startsWith('data:image/webp')) {
-          dataUrl = canvas.toDataURL('image/jpeg', quality);
-        }
-
+        const dataUrl = drawSourceToWebpDataUrl(
+          video,
+          video.videoWidth || 320,
+          video.videoHeight || 180,
+          maxDimension,
+          quality
+        );
         cleanup();
         resolve(dataUrl);
       };

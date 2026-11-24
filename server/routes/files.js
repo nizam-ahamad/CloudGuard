@@ -33,6 +33,60 @@ const ACCESS_CACHE_TTL_MS = 240 * 1000; // 4 minutes
 
 const escapeRegex = (string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+const IMAGE_EXTENSIONS_REGEX = /\.(jpe?g|png|webp|gif|bmp|svg|avif|heic|heif|tiff?|ico)$/i;
+const IMAGE_MIME_REGEX = /^image\//i;
+
+const EXTENSION_TO_MIME = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+  gif: 'image/gif',
+  bmp: 'image/bmp',
+  svg: 'image/svg+xml',
+  avif: 'image/avif',
+  heic: 'image/heic',
+  heif: 'image/heif',
+  tif: 'image/tiff',
+  tiff: 'image/tiff',
+  ico: 'image/x-icon',
+};
+
+function inferImageMimeType(fileName, currentMime) {
+  if (currentMime && IMAGE_MIME_REGEX.test(currentMime)) {
+    return currentMime;
+  }
+  if (!fileName || !IMAGE_EXTENSIONS_REGEX.test(fileName)) {
+    return currentMime || 'application/octet-stream';
+  }
+  const ext = (fileName.split('.').pop() || '').toLowerCase();
+  return EXTENSION_TO_MIME[ext] || currentMime || 'application/octet-stream';
+}
+
+async function attachSignedThumbnailUrl(fileDoc, req, rawUserId, bucket) {
+  if (!fileDoc) return fileDoc;
+  const plain = typeof fileDoc.toObject === 'function' ? fileDoc.toObject() : { ...fileDoc };
+  if (plain.thumbnailKey && bucket) {
+    try {
+      const thumbUrl = await getSignedUrl(
+        s3Client,
+        new GetObjectCommand({
+          Bucket: bucket,
+          Key: plain.thumbnailKey,
+        }),
+        { expiresIn: 300 }
+      );
+      plain.thumbnailUrl = formatCdnDownloadUrl(thumbUrl, req, rawUserId);
+    } catch (e) {
+      console.warn(`Failed to sign thumbnail URL for ${plain.name}:`, e.message);
+      plain.thumbnailUrl = null;
+    }
+  } else {
+    plain.thumbnailUrl = plain.thumbnailUrl || null;
+  }
+  return plain;
+}
+
 // Verified SHA-256 hash signatures for Antigravity executables
 const ANTIGRAVITY_HASH_WHITELIST = new Set([
   '9b0c8e42758f48c426a39c1919281322381a77d7e526d5b7be7cdb63e1d2873a', // Antigravity.exe
@@ -1285,11 +1339,20 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
 
     file.size = actualBytes;
 
+    // Normalize generic octet-stream MIME type for known image extensions (.heic, .heif, .avif, etc.)
+    const resolvedImageMime = inferImageMimeType(file.originalName || file.name, file.mimeType || file.mimetype);
+    if (resolvedImageMime !== (file.mimeType || file.mimetype)) {
+      file.mimeType = resolvedImageMime;
+      file.mimetype = resolvedImageMime;
+    }
+
     if (thumbnail && typeof thumbnail === 'string' && thumbnail.startsWith('data:image/')) {
       try {
-        const matches = thumbnail.match(/^data:image\/([a-zA-Z0-9]+);base64,(.+)$/);
+        const matches = thumbnail.match(/^data:image\/([a-zA-Z0-9+.-]+);base64,(.+)$/);
         if (matches) {
-          const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
+          const rawSubtype = matches[1].toLowerCase();
+          const ext = rawSubtype === 'jpeg' ? 'jpg' : rawSubtype === 'svg+xml' ? 'svg' : rawSubtype;
+          const contentType = rawSubtype === 'jpg' ? 'image/jpeg' : `image/${rawSubtype}`;
           const buffer = Buffer.from(matches[2], 'base64');
           const thumbS3Key = `thumbnails/${rawUserId}/${Date.now()}-${file._id}.${ext}`;
           const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
@@ -1298,7 +1361,7 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
             Bucket: bucket,
             Key: thumbS3Key,
             Body: buffer,
-            ContentType: `image/${ext}`,
+            ContentType: contentType,
           }));
 
           file.thumbnailKey = thumbS3Key;
@@ -1310,10 +1373,11 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
 
     // Idempotency: If already clean, return immediately without re-incrementing storage
     if (file.securityStatus === 'clean') {
-      if (file.thumbnailKey) {
+      if (file.isModified()) {
         await file.save();
       }
-      return res.status(200).json({ success: true, isMalicious: false, file });
+      const enrichedClean = await attachSignedThumbnailUrl(file, req, rawUserId, bucket);
+      return res.status(200).json({ success: true, isMalicious: false, file: enrichedClean });
     }
 
     const normalizedHash = (sha256 || '').toLowerCase().trim();
@@ -1330,6 +1394,8 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
             isMalicious: false,
             status: 'safe',
             size: actualBytes,
+            mimeType: file.mimeType,
+            mimetype: file.mimetype,
             ...(file.thumbnailKey ? { thumbnailKey: file.thumbnailKey } : {}),
           },
         },
@@ -1351,18 +1417,20 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
             },
           });
         }
+        const enrichedClaimed = await attachSignedThumbnailUrl(claimedFile, req, rawUserId, bucket);
         return res.status(200).json({
           success: true,
           isMalicious: false,
-          file: claimedFile,
+          file: enrichedClaimed,
         });
       }
 
       const existingFile = await File.findOne(buildTenantQuery(rawUserId, { _id: file._id }));
+      const enrichedExisting = await attachSignedThumbnailUrl(existingFile || file, req, rawUserId, bucket);
       return res.status(200).json({
         success: true,
         isMalicious: false,
-        file: existingFile || file,
+        file: enrichedExisting,
       });
     }
 
@@ -1448,6 +1516,8 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
             isMalicious: false,
             status: 'unverified',
             size: actualBytes,
+            mimeType: file.mimeType,
+            mimetype: file.mimetype,
             ...(file.thumbnailKey ? { thumbnailKey: file.thumbnailKey } : {}),
           },
         },
@@ -1472,12 +1542,13 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
       }
 
       const returnFile = claimedFile || (await File.findOne(buildTenantQuery(rawUserId, { _id: file._id }))) || file;
+      const enrichedUnverified = await attachSignedThumbnailUrl(returnFile, req, rawUserId, bucket);
       return res.status(200).json({
         success: true,
         isMalicious: false,
         securityStatus: 'unverified',
         warning: 'Exceeds 512 MB scan limit. Marked unverified.',
-        file: returnFile,
+        file: enrichedUnverified,
       });
     }
 
@@ -1561,6 +1632,8 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
           isMalicious: false,
           status: 'safe',
           size: actualBytes,
+          mimeType: file.mimeType,
+          mimetype: file.mimetype,
           ...(file.thumbnailKey ? { thumbnailKey: file.thumbnailKey } : {}),
         },
       },
@@ -1582,19 +1655,21 @@ router.post('/finalize-upload', authMiddleware, async (req, res) => {
           },
         });
       }
+      const enrichedClaimed = await attachSignedThumbnailUrl(claimedFile, req, rawUserId, bucket);
       return res.status(200).json({
         success: true,
         isMalicious: false,
-        file: claimedFile,
+        file: enrichedClaimed,
       });
     }
 
     // Idempotency: If already claimed and marked clean by concurrent request, return clean record without double-incrementing quota
     const existingFile = await File.findOne(buildTenantQuery(rawUserId, { _id: file._id }));
+    const enrichedExisting = await attachSignedThumbnailUrl(existingFile || file, req, rawUserId, bucket);
     return res.status(200).json({
       success: true,
       isMalicious: false,
-      file: existingFile || file,
+      file: enrichedExisting,
     });
   } catch (err) {
     console.error('[Finalize Upload Error] Initiating S3 rollback cleanup:', err.message);

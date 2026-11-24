@@ -30,6 +30,8 @@ import { HeicPreviewImage, preloadMediaItem, prefetchMediaUrl, getCachedPreviewE
 // --------------------------------------------------------------------------
 const ACCESS_URL_CACHE_TTL = 25 * 60 * 1000; // 25 minutes TTL
 const accessUrlCache = new Map(); // fileId -> { url: string, expiresAt: number }
+const heicGridThumbCache = new Map(); // fileId -> decoded blob object URL
+const heicGridThumbInFlight = new Map(); // fileId -> Promise<string|null>
 
 export const getCachedPhotosAccessUrl = (fileId) => {
   if (!fileId) return null;
@@ -119,6 +121,161 @@ const prepareDownloadPayload = (item) => ({
   mimeType: item.mimeType,
   s3Key: item.s3Key,
 });
+
+/**
+ * Grid/List tile thumbnail renderer:
+ * Ensures raw .heic/.heif URLs are never fed into <img> directly when thumbnailUrl is missing
+ * or fails, transparently decoding via heicDecoder.js with an in-memory Map cache.
+ */
+function PhotosThumbnailTile({ item, isVideo, propToken, imgClassName, iconClassName = 'w-8 h-8' }) {
+  const fileId = item?._id ? String(item._id) : null;
+  const isHeic = isHeicFile(item);
+  const rawThumb = item?.thumbnailUrl || item?.thumbnail;
+  const isRawHeicThumb = isHeic && typeof rawThumb === 'string' && /\.(heic|heif)(\?|#|$)/i.test(rawThumb);
+  const safeThumb = isRawHeicThumb ? null : rawThumb;
+  const initialSrc = safeThumb || (!isHeic ? (item?.url || item?.accessUrl) : null);
+
+  const [srcFailed, setSrcFailed] = useState(false);
+  const [heicDecodedUrl, setHeicDecodedUrl] = useState(() => (fileId ? heicGridThumbCache.get(fileId) || null : null));
+  const [heicFailed, setHeicFailed] = useState(false);
+  const [isInView, setIsInView] = useState(false);
+  const tileRef = useRef(null);
+
+  useEffect(() => {
+    setSrcFailed(false);
+    setHeicFailed(false);
+    if (fileId && heicGridThumbCache.has(fileId)) {
+      setHeicDecodedUrl(heicGridThumbCache.get(fileId));
+    } else {
+      setHeicDecodedUrl(null);
+    }
+  }, [fileId, initialSrc]);
+
+  const needsHeicDecode = isHeic && (!initialSrc || srcFailed) && !heicDecodedUrl && !heicFailed;
+
+  useEffect(() => {
+    if (!needsHeicDecode || isInView) return;
+    const el = tileRef.current;
+    if (!el) return;
+
+    if (typeof IntersectionObserver === 'undefined') {
+      setIsInView(true);
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          setIsInView(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: '200px' }
+    );
+
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [needsHeicDecode, isInView]);
+
+  useEffect(() => {
+    if (!needsHeicDecode || !isInView || !fileId) return;
+
+    if (heicGridThumbCache.has(fileId)) {
+      setHeicDecodedUrl(heicGridThumbCache.get(fileId));
+      return;
+    }
+
+    let isMounted = true;
+    let promise = heicGridThumbInFlight.get(fileId);
+    if (!promise) {
+      promise = (async () => {
+        try {
+          const token = propToken || (typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null);
+          let accessUrl = getCachedPhotosAccessUrl(fileId) || getCachedAccessUrl(fileId);
+          if (!accessUrl) {
+            accessUrl = await fetchAccessUrl(fileId, token);
+            if (accessUrl) {
+              setCachedPhotosAccessUrl(fileId, accessUrl);
+            }
+          }
+          if (!accessUrl) return null;
+
+          const isFilesCdn = typeof accessUrl === 'string' && (accessUrl.startsWith('https://files.cloudguard.site') || accessUrl.includes('.cloudguard.site'));
+          const res = await fetch(accessUrl, {
+            ...(isFilesCdn ? { credentials: 'include' } : {}),
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const arrayBuffer = await res.arrayBuffer();
+
+          const { decodeHeicToBlob } = await import('../utils/heicDecoder');
+          const blob = await decodeHeicToBlob(arrayBuffer, {
+            quality: 0.78,
+            maxDimension: 320,
+            priority: 'low',
+          });
+          if (!blob) return null;
+
+          const objectUrl = URL.createObjectURL(blob);
+          heicGridThumbCache.set(fileId, objectUrl);
+          return objectUrl;
+        } catch (err) {
+          console.warn(`[PhotosView] HEIC thumbnail decode failed for ${fileId}:`, err?.message || err);
+          return null;
+        } finally {
+          heicGridThumbInFlight.delete(fileId);
+        }
+      })();
+      heicGridThumbInFlight.set(fileId, promise);
+    }
+
+    promise.then((objectUrl) => {
+      if (!isMounted) return;
+      if (objectUrl) {
+        setHeicDecodedUrl(objectUrl);
+      } else {
+        setHeicFailed(true);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [needsHeicDecode, isInView, fileId, propToken]);
+
+  const activeSrc = !srcFailed && initialSrc ? initialSrc : (isHeic && !heicFailed ? heicDecodedUrl : null);
+
+  return (
+    <div ref={tileRef} className="w-full h-full flex items-center justify-center">
+      {activeSrc ? (
+        <img
+          src={activeSrc}
+          alt={item.name || ''}
+          loading="lazy"
+          decoding="async"
+          crossOrigin={typeof activeSrc === 'string' && (activeSrc.startsWith('https://files.cloudguard.site') || activeSrc.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
+          className={imgClassName}
+          onError={() => {
+            if (!srcFailed && initialSrc) {
+              setSrcFailed(true);
+            } else if (isHeic) {
+              setHeicFailed(true);
+            } else {
+              setSrcFailed(true);
+            }
+          }}
+        />
+      ) : (
+        <div className="w-full h-full flex items-center justify-center bg-neutral-200 dark:bg-zinc-800">
+          {isVideo ? (
+            <Play className={`${iconClassName} text-neutral-400 dark:text-zinc-500`} />
+          ) : (
+            <ImageIcon className={`${iconClassName} text-neutral-400 dark:text-zinc-500`} />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function PhotosView({ token: propToken }) {
   const toast = useToast();
@@ -986,43 +1143,23 @@ export default function PhotosView({ token: propToken }) {
                       </div>
 
                       {/* Card Thumbnail Container */}
-                      {(() => {
-                        const displayThumbnail = item.thumbnailUrl || item.thumbnail || item.url || item.accessUrl;
-                        return (
-                          <div className="relative w-full h-full overflow-hidden bg-neutral-100 dark:bg-neutral-900 flex items-center justify-center">
-                            {displayThumbnail ? (
-                              <img
-                                src={displayThumbnail}
-                                alt={item.name}
-                                loading="lazy"
-                                decoding="async"
-                                crossOrigin={typeof displayThumbnail === 'string' && (displayThumbnail.startsWith('https://files.cloudguard.site') || displayThumbnail.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
-                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                                onError={(e) => {
-                                  // Fallback if image URL fails to load
-                                  e.currentTarget.style.display = 'none';
-                                }}
-                              />
-                            ) : (
-                              <div className="w-full h-full flex items-center justify-center bg-neutral-200 dark:bg-zinc-800">
-                                {isVideo ? (
-                                  <Play className="w-8 h-8 text-neutral-400 dark:text-zinc-500"/>
-                                ) : (
-                                  <ImageIcon className="w-8 h-8 text-neutral-400 dark:text-zinc-500"/>
-                                )}
-                              </div>
-                            )}
+                      <div className="relative w-full h-full overflow-hidden bg-neutral-100 dark:bg-neutral-900 flex items-center justify-center">
+                        <PhotosThumbnailTile
+                          item={item}
+                          isVideo={isVideo}
+                          propToken={propToken}
+                          imgClassName="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                          iconClassName="w-8 h-8"
+                        />
 
-                            {/* Video Badge Overlay */}
-                            {isVideo && (
-                              <div className="absolute top-2 left-2 z-10 bg-black/60 backdrop-blur-md px-2 py-0.5 rounded-md flex items-center gap-1 text-[11px] font-medium text-white border border-white/10 select-none pointer-events-none">
-                                <Play className="w-3 h-3 fill-white"/>
-                                <span>Video</span>
-                              </div>
-                            )}
+                        {/* Video Badge Overlay */}
+                        {isVideo && (
+                          <div className="absolute top-2 left-2 z-10 bg-black/60 backdrop-blur-md px-2 py-0.5 rounded-md flex items-center gap-1 text-[11px] font-medium text-white border border-white/10 select-none pointer-events-none">
+                            <Play className="w-3 h-3 fill-white"/>
+                            <span>Video</span>
                           </div>
-                        );
-                      })()}
+                        )}
+                      </div>
 
                       <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity hidden sm:flex items-end p-2 pointer-events-none">
                         <span className="text-[11px] text-white truncate w-full font-medium">
@@ -1085,39 +1222,18 @@ export default function PhotosView({ token: propToken }) {
 
                         {/* 40x40 Thumbnail */}
                         <div className="w-10 h-10 rounded-lg bg-zinc-100 dark:bg-zinc-800 overflow-hidden shrink-0 flex items-center justify-center border border-zinc-200 dark:border-zinc-700/50 relative">
-                          {(() => {
-                            const displayThumbnail = item.thumbnailUrl || item.thumbnail || item.url || item.accessUrl;
-                            return (
-                              <>
-                                {displayThumbnail ? (
-                                  <img
-                                    src={displayThumbnail}
-                                    alt={item.name || ''}
-                                    className="w-full h-full object-cover object-center"
-                                    loading="lazy"
-                                    decoding="async"
-                                    crossOrigin={typeof displayThumbnail === 'string' && (displayThumbnail.startsWith('https://files.cloudguard.site') || displayThumbnail.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
-                                    onError={(e) => {
-                                      e.currentTarget.style.display = 'none';
-                                    }}
-                                  />
-                                ) : (
-                                  <div className="w-full h-full flex items-center justify-center bg-zinc-200 dark:bg-zinc-800">
-                                    {isVideo ? (
-                                      <Play className="w-4 h-4 text-zinc-400 dark:text-zinc-500" />
-                                    ) : (
-                                      <ImageIcon className="w-4 h-4 text-zinc-400 dark:text-zinc-500" />
-                                    )}
-                                  </div>
-                                )}
-                                {isVideo && (
-                                  <div className="absolute inset-0 bg-black/40 flex items-center justify-center pointer-events-none">
-                                    <Play className="w-3.5 h-3.5 fill-white text-white" />
-                                  </div>
-                                )}
-                              </>
-                            );
-                          })()}
+                          <PhotosThumbnailTile
+                            item={item}
+                            isVideo={isVideo}
+                            propToken={propToken}
+                            imgClassName="w-full h-full object-cover object-center"
+                            iconClassName="w-4 h-4"
+                          />
+                          {isVideo && (
+                            <div className="absolute inset-0 bg-black/40 flex items-center justify-center pointer-events-none">
+                              <Play className="w-3.5 h-3.5 fill-white text-white" />
+                            </div>
+                          )}
                         </div>
 
                         <div className="min-w-0">

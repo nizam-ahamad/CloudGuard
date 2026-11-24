@@ -3,6 +3,7 @@ import { Check, MoreVertical, FolderInput, Pencil, Info, Trash2, Play, FileText 
 import JSZip from 'jszip';
 import { fetchAccessUrl } from '../utils/accessUrlCache';
 import { generateCardPreview, getCachedCardPreview, getMediaThumbnail, pdfThumbnailCache } from '../utils/cardPreviewGenerator';
+import { isHeicFile, IMAGE_EXTENSIONS_REGEX } from '../utils/thumbnailHelper';
 
 // In-memory cache for extracted .docx snippets so re-renders/scrolls don't re-parse ZIPs
 const docxSnippetCache = new Map();
@@ -50,7 +51,7 @@ function getDocumentCardMeta(fileName = '', mimeType = '') {
     return { ext: ext || 'video', badgeText: 'VID', badgeColor: 'bg-rose-600 text-white' };
   }
   // 10. Image fallback
-  if (['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg', 'heic', 'heif', 'bmp', 'tiff', 'avif'].includes(ext) || mimeType.startsWith('image/')) {
+  if (IMAGE_EXTENSIONS_REGEX.test(fileName) || ['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg', 'heic', 'heif', 'bmp', 'tif', 'tiff', 'avif', 'ico'].includes(ext) || mimeType.startsWith('image/')) {
     return { ext: ext || 'img', badgeText: 'IMG', badgeColor: 'bg-purple-600 text-white' };
   }
 
@@ -129,12 +130,17 @@ function TextSnippetSheetCard({ ext, badgeText, badgeColor, snippet }) {
 export function FileCardPreviewBody({ file, token }) {
   const previewRef = useRef(null);
   const [isInView, setIsInView] = useState(false);
-  const [imgError, setImgError] = useState(false);
+  const [directImgError, setDirectImgError] = useState(false);
+  const [dynamicImgError, setDynamicImgError] = useState(false);
 
   const fileId = file?._id || file?.id;
+  const isHeic = isHeicFile(file);
   const pdfCachedUrl = fileId ? pdfThumbnailCache.get(String(fileId)) : null;
-  const directThumbnail = file?.thumbnailUrl || getMediaThumbnail(fileId) || pdfCachedUrl || file?.thumbnail;
-  const hasDirectThumbnail = Boolean(directThumbnail && !imgError);
+  const rawDirectThumbnail = file?.thumbnailUrl || getMediaThumbnail(fileId) || pdfCachedUrl || file?.thumbnail;
+  // Never feed raw .heic/.heif URL directly into <img>
+  const isRawHeicThumb = isHeic && typeof rawDirectThumbnail === 'string' && /\.(heic|heif)(\?|#|$)/i.test(rawDirectThumbnail);
+  const directThumbnail = isRawHeicThumb ? null : rawDirectThumbnail;
+  const hasDirectThumbnail = Boolean(directThumbnail && !directImgError);
 
   const [dynamicPreview, setDynamicPreview] = useState(() => {
     if (pdfCachedUrl) {
@@ -142,6 +148,11 @@ export function FileCardPreviewBody({ file, token }) {
     }
     return getCachedCardPreview(fileId);
   });
+
+  useEffect(() => {
+    setDirectImgError(false);
+    setDynamicImgError(false);
+  }, [fileId, directThumbnail]);
 
   const lowerName = (file?.name || file?.originalName || '').toLowerCase();
   const isDocx = lowerName.endsWith('.docx') && Number(file?.size || 0) <= 10 * 1024 * 1024;
@@ -160,7 +171,7 @@ export function FileCardPreviewBody({ file, token }) {
 
   const resolvedThumbnail =
     (hasDirectThumbnail ? directThumbnail : null) ||
-    (dynamicPreview?.type === 'image' && !imgError ? dynamicPreview.url : null);
+    (dynamicPreview?.type === 'image' && !dynamicImgError ? dynamicPreview.url : null);
 
   const { ext, badgeText, badgeColor } = getDocumentCardMeta(
     file?.name || file?.originalName || '',
@@ -195,20 +206,27 @@ export function FileCardPreviewBody({ file, token }) {
   useEffect(() => {
     if (!isInView || !fileId || isDoc) return;
 
-    if (pdfCachedUrl && !imgError) return;
-    const existingThumb = file?.thumbnailUrl || getMediaThumbnail(fileId) || file?.thumbnail;
-    if (existingThumb && !imgError) return;
+    if (pdfCachedUrl && !directImgError) return;
+    if (directThumbnail && !directImgError) return;
 
-    const cached = getCachedCardPreview(fileId);
-    if (cached) {
-      setDynamicPreview(cached);
-      return;
+    const shouldForceHeicDecode = isHeic && directImgError;
+    if (!shouldForceHeicDecode) {
+      const cached = getCachedCardPreview(fileId);
+      if (cached && cached.type !== 'none') {
+        setDynamicPreview(cached);
+        return;
+      }
+      if (cached && !isHeic) {
+        setDynamicPreview(cached);
+        return;
+      }
     }
 
     let isMounted = true;
-    generateCardPreview(file, token)
+    generateCardPreview(file, token, shouldForceHeicDecode ? { forceHeicDecode: true } : undefined)
       .then((res) => {
         if (isMounted && res) {
+          setDynamicImgError(false);
           setDynamicPreview(res);
         }
       })
@@ -217,7 +235,7 @@ export function FileCardPreviewBody({ file, token }) {
     return () => {
       isMounted = false;
     };
-  }, [isInView, fileId, file, token, imgError, isDoc, pdfCachedUrl]);
+  }, [isInView, fileId, file, token, directImgError, directThumbnail, isDoc, isHeic, pdfCachedUrl]);
 
   // Clean .docx text snippet extraction via JSZip & DOMParser (first ~400 chars)
   useEffect(() => {
@@ -293,7 +311,13 @@ export function FileCardPreviewBody({ file, token }) {
             loading="lazy"
             decoding="async"
             crossOrigin={typeof resolvedThumbnail === 'string' && (resolvedThumbnail.startsWith('https://files.cloudguard.site') || resolvedThumbnail.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
-            onError={() => setImgError(true)}
+            onError={() => {
+              if (hasDirectThumbnail) {
+                setDirectImgError(true);
+              } else {
+                setDynamicImgError(true);
+              }
+            }}
             className={`w-full h-full ${
               dynamicPreview?.isPdf || isPdf ? 'object-cover object-top' : 'object-cover'
             } transition-transform duration-200 group-hover:scale-105`}

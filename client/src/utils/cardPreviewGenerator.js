@@ -19,6 +19,7 @@
 import axios from 'axios';
 import { API_BASE_URL } from '../config';
 import { fetchAccessUrl } from './accessUrlCache';
+import { isHeicFile, IMAGE_EXTENSIONS_REGEX } from './thumbnailHelper';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
 // Module-level persistent cache for PDF page 1 thumbnails: fileId -> dataUrl (base64)
@@ -233,8 +234,7 @@ export function getFileCategory(fileName = '', mimeType = '') {
     return 'video';
   }
 
-  const imageExts = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg', 'heic', 'heif', 'bmp', 'tiff', 'avif'];
-  if (imageExts.includes(ext) || mime.startsWith('image/')) {
+  if (IMAGE_EXTENSIONS_REGEX.test(fileName) || mime.startsWith('image/')) {
     return 'image';
   }
 
@@ -453,25 +453,61 @@ function generateVideoSnapshot(accessUrl) {
 }
 
 /**
+ * 4. HEIC / HEIF Card Thumbnail Fallback: Decode off-thread via heicDecoder.js when B2 thumbnail is missing
+ */
+async function generateHeicCardThumbnail(accessUrl) {
+  try {
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timeoutId = setTimeout(() => controller?.abort(), 15000);
+    const isFilesCdn = typeof accessUrl === 'string' && (accessUrl.startsWith('https://files.cloudguard.site') || accessUrl.includes('.cloudguard.site'));
+    const res = await fetch(accessUrl, {
+      signal: controller?.signal,
+      ...(isFilesCdn ? { credentials: 'include' } : {}),
+    });
+    clearTimeout(timeoutId);
+    if (!res.ok) throw new Error(`HEIC fetch failed: ${res.status}`);
+    const arrayBuffer = await res.arrayBuffer();
+
+    const { decodeHeicToBlob } = await import('./heicDecoder');
+    const blob = await decodeHeicToBlob(arrayBuffer, {
+      quality: 0.78,
+      maxDimension: 320,
+      priority: 'low',
+    });
+    if (!blob) return null;
+
+    const url = URL.createObjectURL(blob);
+    return { type: 'image', url, isBlob: true, isHeic: true };
+  } catch (err) {
+    console.warn('[cardPreviewGenerator] HEIC card thumbnail generation failed:', err?.message || err);
+    return null;
+  }
+}
+
+/**
  * Main public entrypoint:
  * Generates or retrieves a cached card preview for the given file.
  */
-export async function generateCardPreview(file, token) {
+export async function generateCardPreview(file, token, options = {}) {
   if (!file) return null;
   const fileId = file._id || file.id;
   if (!fileId) return null;
   const key = String(fileId);
+  const forceHeicDecode = Boolean(options?.forceHeicDecode);
 
   // 1. Check persistent PDF Cache & LRU Cache
   if (pdfThumbnailCache.has(key)) {
     return { type: 'image', url: pdfThumbnailCache.get(key), isBlob: false, isPdf: true };
   }
-  const cached = getCachedCardPreview(key);
-  if (cached) return cached;
+  if (!forceHeicDecode) {
+    const cached = getCachedCardPreview(key);
+    if (cached) return cached;
+  }
 
   // 2. In-flight Promise deduplication
-  if (inFlightPromises.has(key)) {
-    return inFlightPromises.get(key);
+  const inFlightKey = forceHeicDecode ? `heic:${key}` : key;
+  if (inFlightPromises.has(inFlightKey)) {
+    return inFlightPromises.get(inFlightKey);
   }
 
   // 3. Determine file category
@@ -490,10 +526,12 @@ export async function generateCardPreview(file, token) {
     return noneResult;
   }
 
+  const isHeic = isHeicFile(file);
+
   const promise = (async () => {
     try {
       // 4. For Images and Videos: Check B2 lightweight .webp thumbnails first!
-      if (category === 'image' || category === 'video') {
+      if ((category === 'image' || category === 'video') && !forceHeicDecode) {
         let thumbUrl = file.thumbnailUrl || getMediaThumbnail(key);
         if (!thumbUrl) {
           await loadMediaThumbnails(token);
@@ -512,18 +550,16 @@ export async function generateCardPreview(file, token) {
         }
 
         // STRICT BANDWIDTH GUARDRAIL:
-        // Never download full-resolution original image (3-6 MB) for a thumbnail.
-        // If an image has no pre-generated B2 thumbnail, return 'none' to show stylized placeholder card.
-        if (category === 'image') {
+        // Never download full-resolution standard images (JPEG/PNG/etc.) for a card thumbnail.
+        // Only .heic/.heif images missing B2 thumbnails fall through to off-thread WASM decoding.
+        if (category === 'image' && !isHeic) {
           const noneResult = { type: 'none' };
           setCachedCardPreview(key, noneResult);
           return noneResult;
         }
-
-        // For videos genuinely missing B2 thumbnail, fall through to lightweight metadata snapshot
       }
 
-      // 5. For PDFs, Text, or videos without B2 thumbnail: obtain secure signed access URL
+      // 5. For PDFs, Text, un-thumbnailed HEIC/HEIF, or videos without B2 thumbnail: obtain secure signed access URL
       const accessUrl = await fetchAccessUrl(key, token);
       if (!accessUrl) {
         const noneResult = { type: 'none' };
@@ -542,6 +578,9 @@ export async function generateCardPreview(file, token) {
         if (category === 'video') {
           return await generateVideoSnapshot(accessUrl);
         }
+        if (isHeic) {
+          return await generateHeicCardThumbnail(accessUrl);
+        }
         return null;
       });
 
@@ -554,10 +593,10 @@ export async function generateCardPreview(file, token) {
       setCachedCardPreview(key, noneResult);
       return noneResult;
     } finally {
-      inFlightPromises.delete(key);
+      inFlightPromises.delete(inFlightKey);
     }
   })();
 
-  inFlightPromises.set(key, promise);
+  inFlightPromises.set(inFlightKey, promise);
   return promise;
 }

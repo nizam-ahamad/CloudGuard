@@ -18,7 +18,7 @@ const s3Client = new S3Client({
   },
 });
 
-const MEDIA_EXTENSIONS_REGEX = /\.(jpe?g|png|gif|webp|svg|bmp|ico|tiff|heic|mp4|mkv|mov|avi|webm|wmv|flv|m4v|3gp)$/i;
+const MEDIA_EXTENSIONS_REGEX = /\.(jpe?g|png|webp|gif|bmp|svg|avif|heic|heif|tiff?|ico|mp4|mkv|mov|avi|webm|wmv|flv|m4v|3gp)$/i;
 const MEDIA_MIME_REGEX = /^(image|video)\//i;
 
 const handleGetPhotos = async (req, res) => {
