@@ -22,14 +22,17 @@ function isProdDomain(res) {
   const reqHost = req?.headers?.host || (typeof req?.get === 'function' ? req.get('host') : '') || '';
   const reqOrigin = req?.headers?.origin || (typeof req?.get === 'function' ? req.get('origin') : '') || '';
   const forwardedHost = req?.headers?.['x-forwarded-host'] || (typeof req?.get === 'function' ? req.get('x-forwarded-host') : '') || '';
+  const reqReferer = req?.headers?.referer || (typeof req?.get === 'function' ? req.get('referer') : '') || '';
 
   return (
     process.env.NODE_ENV === 'production' ||
     (process.env.CLIENT_URL || '').includes('cloudguard.site') ||
+    (process.env.API_URL || '').includes('cloudguard.site') ||
     (process.env.CDN_DOWNLOAD_URL || '').includes('cloudguard.site') ||
     reqHost.includes('cloudguard.site') ||
     reqOrigin.includes('cloudguard.site') ||
-    forwardedHost.includes('cloudguard.site')
+    forwardedHost.includes('cloudguard.site') ||
+    reqReferer.includes('cloudguard.site')
   );
 }
 

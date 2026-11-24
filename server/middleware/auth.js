@@ -59,7 +59,7 @@ const authMiddleware = async (req, res, next) => {
   }
 
   if (!token) {
-    console.warn('[Auth 401] Access denied: No token provided in cookies, header, or query', { path: req.originalUrl, ip: req.ip });
+    console.warn('[Auth 401]', { path: req.originalUrl, reason: 'no_token', hasCookieHeader: Boolean(req.headers?.cookie), ip: req.ip });
     return res.status(401).json({ error: 'Access denied. Please log in.', message: 'Access denied. Please log in.' });
   }
 
@@ -70,7 +70,7 @@ const authMiddleware = async (req, res, next) => {
     const userId = decoded.userId || decoded.id || decoded._id;
 
     if (!userId) {
-      console.warn('[Auth 401] Invalid token payload: missing userId', { path: req.originalUrl, ip: req.ip });
+      console.warn('[Auth 401]', { path: req.originalUrl, reason: 'missing_userId', hasCookieHeader: Boolean(req.headers?.cookie), ip: req.ip });
       return res.status(401).json({ error: 'Invalid token payload.', message: 'Invalid token payload.' });
     }
 
@@ -79,7 +79,7 @@ const authMiddleware = async (req, res, next) => {
       .lean();
 
     if (!dbUser) {
-      console.warn('[Auth 401] Account no longer exists for userId:', userId);
+      console.warn('[Auth 401]', { path: req.originalUrl, reason: 'user_not_found', userId, hasCookieHeader: Boolean(req.headers?.cookie) });
       return res.status(401).json({
         error: 'Account no longer exists. Session invalidated.',
         message: 'Account no longer exists. Session invalidated.'
@@ -87,7 +87,7 @@ const authMiddleware = async (req, res, next) => {
     }
 
     if (dbUser.isVerified === false) {
-      console.warn('[Auth 401] Account not verified for userId:', userId);
+      console.warn('[Auth 401]', { path: req.originalUrl, reason: 'unverified_user', userId, hasCookieHeader: Boolean(req.headers?.cookie) });
       return res.status(401).json({
         error: 'Account not verified.',
         message: 'Account not verified.'
@@ -98,7 +98,7 @@ const authMiddleware = async (req, res, next) => {
     const dbVer = Number(dbUser.tokenVersion ?? 0);
 
     if (tokenVer !== dbVer) {
-      console.warn('[Auth 401] tokenVersion mismatch', { tokenVer, dbVer, userId: dbUser._id, path: req.originalUrl });
+      console.warn('[Auth 401]', { path: req.originalUrl, reason: 'tokenVersion_mismatch', tokenVer, dbVer, userId: dbUser._id, hasCookieHeader: Boolean(req.headers?.cookie) });
       return res.status(401).json({
         error: 'Session revoked. Please sign in again.',
         message: 'Session revoked. Please sign in again.'
@@ -124,7 +124,7 @@ const authMiddleware = async (req, res, next) => {
 
     next();
   } catch (err) {
-    console.warn('[Auth 401] JWT verification failed:', err.message, { path: req.originalUrl });
+    console.warn('[Auth 401]', { path: req.originalUrl, reason: 'jwt_verify_error', message: err.message, hasCookieHeader: Boolean(req.headers?.cookie) });
     return res.status(401).json({ error: 'Invalid or expired token.', message: 'Invalid or expired token.' });
   }
 };

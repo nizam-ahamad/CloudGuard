@@ -679,7 +679,7 @@ function App() {
       if (!token) return;
 
       const res = await axios.get(`${API_BASE_URL}/api/storage-stats`, {
-        headers: token && token !== 'cookie-session' ? { Authorization: `Bearer ${token}` } : {},
+        headers: getAuthHeaders(token),
       });
 
       if (res.data) {
