@@ -168,6 +168,17 @@ export async function createFolderHierarchy(
 
   if (dirSet.size === 0) return folderMap;
 
+  // Validate each folder segment against 50-character limit before network calls
+  for (const dirPath of dirSet) {
+    const segments = dirPath.split('/');
+    for (const segment of segments) {
+      const trimmed = segment.trim();
+      if (trimmed.length > 50) {
+        throw new Error(`Folder name "${trimmed.slice(0, 30)}..." exceeds the 50-character limit. Please rename it and try again.`);
+      }
+    }
+  }
+
   // Sort all unique directory paths ascending by depth (parents first)
   const sortedPaths = Array.from(dirSet).sort((a, b) => {
     const depthA = a.split('/').length;
@@ -233,8 +244,8 @@ export async function createFolderHierarchy(
       console.warn('[FolderUpload] /api/folders/ensure-tree returned 404. Falling back to depth-batched loop.');
       useFallback = true;
     } else {
-      console.warn('[FolderUpload] Bulk folder creation encountered error, falling back:', err.message);
-      useFallback = true;
+      const msg = err.response?.data?.error || err.message || 'Failed to create folder structure';
+      throw new Error(msg);
     }
   }
 

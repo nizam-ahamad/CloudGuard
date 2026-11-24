@@ -919,7 +919,11 @@ router.post('/ensure-tree', authMiddleware, async (req, res) => {
       const parts = cleanPath.split('/').filter(Boolean);
       let prefix = '';
       for (const part of parts) {
-        prefix = prefix ? `${prefix}/${part}` : part;
+        const segment = part.trim();
+        if (segment.length > 50) {
+          return res.status(400).json({ error: 'Folder name cannot exceed 50 characters' });
+        }
+        prefix = prefix ? `${prefix}/${segment}` : segment;
         allDirsSet.add(prefix);
       }
     }
@@ -1006,6 +1010,9 @@ router.post('/ensure-tree', authMiddleware, async (req, res) => {
             folderMap[item.path] = newIdStr;
             existingLookup.set(lookupKey, newIdStr);
           } catch (err) {
+            if (err.name === 'ValidationError') {
+              return res.status(400).json({ error: 'Folder name cannot exceed 50 characters' });
+            }
             if (err.code === 11000) {
               const collided = await Folder.findOne(
                 buildTenantQuery(rawUserId, {
@@ -1033,6 +1040,9 @@ router.post('/ensure-tree', authMiddleware, async (req, res) => {
     });
   } catch (err) {
     console.error('Error in /api/folders/ensure-tree:', err);
+    if (err.name === 'ValidationError') {
+      return res.status(400).json({ error: 'Folder name cannot exceed 50 characters' });
+    }
     return res.status(500).json({ error: err.message || 'Failed to ensure folder tree' });
   }
 });

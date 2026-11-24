@@ -114,6 +114,11 @@
     - `client/src/config.js` guarantees that `API_BASE_URL` resolves to `https://api.cloudguard.site` whenever `window.location.hostname` ends with `cloudguard.site` or `import.meta.env.PROD` is true, eliminating blank-string fallbacks that triggered relative `/api/...` 404s on Cloudflare Pages.
     - All remaining client modules making backend API calls (`Dashboard.jsx`, `PhotosView.jsx`, `UploadContext.jsx`, `downloadHelper.js`, `BinView.jsx`, `StorageQuotaBanner.jsx`, `SubscriptionAlertBanner.jsx`, `FolderDetailsModal.jsx`, `MoveModal.jsx`, `MediaCarouselModal.jsx`, `Settings.jsx`, `api.js`, `accessUrlCache.js`, `folderUpload.js`, `cardPreviewGenerator.js`) enforce `{ withCredentials: true }` (or `credentials: 'include'`) and systematically strip or omit invalid `Authorization: Bearer null` / `Bearer cookie-session` placeholders.
     - Status and stats polling (`StorageQuotaBanner.jsx`, `SubscriptionAlertBanner.jsx`, `cardPreviewGenerator.js`) inspect active session status (`cg_session_active === '1'`) instead of aborting early on missing raw `localStorage` tokens.
+18. **Folder Upload 50-Character Segment Validation & Toast Error Propagation:**
+    - Folder hierarchy ingestion in `client/src/utils/folderUpload.js` (`createFolderHierarchy`) pre-validates each directory segment against the 50-character limit (`segment.trim().length > 50`) and throws a descriptive error before issuing any network requests.
+    - `POST /api/folders/ensure-tree` only falls back to the legacy per-folder loop on HTTP 404; all other errors (400, 401, 403, 500) propagate their error messages directly without fallback masking.
+    - On the backend (`server/routes/folders.js`), `POST /api/folders/ensure-tree` validates segment lengths against 50 characters and catches Mongoose `ValidationError` to return a clean HTTP 400 (`{ error: 'Folder name cannot exceed 50 characters' }`) rather than 500.
+    - `processFolderUpload` in `client/src/App.jsx` catches folder upload errors, extracts `err?.response?.data?.error || err?.message || 'Failed to upload folder'`, and surfaces it in user toasts, eliminating raw Axios status code errors (`Request failed with status code 400`).
 
 ---
 

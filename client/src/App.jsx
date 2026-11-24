@@ -2928,8 +2928,9 @@ function App() {
         return;
       }
       console.error('Folder upload processing error:', err);
+      const errorMsg = err?.response?.data?.error || err?.message || 'Failed to upload folder';
       if (toast && typeof toast.error === 'function') {
-        toast.error(err.message || 'Failed to process folder upload');
+        toast.error(errorMsg);
       }
     } finally {
       if (typeof clearFolderPrep === 'function') {
