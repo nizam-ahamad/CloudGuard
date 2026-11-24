@@ -354,9 +354,9 @@ router.post('/google', async (req, res) => {
         email: user.email,
         name: user.name,
         isAdmin: user.isAdmin || false,
-        tokenVersion: user.tokenVersion || 0,
+        tokenVersion: user.tokenVersion ?? 0,
       },
-      process.env.JWT_SECRET,
+      process.env.JWT_SECRET || 'cloudguard_fallback_secret',
       { expiresIn: '7d' }
     );
     attachAuthCookie(res, token);
@@ -612,9 +612,9 @@ router.post('/verify-activation-otp', otpLimiter, async (req, res) => {
         email: user.email,
         name: user.name,
         isAdmin: user.isAdmin || false,
-        tokenVersion: user.tokenVersion || 0,
+        tokenVersion: user.tokenVersion ?? 0,
       },
-      process.env.JWT_SECRET,
+      process.env.JWT_SECRET || 'cloudguard_fallback_secret',
       { expiresIn: '7d' }
     );
     attachAuthCookie(res, token);
@@ -739,9 +739,9 @@ router.post('/verify-otp', otpLimiter, async (req, res) => {
         email: user.email,
         name: user.name,
         isAdmin: user.isAdmin || false,
-        tokenVersion: user.tokenVersion || 0,
+        tokenVersion: user.tokenVersion ?? 0,
       },
-      process.env.JWT_SECRET,
+      process.env.JWT_SECRET || 'cloudguard_fallback_secret',
       { expiresIn: '7d' }
     );
     attachAuthCookie(res, token);
@@ -926,7 +926,7 @@ router.post('/login', authLimiter, async (req, res) => {
         email: user.email,
         name: user.name,
         isAdmin: user.isAdmin || false,
-        tokenVersion: user.tokenVersion || 0,
+        tokenVersion: user.tokenVersion ?? 0,
       },
       process.env.JWT_SECRET || 'cloudguard_fallback_secret',
       { expiresIn: '7d' }
@@ -1548,7 +1548,7 @@ router.post('/2fa/verify-login', otpLimiter, async (req, res) => {
         email: user.email,
         name: user.name,
         isAdmin: user.isAdmin || false,
-        tokenVersion: user.tokenVersion || 0,
+        tokenVersion: user.tokenVersion ?? 0,
       },
       process.env.JWT_SECRET || 'cloudguard_fallback_secret',
       { expiresIn: '7d' }

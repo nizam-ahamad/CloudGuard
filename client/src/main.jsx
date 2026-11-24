@@ -46,6 +46,8 @@ window.fetch = function (input, init = {}) {
 
   const isCrossSubdomain =
     url.startsWith('/api') ||
+    url.includes('/api') ||
+    url.includes('api.cloudguard.site') ||
     url.includes('cloudguard.site') ||
     url.includes('localhost:5000') ||
     (API_BASE_URL && url.startsWith(API_BASE_URL));
