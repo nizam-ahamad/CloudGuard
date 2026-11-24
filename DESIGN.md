@@ -254,13 +254,21 @@ To protect against MongoDB NoSQL operator injection, ASCII control-character cor
 - **Trial Consumption on Re-Registration:** If an email associated with a deleted account re-registers via local signup or Google OAuth, account creation succeeds normally, but the free trial is marked as consumed (`trialAlreadyUsed: true`, `plan: 'free'`, `trialExpiresAt = new Date()`, `storageLimit = 0`, `subscription.status = 'expired'`), requiring a paid subscription to upload assets.
 - **Refund Claim Persistence:** Prior refund claims (`claimedRefund: true`) carry over to block repeat 7-day annual refunds (`hasPriorRefund = true` in `/api/payments/subscription-status`).
 
+### 3.5. Env-Gated Cloudflare Turnstile Bot Protection
+- **Bot Mitigation on Public Auth Endpoints:** Public email/password authentication routes (`/api/auth/register`, `/api/auth/login`, `/api/auth/forgot-password`) verify incoming single-use `turnstileToken` strings to mitigate automated credential stuffing, mass-registration bots, and OTP flooding attacks.
+- **Fail-Open Safe Rollout Guard:** When `TURNSTILE_SECRET_KEY` is unconfigured, server verification immediately returns `{ success: true, skipped: true }`. Local dev environments and pre-key stages remain fully operational without friction.
+- **Edge Verification Deadline:** Verification calls to Cloudflare's `siteverify` endpoint enforce an aggressive 4000ms timeout (`AbortSignal.timeout(4000)`) preventing third-party latency from degrading auth response times.
+- **OAuth & TOTP Exemption:** Google OAuth (`/api/auth/google`), logout (`/api/auth/logout`), and 2FA challenge resolution (`/api/auth/2fa/verify-login`) do not require Turnstile verification.
+- **Non-Breaking Client Integration:** `Auth.jsx` inspects `VITE_TURNSTILE_SITE_KEY`. If present, it asynchronously injects the Turnstile explicit script, rendering the dark-theme widget in `login`, `signup`, and `forgot-password` views with automatic single-use token resets on errors. If empty, the widget is omitted and forms submit normally.
+
 ---
 
 ## 4. Changelog & Architectural Milestones
 
 | Commit | Date | Milestone Description |
 | :--- | :--- | :--- |
-| `HEAD` | 2026-11-24 | **Repeat Trial & Refund Cycling Prevention (Phase 3):** Implemented DPDP-compliant zero-PII salted HMAC-SHA256 deletion log (`DeletedAccountLog`), consumed-trial gating on re-registration (`storageLimit: 0`), and persistent refund claim tracking in `payments.js`. |
+| `HEAD` | 2026-11-24 | **Cloudflare Turnstile Bot Defense (Phase 4):** Added env-gated Turnstile verification (`verifyTurnstileToken`) to register, login, and forgot-password routes with 4000ms timeout, fail-open dev rollout, dynamic dark-theme widget in `Auth.jsx`, and Google OAuth exemption. |
+| `7fc5abb` | 2026-11-24 | **Repeat Trial & Refund Cycling Prevention (Phase 3):** Implemented DPDP-compliant zero-PII salted HMAC-SHA256 deletion log (`DeletedAccountLog`), consumed-trial gating on re-registration (`storageLimit: 0`), and persistent refund claim tracking in `payments.js`. |
 | `99cb172` | 2026-11-23 | **HttpOnly Session Auth Migration & CSRF Guard (Phase 2):** Migrated primary API session JWT from localStorage to HttpOnly SameSite=None cookie (`cg_auth_token`) with Origin CSRF protection, Bearer header fallback, tokenVersion revocation, and `cg_session_active` client state. |
 | `2a2bf10` | 2026-11-23 | **Security Hardening & Documentation Sync (Phase 1):** Enforced strict tenant folder ownership on upload init (`/presigned-url` and `/multipart/init`), explicitly bound AI microservice to loopback (`127.0.0.1:8000`), wrote comprehensive public `README.md` with mandatory auto-update rule, and synchronized `DESIGN.md`. |
 | `07c8a58` | 2026-11-23 | **Multipart 16 MB Chunking & 6-Stream Concurrency:** Set adaptive 10–16 MB chunk sizing in `files.js` and 6 concurrent streaming workers in `UploadContext.jsx` for sustained mobile throughput. |

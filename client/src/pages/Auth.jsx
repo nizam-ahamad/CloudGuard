@@ -7,6 +7,8 @@ import { useToast } from '../context/ToastContext';
 import SharkLogo from '../components/SharkLogo';
 import { API_BASE_URL } from '../config';
 
+const TURNSTILE_SITE_KEY = import.meta.env.VITE_TURNSTILE_SITE_KEY || '';
+
 export default function AuthPage() {
   const [searchParams] = useSearchParams();
   const urlRedirect = searchParams.get('redirect') || '';
@@ -83,6 +85,106 @@ export default function AuthPage() {
   const navigate = useNavigate();
   const toast = useToast();
   const inputRefs = useRef([]);
+
+  // Turnstile Bot Protection State & Refs
+  const [turnstileToken, setTurnstileToken] = useState('');
+  const [turnstileError, setTurnstileError] = useState('');
+  const turnstileContainerRef = useRef(null);
+  const turnstileWidgetIdRef = useRef(null);
+
+  const resetTurnstile = useCallback(() => {
+    setTurnstileToken('');
+    if (window.turnstile && turnstileWidgetIdRef.current !== null) {
+      try {
+        window.turnstile.reset(turnstileWidgetIdRef.current);
+      } catch (e) {
+        // ignore
+      }
+    }
+  }, []);
+
+  // Dynamic Cloudflare Turnstile loader & renderer
+  useEffect(() => {
+    if (!TURNSTILE_SITE_KEY) return;
+    if (isOtpMode || isNewPasswordMode || is2FAMode) return;
+
+    let isMounted = true;
+
+    const renderWidget = () => {
+      if (!isMounted || !turnstileContainerRef.current || !window.turnstile) return;
+      try {
+        if (turnstileWidgetIdRef.current !== null) {
+          try {
+            window.turnstile.remove(turnstileWidgetIdRef.current);
+          } catch (e) {}
+          turnstileWidgetIdRef.current = null;
+        }
+        turnstileContainerRef.current.innerHTML = '';
+        const widgetId = window.turnstile.render(turnstileContainerRef.current, {
+          sitekey: TURNSTILE_SITE_KEY,
+          theme: 'dark',
+          size: 'normal',
+          callback: (token) => {
+            if (isMounted) {
+              setTurnstileToken(token);
+              setTurnstileError('');
+            }
+          },
+          'expired-callback': () => {
+            if (isMounted) {
+              setTurnstileToken('');
+            }
+          },
+          'error-callback': () => {
+            if (isMounted) {
+              setTurnstileToken('');
+              setTurnstileError('Security verification failed. Please refresh or retry.');
+            }
+          },
+        });
+        turnstileWidgetIdRef.current = widgetId;
+      } catch (err) {
+        console.warn('[Turnstile] Render error:', err);
+      }
+    };
+
+    const scriptId = 'cf-turnstile-script';
+    let script = document.getElementById(scriptId);
+
+    if (!script) {
+      script = document.createElement('script');
+      script.id = scriptId;
+      script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+      script.async = true;
+      script.defer = true;
+      script.onload = () => {
+        renderWidget();
+      };
+      script.onerror = () => {
+        if (isMounted) {
+          setTurnstileError('Failed to load security verification challenge.');
+        }
+      };
+      document.head.appendChild(script);
+    } else if (window.turnstile) {
+      renderWidget();
+    } else {
+      script.addEventListener('load', renderWidget);
+    }
+
+    return () => {
+      isMounted = false;
+      if (script) {
+        script.removeEventListener('load', renderWidget);
+      }
+      if (window.turnstile && turnstileWidgetIdRef.current !== null) {
+        try {
+          window.turnstile.remove(turnstileWidgetIdRef.current);
+        } catch (e) {}
+        turnstileWidgetIdRef.current = null;
+      }
+    };
+  }, [isSignUp, isForgotPassword, isOtpMode, isNewPasswordMode, is2FAMode]);
 
   // Timer Effect for OTP
   useEffect(() => {
@@ -466,7 +568,10 @@ export default function AuthPage() {
           return;
         }
         setPendingEmail(formData.email);
-        await axios.post(`${API_BASE_URL}/api/auth/forgot-password`, { email: formData.email });
+        await axios.post(`${API_BASE_URL}/api/auth/forgot-password`, {
+          email: formData.email,
+          turnstileToken,
+        });
         setIsOtpMode(true);
         setTimer(60);
         setOtpValues(['', '', '', '', '', '']);
@@ -496,6 +601,7 @@ export default function AuthPage() {
           password: formData.password,
           consentGiven: true,
           isAdultConfirmed: true,
+          turnstileToken,
         });
 
         if (res.data?.requireOtp) {
@@ -516,6 +622,7 @@ export default function AuthPage() {
       const res = await axios.post(endpoint, {
         email: formData.email.toLowerCase().trim(),
         password: formData.password,
+        turnstileToken,
       });
 
       console.log('[Auth] Server response:', res.data);
@@ -582,6 +689,7 @@ export default function AuthPage() {
 
       setFormError(errorMessage);
       toast.error(errorMessage, { duration: 5000 });
+      resetTurnstile();
     } finally {
       setIsLoading(false);
     }
@@ -877,6 +985,7 @@ export default function AuthPage() {
                 onClick={() => {
                   setIsForgotPassword(false);
                   setFormError('');
+                  resetTurnstile();
                 }}
                 className="text-[11px] text-neutral-400 hover:text-white transition-colors cursor-pointer"
               >
@@ -910,6 +1019,16 @@ export default function AuthPage() {
                 <p className="text-[11px] text-red-400 text-center">{formError}</p>
               )}
 
+              {/* Turnstile Bot Protection Widget */}
+              {TURNSTILE_SITE_KEY && (
+                <div className="flex flex-col items-center justify-center my-2">
+                  <div ref={turnstileContainerRef} className="min-h-[65px] flex items-center justify-center" />
+                  {turnstileError && (
+                    <p className="text-[11px] text-amber-400 mt-1 text-center">{turnstileError}</p>
+                  )}
+                </div>
+              )}
+
               <button
                 type="submit"
                 disabled={isLoading}
@@ -937,6 +1056,7 @@ export default function AuthPage() {
                   setIsSignUp(false);
                   setFormError('');
                   setConsentAgreed(false);
+                  resetTurnstile();
                 }}
                 className={`pb-1.5 text-sm font-semibold transition-colors cursor-pointer mr-5 ${
                   !isSignUp ? 'text-white border-b-2 border-white' : 'text-neutral-500 hover:text-neutral-300'
@@ -950,6 +1070,7 @@ export default function AuthPage() {
                   setIsSignUp(true);
                   setFormError('');
                   setConsentAgreed(false);
+                  resetTurnstile();
                 }}
                 className={`pb-1.5 text-sm font-semibold transition-colors cursor-pointer ${
                   isSignUp ? 'text-white border-b-2 border-white' : 'text-neutral-500 hover:text-neutral-300'
@@ -1032,6 +1153,7 @@ export default function AuthPage() {
                       onClick={() => {
                         setIsForgotPassword(true);
                         setFormError('');
+                        resetTurnstile();
                       }}
                       className="text-[10px] text-neutral-400 hover:text-white transition-colors cursor-pointer"
                     >
@@ -1088,6 +1210,16 @@ export default function AuthPage() {
                       Terms of Service
                     </a>.
                   </label>
+                </div>
+              )}
+
+              {/* Turnstile Bot Protection Widget */}
+              {TURNSTILE_SITE_KEY && (
+                <div className="flex flex-col items-center justify-center my-2">
+                  <div ref={turnstileContainerRef} className="min-h-[65px] flex items-center justify-center" />
+                  {turnstileError && (
+                    <p className="text-[11px] text-amber-400 mt-1 text-center">{turnstileError}</p>
+                  )}
                 </div>
               )}
 

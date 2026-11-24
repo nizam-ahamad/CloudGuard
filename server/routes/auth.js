@@ -75,6 +75,41 @@ const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 // Cryptographically secure 6-digit OTP generator (prevents PRNG state reconstruction)
 const generateOtp = () => crypto.randomInt(100000, 1000000).toString();
 
+/**
+ * Env-gated Cloudflare Turnstile token verification helper.
+ * If TURNSTILE_SECRET_KEY is not configured, safely bypasses verification so local/dev environments never lock out users.
+ */
+async function verifyTurnstileToken(token, remoteIp) {
+  const secretKey = process.env.TURNSTILE_SECRET_KEY;
+  if (!secretKey) {
+    return { success: true, skipped: true };
+  }
+  if (!token) {
+    return { success: false, error: 'Please complete the security verification check.' };
+  }
+  try {
+    const params = new URLSearchParams({
+      secret: secretKey,
+      response: token,
+      remoteip: remoteIp || '',
+    });
+
+    const response = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+      method: 'POST',
+      body: params,
+      signal: AbortSignal.timeout(4000),
+    });
+    const data = await response.json();
+    if (data?.success === true) {
+      return { success: true };
+    }
+    return { success: false, error: 'Security verification failed. Please retry.' };
+  } catch (err) {
+    console.error('[Turnstile Verification Error]', err.message);
+    return { success: false, error: 'Security verification timed out. Please retry.' };
+  }
+}
+
 // High-risk disposable / temporary email service domain roots
 const DISPOSABLE_EMAIL_ROOTS = new Set([
   '10minutemail.com',
@@ -338,6 +373,11 @@ router.post('/google', async (req, res) => {
 // ==========================================
 router.post('/register', authLimiter, async (req, res) => {
   try {
+    const turnstileCheck = await verifyTurnstileToken(req.body?.turnstileToken, req.ip);
+    if (!turnstileCheck.success) {
+      return res.status(400).json({ error: turnstileCheck.error, message: turnstileCheck.error });
+    }
+
     const { name, email, password, consentGiven, isAdultConfirmed } = req.body || {};
     if (typeof name !== 'string' || typeof email !== 'string' || typeof password !== 'string') {
       return res.status(400).json({ error: 'Invalid input format', message: 'Invalid input format' });
@@ -769,6 +809,11 @@ router.post('/resend-otp', otpLimiter, async (req, res) => {
 // ==========================================
 router.post('/login', authLimiter, async (req, res) => {
   try {
+    const turnstileCheck = await verifyTurnstileToken(req.body?.turnstileToken, req.ip);
+    if (!turnstileCheck.success) {
+      return res.status(400).json({ error: turnstileCheck.error, message: turnstileCheck.error });
+    }
+
     const { email, password } = req.body || {};
     if (typeof email !== 'string' || typeof password !== 'string') {
       return res.status(400).json({ error: 'Invalid input format', message: 'Invalid input format' });
@@ -925,6 +970,11 @@ router.post('/logout', authMiddleware, async (req, res) => {
 // ==========================================
 router.post('/forgot-password', otpLimiter, async (req, res) => {
   try {
+    const turnstileCheck = await verifyTurnstileToken(req.body?.turnstileToken, req.ip);
+    if (!turnstileCheck.success) {
+      return res.status(400).json({ error: turnstileCheck.error, message: turnstileCheck.error });
+    }
+
     const { email } = req.body || {};
     if (typeof email !== 'string') {
       return res.status(400).json({ error: 'Invalid input format', message: 'Invalid input format' });

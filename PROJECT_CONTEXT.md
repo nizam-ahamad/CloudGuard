@@ -37,6 +37,14 @@ To prevent repeat free-trial farming and refund cycling after account deletion w
 2. **Free-Trial Consumption on Re-Signup:** If a previously deleted email re-registers via local registration or Google OAuth, the system permits account creation but immediately marks the trial as consumed (`trialAlreadyUsed: true`, `plan: 'free'`, `trialExpiresAt = new Date()`, `storageLimit = 0`, `subscription.status = 'expired'`). The user cannot upload assets until subscribing to a paid plan.
 3. **Persistent Refund Abuse Mitigation:** Prior refund history (`claimedRefund: true`) persists across account cycles, permanently preventing repeat 7-day annual refunds (`server/routes/payments.js`).
 
+### 🤖 Env-Gated Cloudflare Turnstile Bot Protection
+To eliminate automated credential stuffing, bot-driven trial farming, and OTP flooding:
+1. **Protected Endpoints:** Email/password registration (`/api/auth/register`), login (`/api/auth/login`), and password-reset OTP dispatch (`/api/auth/forgot-password`) enforce single-use Turnstile token validation.
+2. **Safe Rollout Guard:** Verification is strictly env-gated (`TURNSTILE_SECRET_KEY`). If unconfigured, the verification helper safely skips validation (`{ success: true, skipped: true }`), ensuring local development and staging environments function seamlessly.
+3. **Bounded Verification Latency:** Backend verification to Cloudflare's `siteverify` API is bound to a 4000ms timeout (`AbortSignal.timeout(4000)`).
+4. **OAuth & Secondary Auth Exemption:** Google OAuth (`/api/auth/google`), 2FA challenges (`/api/auth/2fa/verify-login`), and logout (`/api/auth/logout`) remain completely unencumbered by Turnstile.
+5. **Adaptive Client Widget:** The client (`Auth.jsx`) renders a dark-theme Turnstile challenge (`theme: 'dark'`) only when `VITE_TURNSTILE_SITE_KEY` is present, with automatic token refresh on errors and mode switches.
+
 ### ⚡ Zero-EC2-Load & Zero-Egress Storage Architecture
 
 Traditional cloud storage platforms process and transcode files on expensive backend application servers, driving up compute bills and introducing severe I/O bottlenecks. CloudGuard operates on a radically different architectural model:

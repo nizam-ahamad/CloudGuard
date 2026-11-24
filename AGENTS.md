@@ -69,6 +69,12 @@
    - Upon permanent account deletion (`DELETE /api/auth/account`), all personal data, files, and folders are purged immediately. To prevent repeat free-trial farming and refund cycling without retaining plaintext PII, a one-way HMAC-SHA256 salted hash (`emailHash = hashDeletedEmail(email)`) is upserted into `DeletedAccountLog` alongside `hadTrial: true`, `claimedRefund: boolean`, and `deletedAt`.
    - On re-registration or Google auth provisioning with a previously deleted email, account creation is permitted, but the free trial is marked consumed (`trialAlreadyUsed: true`, `plan: 'free'`, `trialExpiresAt = new Date()`, `storageLimit = 0`, `subscription.status = 'expired'`).
    - Prior refund claims (`claimedRefund: true`) permanently transfer to prevent repeat 7-day annual refunds (`hasPriorRefund = true` in `server/routes/payments.js`).
+10. **Env-Gated Cloudflare Turnstile Bot Defense (`VITE_TURNSTILE_SITE_KEY` / `TURNSTILE_SECRET_KEY`):**
+    - Email/password registration (`POST /api/auth/register`), login (`POST /api/auth/login`), and password-reset OTP requests (`POST /api/auth/forgot-password`) enforce Turnstile token verification via `verifyTurnstileToken(token, remoteIp)`.
+    - **Safe Fallback Guard:** If `TURNSTILE_SECRET_KEY` is undefined, verification is safely skipped (`{ success: true, skipped: true }`), preventing lockout in local development and environments without configured keys.
+    - When `TURNSTILE_SECRET_KEY` is present, verification executes against `https://challenges.cloudflare.com/turnstile/v0/siteverify` using a 4000ms `AbortSignal.timeout(4000)` deadline.
+    - Google OAuth (`/api/auth/google`), session logout (`/api/auth/logout`), and 2FA verification (`/api/auth/2fa/verify-login`) remain completely unencumbered by Turnstile.
+    - Client renders Turnstile dynamically inside `Auth.jsx` in dark mode (`theme: 'dark'`) only when `VITE_TURNSTILE_SITE_KEY` is populated, automatically resetting the widget on failure or view switch.
 
 ---
 
