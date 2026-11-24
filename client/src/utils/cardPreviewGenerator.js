@@ -19,6 +19,10 @@
 import axios from 'axios';
 import { API_BASE_URL } from '../config';
 import { fetchAccessUrl } from './accessUrlCache';
+import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+
+// Module-level persistent cache for PDF page 1 thumbnails: fileId -> dataUrl (base64)
+export const pdfThumbnailCache = new Map();
 
 const MAX_CARD_PREVIEWS = 60;
 const MAX_CONCURRENT_JOBS = 2;
@@ -138,6 +142,9 @@ function processNextJob() {
 export function getCachedCardPreview(fileId) {
   if (!fileId) return null;
   const key = String(fileId);
+  if (pdfThumbnailCache.has(key)) {
+    return { type: 'image', url: pdfThumbnailCache.get(key), isBlob: false, isPdf: true };
+  }
   if (!previewCache.has(key)) return null;
   const val = previewCache.get(key);
   // Refresh order in Map
@@ -181,24 +188,16 @@ function setCachedCardPreview(fileId, data) {
   previewCache.set(key, data);
 }
 
-// Lazy pdfjs module loader
+// Lazy pdfjs module loader with Vite same-origin worker assignment
 let pdfjsPromise = null;
-async function getPdfjs() {
+export async function getPdfjs() {
   if (!pdfjsPromise) {
     pdfjsPromise = (async () => {
-      const pdfjs = await import('pdfjs-dist');
-      if (pdfjs.GlobalWorkerOptions && !pdfjs.GlobalWorkerOptions.workerSrc) {
-        try {
-          // Use bundled worker URL for Vite
-          pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-            'pdfjs-dist/build/pdf.worker.min.mjs',
-            import.meta.url
-          ).toString();
-        } catch (err) {
-          console.warn('[cardPreviewGenerator] Could not set pdf.workerSrc:', err);
-        }
+      const pdfjsLib = await import('pdfjs-dist');
+      if (pdfjsLib.GlobalWorkerOptions) {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
       }
-      return pdfjs;
+      return pdfjsLib;
     })();
   }
   return pdfjsPromise;
@@ -301,11 +300,17 @@ async function generateTextSnippet(accessUrl) {
 /**
  * 2. PDF Page 1 Thumbnail: Render Page 1 to canvas using pdfjs-dist
  */
-async function generatePdfThumbnail(accessUrl) {
+async function generatePdfThumbnail(fileId, accessUrl) {
+  const key = fileId ? String(fileId) : null;
+  if (key && pdfThumbnailCache.has(key)) {
+    return { type: 'image', url: pdfThumbnailCache.get(key), isBlob: false, isPdf: true };
+  }
+
   try {
-    const pdfjs = await getPdfjs();
-    const loadingTask = pdfjs.getDocument({
+    const pdfjsLib = await getPdfjs();
+    const loadingTask = pdfjsLib.getDocument({
       url: accessUrl,
+      withCredentials: false,
       disableAutoFetch: true,
       disableRange: false,
       disableStream: false,
@@ -315,8 +320,9 @@ async function generatePdfThumbnail(accessUrl) {
     const page = await pdf.getPage(1);
     const unscaledViewport = page.getViewport({ scale: 1 });
 
-    const targetWidth = 320;
-    const scale = Math.min(2.0, targetWidth / (unscaledViewport.width || targetWidth));
+    // Thumbnail scale ~0.6–0.8 (bounded for crisp display at ~320px)
+    const baseWidth = unscaledViewport.width || 595;
+    const scale = Math.min(0.8, Math.max(0.6, 320 / baseWidth));
     const viewport = page.getViewport({ scale });
 
     const canvas = document.createElement('canvas');
@@ -324,14 +330,24 @@ async function generatePdfThumbnail(accessUrl) {
     canvas.height = Math.round(viewport.height);
     const ctx = canvas.getContext('2d', { alpha: false });
 
+    // Fill white background to prevent dark-mode transparency inversion
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
     await page.render({
       canvasContext: ctx,
       viewport: viewport,
     }).promise;
 
-    const blob = await new Promise((resolve) => {
-      canvas.toBlob((b) => resolve(b), 'image/webp', 0.8);
-    });
+    let dataUrl = null;
+    try {
+      dataUrl = canvas.toDataURL('image/webp', 0.8);
+    } catch (_) {}
+    if (!dataUrl || !dataUrl.startsWith('data:image/webp')) {
+      try {
+        dataUrl = canvas.toDataURL('image/png');
+      } catch (_) {}
+    }
 
     try {
       page.cleanup();
@@ -340,9 +356,12 @@ async function generatePdfThumbnail(accessUrl) {
       // ignore
     }
 
-    if (!blob) return null;
-    const blobUrl = URL.createObjectURL(blob);
-    return { type: 'image', url: blobUrl, isBlob: true, isPdf: true };
+    if (!dataUrl) return null;
+
+    if (key) {
+      pdfThumbnailCache.set(key, dataUrl);
+    }
+    return { type: 'image', url: dataUrl, isBlob: false, isPdf: true };
   } catch (err) {
     console.warn('[cardPreviewGenerator] PDF thumbnail generation failed:', err?.message || err);
     return null;
@@ -436,7 +455,10 @@ export async function generateCardPreview(file, token) {
   if (!fileId) return null;
   const key = String(fileId);
 
-  // 1. Check LRU Cache
+  // 1. Check persistent PDF Cache & LRU Cache
+  if (pdfThumbnailCache.has(key)) {
+    return { type: 'image', url: pdfThumbnailCache.get(key), isBlob: false, isPdf: true };
+  }
   const cached = getCachedCardPreview(key);
   if (cached) return cached;
 
@@ -504,7 +526,7 @@ export async function generateCardPreview(file, token) {
       // Enqueue job with concurrency cap
       const result = await enqueueJob(async () => {
         if (category === 'pdf') {
-          return await generatePdfThumbnail(accessUrl);
+          return await generatePdfThumbnail(key, accessUrl);
         }
         if (category === 'text') {
           return await generateTextSnippet(accessUrl);

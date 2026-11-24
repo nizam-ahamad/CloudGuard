@@ -92,6 +92,10 @@
     - Decodes HEIC/HEIF in-browser via lazy-imported `heic2any({ blob: file, toType: 'image/jpeg', quality: 0.85 })` (isolated to a dynamic chunk to prevent main bundle bloat and ensure zero impact on JPEG, PNG, WebP, GIF, or video upload speeds) before feeding into the `<canvas>` pipeline.
     - Resizes to max `512px` WebP (`quality: 0.78`) so `POST /api/files/finalize-upload` receives a `data:image/webp;base64,...` payload without server-side CPU load, storing to `thumbnails/{userId}/{timestamp_ms}-{fileId}.webp` in Backblaze B2 and linking `thumbnailKey` in MongoDB.
     - Legacy `.heic`/`.heif` assets missing `thumbnailKey` are processed via `ai-service/backfill_heic_thumbnails.py`, which downloads objects from B2, decodes with `pillow_heif` + `PIL.Image`, resizes to max `512px` WebP (`quality=78`), uploads to `thumbnails/{userId}/{timestamp_ms}-{fileId}.webp`, and updates MongoDB.
+14. **Same-Origin `pdfjs-dist` Worker Bundling & Persistent Data URL Cache (`pdfThumbnailCache`):**
+    - The PDF.js worker is bundled as a same-origin static asset using Vite's `?url` import (`import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'`) and configured via `pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl`, ensuring matching versions with zero third-party CDN latency or CSP issues.
+    - PDF page 1 thumbnail generation (`generatePdfThumbnail` in `client/src/utils/cardPreviewGenerator.js`) passes `{ url: accessUrl, withCredentials: false }` to prevent S3 CORS rejection on signed URLs, rasterizes onto an off-screen `<canvas>` at scale `~0.6–0.8` with a solid white background, converts to Base64 `image/webp` (with PNG fallback), and caches in a persistent module-level `Map` (`pdfThumbnailCache`) keyed by `file._id`.
+    - `FileGridCard.jsx` reads `pdfThumbnailCache` on initial mount to instantly show PDF thumbnails across folder navigation and re-renders without re-fetching or re-parsing. The red `PDF` document sheet card serves strictly as a fallback if the file is encrypted, corrupt, or fails to render.
 
 ---
 

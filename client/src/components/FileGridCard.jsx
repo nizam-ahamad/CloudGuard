@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Check, MoreVertical, FolderInput, Pencil, Info, Trash2, Play, FileText } from 'lucide-react';
 import JSZip from 'jszip';
 import { fetchAccessUrl } from '../utils/accessUrlCache';
-import { generateCardPreview, getCachedCardPreview, getMediaThumbnail } from '../utils/cardPreviewGenerator';
+import { generateCardPreview, getCachedCardPreview, getMediaThumbnail, pdfThumbnailCache } from '../utils/cardPreviewGenerator';
 
 // In-memory cache for extracted .docx snippets so re-renders/scrolls don't re-parse ZIPs
 const docxSnippetCache = new Map();
@@ -132,10 +132,16 @@ export function FileCardPreviewBody({ file, token }) {
   const [imgError, setImgError] = useState(false);
 
   const fileId = file?._id || file?.id;
-  const directThumbnail = file?.thumbnailUrl || getMediaThumbnail(fileId) || file?.thumbnail;
+  const pdfCachedUrl = fileId ? pdfThumbnailCache.get(String(fileId)) : null;
+  const directThumbnail = file?.thumbnailUrl || getMediaThumbnail(fileId) || pdfCachedUrl || file?.thumbnail;
   const hasDirectThumbnail = Boolean(directThumbnail && !imgError);
 
-  const [dynamicPreview, setDynamicPreview] = useState(() => getCachedCardPreview(fileId));
+  const [dynamicPreview, setDynamicPreview] = useState(() => {
+    if (pdfCachedUrl) {
+      return { type: 'image', url: pdfCachedUrl, isBlob: false, isPdf: true };
+    }
+    return getCachedCardPreview(fileId);
+  });
 
   const lowerName = (file?.name || file?.originalName || '').toLowerCase();
   const isDocx = lowerName.endsWith('.docx') && Number(file?.size || 0) <= 10 * 1024 * 1024;
@@ -189,6 +195,7 @@ export function FileCardPreviewBody({ file, token }) {
   useEffect(() => {
     if (!isInView || !fileId || isDoc) return;
 
+    if (pdfCachedUrl && !imgError) return;
     const existingThumb = file?.thumbnailUrl || getMediaThumbnail(fileId) || file?.thumbnail;
     if (existingThumb && !imgError) return;
 
@@ -210,7 +217,7 @@ export function FileCardPreviewBody({ file, token }) {
     return () => {
       isMounted = false;
     };
-  }, [isInView, fileId, file, token, imgError, isDoc]);
+  }, [isInView, fileId, file, token, imgError, isDoc, pdfCachedUrl]);
 
   // Clean .docx text snippet extraction via JSZip & DOMParser (first ~400 chars)
   useEffect(() => {
