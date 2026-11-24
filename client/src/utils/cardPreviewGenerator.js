@@ -312,13 +312,15 @@ async function generatePdfThumbnail(fileId, accessUrl) {
   }
 
   try {
+    const response = await fetch(accessUrl);
+    if (!response.ok) {
+      throw new Error(`PDF fetch failed: ${response.status}`);
+    }
+    const arrayBuffer = await response.arrayBuffer();
+
     const pdfjsLib = await getPdfjs();
     const loadingTask = pdfjsLib.getDocument({
-      url: accessUrl,
-      withCredentials: false,
-      disableAutoFetch: true,
-      disableRange: false,
-      disableStream: false,
+      data: new Uint8Array(arrayBuffer),
     });
 
     const pdf = await loadingTask.promise;
@@ -480,8 +482,9 @@ export async function generateCardPreview(file, token) {
     return noneResult;
   }
 
-  // Check file size limit for PDFs (skip if > 25MB to prevent memory issues)
-  if (category === 'pdf' && file.size && file.size > 25 * 1024 * 1024) {
+  // Check file size limit for PDFs (skip if > 15MB to prevent memory issues)
+  const fileSize = file.size !== undefined ? file.size : file.fileSize;
+  if (category === 'pdf' && fileSize && fileSize > 15 * 1024 * 1024) {
     const noneResult = { type: 'none' };
     setCachedCardPreview(key, noneResult);
     return noneResult;

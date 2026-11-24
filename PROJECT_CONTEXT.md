@@ -189,6 +189,7 @@ CloudGuard/
 10. **High-Performance Document & Media Previews:**
    - Word documents (`.docx`) use client-side in-memory XML parsing via `DocxPreviewModal` (`jszip`) with a single scrollable body container.
    - Video streaming begins immediately on frame 1 using `preload="metadata"` and `onLoadedData` playback triggers (omitting `autoPlay` to avoid Chromium buffer stalls), supported by `posterUrl` thumbnails and non-blocking centered buffering spinners.
+   - PDF card previews in My Files Grid View use `client/src/utils/cardPreviewGenerator.js` with same-origin `pdfjs-dist` worker bundling (`?url`). Signed access URLs are fetched as an `ArrayBuffer` (`await response.arrayBuffer()`) and loaded into PDF.js via `{ data: new Uint8Array(arrayBuffer) }`, bypassing Backblaze B2 HTTP 403 Forbidden errors triggered by unsigned HTTP Range requests. Automatic thumbnail rendering is capped at 15 MB (`file.size > 15 * 1024 * 1024`) with fallback to the styled static PDF icon, and rendered page 1 canvas WebP previews are cached in `pdfThumbnailCache`.
    - AI malware inspection caps scans at 512 MB; files above this threshold are marked `unverified`.
 11. **Pricing Page HttpOnly Cookie Session Hydration & Cashfree Checkout Modal:**
    - `Pricing.jsx` dynamically resolves `API_BASE_URL` to the backend domain with `withCredentials: true` and strips invalid Bearer headers (`Bearer null`, `Bearer cookie-session`).
