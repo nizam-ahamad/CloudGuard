@@ -74,9 +74,15 @@ axios.interceptors.response.use(
   (error) => {
     const requestUrl = error.config?.url || '';
     const isAuthRoute = requestUrl.includes('/api/auth/');
+    const isStatsRoute = requestUrl.includes('storage-stats');
 
-    // Never force redirect to /login if the error originated from an auth route
-    if (error.response?.status === 401 && !isAuthRoute) {
+    // Never force redirect to /login if the error originated from an auth route or background stats sync
+    if (error.response?.status === 401 && !isAuthRoute && !isStatsRoute) {
+      console.error('[Auth Redirect Trigger]', {
+        source: 'axios.interceptors.response',
+        status: error.response?.status,
+        url: requestUrl,
+      });
       localStorage.removeItem('cg_session_active');
       localStorage.removeItem('token');
       localStorage.removeItem('user');
@@ -678,7 +684,7 @@ function App() {
       const token = getActiveToken();
       if (!token) return;
 
-      const res = await axios.get(`${API_BASE_URL}/api/storage-stats`, {
+      const res = await axios.get(`${API_BASE_URL}/api/files/storage-stats`, {
         headers: getAuthHeaders(token),
       });
 
@@ -1456,9 +1462,14 @@ function App() {
         return;
       }
       if (err.response && err.response.status === 401) {
+        console.error('[Auth Redirect Trigger]', {
+          source: 'fetchFiles',
+          status: err.response.status,
+          url: `${API_BASE_URL}/api/files`,
+        });
         localStorage.clear();
         sessionStorage.clear();
-        window.location.href = '/';
+        window.location.href = '/login?expired=true';
         return;
       }
       console.error('Error fetching files:', err);

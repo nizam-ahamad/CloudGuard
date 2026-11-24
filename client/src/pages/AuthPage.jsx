@@ -472,11 +472,7 @@ export default function AuthPage() {
 
         toast.success(`Welcome back, ${res.data.user?.name || 'User'}!`);
         const dest = getPostAuthDestination();
-        if (dest.includes('/pricing')) {
-          window.location.href = dest;
-        } else {
-          navigate(dest, { replace: true });
-        }
+        window.location.href = dest;
       }
     } catch (err) {
       console.error('2FA verification error:', err);

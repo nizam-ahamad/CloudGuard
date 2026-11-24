@@ -1402,6 +1402,31 @@ router.get('/me', authMiddleware, async (req, res) => {
   }
 });
 
+// GET /api/auth/storage-stats - Return authenticated user storage statistics
+router.get('/storage-stats', authMiddleware, async (req, res) => {
+  try {
+    const rawUserId = req.user?.id || req.user?._id;
+    const user = await User.findById(rawUserId).select('storageUsed storageLimit').lean();
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    const storageUsed = user.storageUsed || 0;
+    const storageLimit = user.storageLimit || 5368709120;
+    return res.status(200).json({
+      storageUsed,
+      used: storageUsed,
+      usedBytes: storageUsed,
+      storageLimit,
+      limit: storageLimit,
+      totalLimitBytes: storageLimit,
+      percentage: Math.min(100, (storageUsed / storageLimit) * 100).toFixed(1),
+      usedPercentage: Math.min(100, (storageUsed / storageLimit) * 100).toFixed(1),
+      success: true,
+    });
+  } catch (err) {
+    console.error('Auth storage stats error:', err);
+    return res.status(500).json({ error: 'Failed to fetch storage stats' });
+  }
+});
+
 // POST /api/auth/2fa/setup - Generate TOTP secret and QR code Data URL
 router.post('/2fa/setup', authMiddleware, async (req, res) => {
   try {
@@ -1489,10 +1514,12 @@ router.post('/2fa/verify-login', otpLimiter, async (req, res) => {
     try {
       decoded = jwt.verify(tempToken, process.env.JWT_SECRET || 'cloudguard_fallback_secret');
     } catch (e) {
+      console.warn('[Auth 401]', { path: req.originalUrl, reason: 'tempToken_expired_or_invalid', error: e.message });
       return res.status(401).json({ error: 'Login session expired. Please sign in again.' });
     }
 
     if (decoded.purpose !== '2fa_pending' || !decoded.id) {
+      console.warn('[Auth 401]', { path: req.originalUrl, reason: 'tempToken_purpose_invalid' });
       return res.status(401).json({ error: 'Invalid verification token.' });
     }
 
