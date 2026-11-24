@@ -1344,14 +1344,16 @@ export default function PhotosView({ token: propToken }) {
                         key={fullMediaUrl}
                         src={fullMediaUrl}
                         alt={currentPreviewItem.name}
+                        onLoad={() => setLoadingFullMedia(false)}
                         crossOrigin={typeof fullMediaUrl === 'string' && (fullMediaUrl.startsWith('https://files.cloudguard.site') || fullMediaUrl.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
                         className="max-h-[80vh] max-w-full object-contain rounded-lg shadow-2xl transition-opacity duration-300 opacity-100"
                       />
                     )}
-                    {loadingFullMedia && !fullMediaUrl && (
-                      <div className="absolute bottom-4 right-4 bg-black/75 backdrop-blur-md px-3 py-1.5 rounded-full flex items-center gap-2 text-white text-xs border border-white/10 shadow-lg">
-                        <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-400" />
-                        <span>Loading high resolution...</span>
+                    {/* Single centered loader when no thumbnail is available yet */}
+                    {loadingFullMedia && !fullMediaUrl && !(currentPreviewItem.thumbnailUrl || currentPreviewItem.accessUrl || currentPreviewItem.url) && (
+                      <div className="absolute inset-0 flex flex-col items-center justify-center text-white gap-2 pointer-events-none">
+                        <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+                        <span className="text-xs font-medium">Loading photo...</span>
                       </div>
                     )}
                   </>

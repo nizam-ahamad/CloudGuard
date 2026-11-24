@@ -381,7 +381,11 @@ router.get('/:id/access', authMiddleware, async (req, res) => {
           accessUrl: cached.url,
           downloadUrl: cached.url,
           url: cached.url,
-          file,
+          thumbnailUrl: cached.thumbnailUrl || null,
+          file: {
+            ...file,
+            thumbnailUrl: cached.thumbnailUrl || null,
+          },
         });
       }
     }
@@ -402,9 +406,27 @@ router.get('/:id/access', authMiddleware, async (req, res) => {
     const rawUrl = await getSignedUrl(s3Client, command, { expiresIn });
     const accessUrl = formatCdnDownloadUrl(rawUrl, req, rawUserId);
 
+    let thumbnailUrl = null;
+    if (file.thumbnailKey && bucket) {
+      try {
+        const thumbUrl = await getSignedUrl(
+          s3Client,
+          new GetObjectCommand({
+            Bucket: bucket,
+            Key: file.thumbnailKey,
+          }),
+          { expiresIn: 300 }
+        );
+        thumbnailUrl = formatCdnDownloadUrl(thumbUrl, req, rawUserId);
+      } catch (e) {
+        console.warn(`Failed to sign thumbnail URL in access for ${file.name}:`, e.message);
+      }
+    }
+
     if (!isDownload) {
       accessUrlCache.set(cacheKey, {
         url: accessUrl,
+        thumbnailUrl,
         expiresAt: Date.now() + ACCESS_CACHE_TTL_MS, // 4-minute TTL
       });
 
@@ -422,7 +444,11 @@ router.get('/:id/access', authMiddleware, async (req, res) => {
       accessUrl,
       downloadUrl: accessUrl,
       url: accessUrl,
-      file,
+      thumbnailUrl,
+      file: {
+        ...file,
+        thumbnailUrl,
+      },
     });
   } catch (err) {
     console.error('Error generating access URL:', err);
@@ -499,21 +525,45 @@ router.get('/', authMiddleware, async (req, res) => {
 
     const rawFiles = await fileQuery.lean();
 
-    const files = rawFiles.map(file => ({
-      ...file,
-      _id: file._id.toString(),
-      id: file.s3Key || file._id.toString(),
-      diskName: file.sanitizedName || file.diskName || file.s3Key || file.name,
-      name: file.name || file.originalName,
-      folderId: file.folderId ? file.folderId.toString() : (file.folder ? file.folder.toString() : null),
-      isFolder: false,
-      date: new Date(file.uploadedAt || file.createdAt || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-      mtimeMs: new Date(file.uploadedAt || file.createdAt || Date.now()).getTime(),
-      size: file.size,
-      status: (file.securityStatus === 'clean' || file.securityStatus === 'Safe') ? 'Safe' : (file.securityStatus || 'Safe'),
-      securityStatus: file.securityStatus || (file.status === 'Safe' ? 'clean' : file.status),
-      type: (file.originalName || file.name || '').split('.').pop()
-    }));
+    const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
+
+    const files = await Promise.all(
+      rawFiles.map(async (file) => {
+        let thumbnailUrl = null;
+        if (file.thumbnailKey && bucket) {
+          try {
+            thumbnailUrl = await getSignedUrl(
+              s3Client,
+              new GetObjectCommand({
+                Bucket: bucket,
+                Key: file.thumbnailKey,
+              }),
+              { expiresIn: 300 } // 5 minutes for thumbnails
+            );
+            thumbnailUrl = formatCdnDownloadUrl(thumbnailUrl, req, rawUserId);
+          } catch (e) {
+            console.warn(`Failed to sign thumbnail URL for ${file.name}:`, e.message);
+          }
+        }
+
+        return {
+          ...file,
+          _id: file._id.toString(),
+          id: file.s3Key || file._id.toString(),
+          diskName: file.sanitizedName || file.diskName || file.s3Key || file.name,
+          name: file.name || file.originalName,
+          folderId: file.folderId ? file.folderId.toString() : (file.folder ? file.folder.toString() : null),
+          isFolder: false,
+          date: new Date(file.uploadedAt || file.createdAt || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+          mtimeMs: new Date(file.uploadedAt || file.createdAt || Date.now()).getTime(),
+          size: file.size,
+          status: (file.securityStatus === 'clean' || file.securityStatus === 'Safe') ? 'Safe' : (file.securityStatus || 'Safe'),
+          securityStatus: file.securityStatus || (file.status === 'Safe' ? 'clean' : file.status),
+          type: (file.originalName || file.name || '').split('.').pop(),
+          thumbnailUrl,
+        };
+      })
+    );
 
     res.set('X-Total-Count', String(totalCount));
 

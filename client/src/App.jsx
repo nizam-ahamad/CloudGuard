@@ -10,7 +10,7 @@ import { useToast } from './context/ToastContext';
 import MoveModal from './components/MoveModal';
 import FolderDetailsModal from './components/FolderDetailsModal';
 import FileDetailsModal from './components/FileDetailsModal';
-import FilePreviewModal from './components/FilePreviewModal';
+import FilePreviewModal, { HeicPreviewImage } from './components/FilePreviewModal';
 import DeleteConfirmModal from './components/DeleteConfirmModal';
 import ProfileSettings from './components/ProfileSettings';
 import CookieConsent from './components/CookieConsent';
@@ -282,32 +282,42 @@ function DocxPreviewModal({ previewFile, previewUrl, closePreview, handleDownloa
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+      className="fixed inset-0 z-50 w-screen max-w-full overflow-x-hidden flex items-center justify-center bg-black/80 backdrop-blur-md p-2 sm:p-4 animate-enter select-none"
       onClick={closePreview}
     >
       <div
-        className="bg-white dark:bg-[#18181b] rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden border border-neutral-200 dark:border-neutral-800 text-neutral-900 dark:text-neutral-100"
+        className="w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col bg-[#141414] border border-white/10 rounded-2xl shadow-2xl text-neutral-100"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Top Bar */}
-        <div className="flex items-center justify-between gap-3 w-full min-w-0 px-4 py-3 border-b border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900/60 shrink-0">
-          <h3 className="min-w-0 flex-1 truncate text-sm sm:text-base font-medium text-neutral-900 dark:text-white" title={previewFile.originalName || previewFile.name}>
-            {previewFile.originalName || previewFile.name}
-          </h3>
+        <div className="flex items-center justify-between gap-2 sm:gap-3 w-full max-w-full px-3 sm:px-4 py-3 border-b border-white/10 shrink-0">
+          <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
+            <span className="material-symbols-outlined text-blue-400 text-[20px] shrink-0">description</span>
+            <span
+              className="block min-w-0 flex-1 truncate text-sm sm:text-base font-medium text-white"
+              title={previewFile.originalName || previewFile.name}
+            >
+              {previewFile.originalName || previewFile.name}
+            </span>
+          </div>
           <div className="flex items-center gap-2 shrink-0">
             <button
+              type="button"
               onClick={() => handleDownload && handleDownload(previewFile)}
-              className="bg-primary text-on-primary hover:bg-primary/90 transition-colors p-2 rounded-lg flex items-center justify-center cursor-pointer shrink-0"
+              className="p-2 rounded-full bg-neutral-800/80 hover:bg-neutral-700 text-neutral-200 hover:text-white border border-neutral-700/50 transition-colors cursor-pointer shrink-0"
               title="Download File"
+              aria-label="Download File"
             >
-              <span className="material-symbols-outlined">download</span>
+              <Download className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
             </button>
             <button
+              type="button"
               onClick={closePreview}
-              className="p-2 text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white hover:bg-neutral-200 dark:hover:bg-neutral-800 rounded-full transition-colors cursor-pointer shrink-0"
+              className="p-2 rounded-full bg-neutral-800/80 hover:bg-neutral-700 text-neutral-200 hover:text-white border border-neutral-700/50 transition-colors cursor-pointer shrink-0"
               title="Close"
+              aria-label="Close"
             >
-              <span className="material-symbols-outlined">close</span>
+              <X className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
             </button>
           </div>
         </div>
@@ -369,6 +379,264 @@ function DocxPreviewModal({ previewFile, previewUrl, closePreview, handleDownloa
                   );
                 })
               )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Unified Media & Document File Preview Modal for My Files, Recents, and Bin
+ * Matches PhotosView.jsx mobile header geometry, pinned controls, blurred video posters, and single loader.
+ */
+function UnifiedFilePreviewModal({ previewFile, previewUrl, previewText, closePreview, handleDownload }) {
+  const [mediaLoaded, setMediaLoaded] = useState(false);
+
+  useEffect(() => {
+    setMediaLoaded(false);
+  }, [previewFile?._id || previewFile?.id]);
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape' && closePreview) {
+        closePreview();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [closePreview]);
+
+  if (!previewFile) return null;
+
+  const fileExt = (previewFile.type || (previewFile.name || '').split('.').pop() || '').toLowerCase();
+  const isVideo = Boolean(
+    previewFile.mimeType?.startsWith('video/') ||
+    previewFile.mimetype?.startsWith('video/') ||
+    ['mp4', 'webm', 'ogg', 'mov', 'mkv', 'avi', 'm4v', '3gp'].includes(fileExt)
+  );
+  const isImage = Boolean(
+    previewFile.mimeType?.startsWith('image/') ||
+    previewFile.mimetype?.startsWith('image/') ||
+    ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico', 'heic', 'heif'].includes(fileExt)
+  );
+  const isHeic = fileExt === 'heic' || fileExt === 'heif' || previewFile?.mimeType === 'image/heic' || previewFile?.mimeType === 'image/heif';
+  const isPdf = fileExt === 'pdf' || previewFile?.mimeType === 'application/pdf';
+  const isAudio = Boolean(
+    previewFile?.mimeType?.startsWith('audio/') ||
+    previewFile?.mimetype?.startsWith('audio/') ||
+    ['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac'].includes(fileExt)
+  );
+  const isText = ['txt', 'md', 'json', 'js', 'jsx', 'ts', 'tsx', 'html', 'css', 'py', 'java', 'c', 'cpp', 'log', 'xml', 'yaml', 'yml'].includes(fileExt);
+
+  const displayThumbnail = previewFile.thumbnailUrl || previewFile.thumbnail || null;
+  const targetUrl = previewUrl || previewFile.url || previewFile.accessUrl || previewFile.downloadUrl || '';
+
+  return (
+    <div
+      className="fixed inset-0 z-50 w-screen max-w-full overflow-x-hidden flex items-center justify-center bg-black/80 backdrop-blur-md p-2 sm:p-4 animate-enter select-none"
+      onClick={closePreview}
+    >
+      <div
+        className="w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col bg-[#141414] border border-white/10 rounded-2xl shadow-2xl text-neutral-100"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Top Header Bar */}
+        <div className="flex items-center justify-between gap-2 sm:gap-3 w-full max-w-full px-3 sm:px-4 py-3 border-b border-white/10 shrink-0">
+          <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
+            {isVideo ? (
+              <span className="material-symbols-outlined text-amber-400 text-[20px] shrink-0">movie</span>
+            ) : isImage ? (
+              <span className="material-symbols-outlined text-blue-400 text-[20px] shrink-0">image</span>
+            ) : isPdf ? (
+              <span className="material-symbols-outlined text-red-400 text-[20px] shrink-0">picture_as_pdf</span>
+            ) : isAudio ? (
+              <span className="material-symbols-outlined text-emerald-400 text-[20px] shrink-0">music_note</span>
+            ) : (
+              <span className="material-symbols-outlined text-neutral-400 text-[20px] shrink-0">description</span>
+            )}
+            <span
+              className="block min-w-0 flex-1 truncate text-sm sm:text-base font-medium text-white"
+              title={previewFile.originalName || previewFile.name}
+            >
+              {previewFile.originalName || previewFile.name}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => handleDownload && handleDownload(previewFile)}
+              title="Download File"
+              aria-label="Download File"
+              className="p-2 rounded-full bg-neutral-800/80 hover:bg-neutral-700 text-neutral-200 hover:text-white border border-neutral-700/50 transition-colors cursor-pointer shrink-0"
+            >
+              <Download className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
+            </button>
+            <button
+              type="button"
+              onClick={closePreview}
+              title="Close"
+              aria-label="Close"
+              className="p-2 rounded-full bg-neutral-800/80 hover:bg-neutral-700 text-neutral-200 hover:text-white border border-neutral-700/50 transition-colors cursor-pointer shrink-0"
+            >
+              <X className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
+            </button>
+          </div>
+        </div>
+
+        {/* Media Viewport Container */}
+        <div className="relative flex-1 overflow-auto bg-black/40 p-2 sm:p-4 flex items-center justify-center min-h-[300px]">
+          {isVideo ? (
+            <div className="relative flex items-center justify-center w-full h-full max-h-[75vh]">
+              {displayThumbnail && !mediaLoaded && (
+                <img
+                  src={displayThumbnail}
+                  alt={previewFile.name}
+                  loading="lazy"
+                  decoding="async"
+                  crossOrigin={typeof displayThumbnail === 'string' && (displayThumbnail.startsWith('https://files.cloudguard.site') || displayThumbnail.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
+                  className="max-h-[75vh] max-w-full object-contain rounded-lg filter blur-sm opacity-60 absolute inset-0 m-auto"
+                />
+              )}
+
+              {!mediaLoaded && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center text-white gap-2 pointer-events-none z-20">
+                  <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+                  <span className="text-xs font-medium">Loading video...</span>
+                </div>
+              )}
+
+              {targetUrl && (
+                <video
+                  src={targetUrl}
+                  poster={displayThumbnail || undefined}
+                  controls
+                  playsInline
+                  preload="metadata"
+                  crossOrigin={typeof targetUrl === 'string' && (targetUrl.startsWith('https://files.cloudguard.site') || targetUrl.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
+                  onLoadedData={(e) => {
+                    setMediaLoaded(true);
+                    const p = e.currentTarget.play();
+                    if (p && typeof p.catch === 'function') p.catch(() => {});
+                  }}
+                  onCanPlay={() => setMediaLoaded(true)}
+                  onPlaying={() => setMediaLoaded(true)}
+                  onError={() => setMediaLoaded(true)}
+                  className={`max-h-[75vh] w-auto max-w-full rounded-lg shadow-2xl bg-black relative z-10 transition-opacity duration-300 ${
+                    mediaLoaded ? 'opacity-100' : 'opacity-0'
+                  }`}
+                >
+                  Your browser does not support the video tag.
+                </video>
+              )}
+            </div>
+          ) : isHeic ? (
+            <div className="relative flex items-center justify-center w-full h-full max-h-[75vh]">
+              {!mediaLoaded && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center text-neutral-400 gap-2">
+                  <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+                  <span className="text-xs font-medium">Loading high-resolution photo...</span>
+                </div>
+              )}
+              <HeicPreviewImage
+                key={previewFile._id || previewFile.id}
+                fileId={previewFile._id || previewFile.id}
+                file={previewFile}
+                src={targetUrl}
+                alt={previewFile.name}
+                className="max-w-full max-h-[75vh] object-contain shadow-sm rounded-lg"
+                fallbackUrl={displayThumbnail}
+                onLoad={() => setMediaLoaded(true)}
+              />
+            </div>
+          ) : isImage ? (
+            <div className="relative flex items-center justify-center w-full h-full max-h-[75vh]">
+              {displayThumbnail && !mediaLoaded && (
+                <img
+                  src={displayThumbnail}
+                  alt={previewFile.name}
+                  loading="lazy"
+                  decoding="async"
+                  crossOrigin={typeof displayThumbnail === 'string' && (displayThumbnail.startsWith('https://files.cloudguard.site') || displayThumbnail.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
+                  className="max-h-[75vh] max-w-full object-contain rounded-lg filter blur-sm opacity-60 absolute inset-0 m-auto"
+                />
+              )}
+
+              {!mediaLoaded && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center text-neutral-400 gap-2 z-20 pointer-events-none">
+                  <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+                  <span className="text-xs font-medium">Loading image...</span>
+                </div>
+              )}
+
+              {targetUrl && (
+                <img
+                  src={targetUrl}
+                  alt={previewFile.name}
+                  loading="lazy"
+                  decoding="async"
+                  crossOrigin={typeof targetUrl === 'string' && (targetUrl.startsWith('https://files.cloudguard.site') || targetUrl.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
+                  onLoad={() => setMediaLoaded(true)}
+                  onError={() => setMediaLoaded(true)}
+                  className={`max-w-full max-h-[75vh] object-contain shadow-sm rounded-lg transition-opacity duration-300 relative z-10 ${
+                    mediaLoaded ? 'opacity-100' : 'opacity-0'
+                  }`}
+                />
+              )}
+            </div>
+          ) : isPdf ? (
+            <div className="w-full h-[75vh] relative flex items-center justify-center">
+              {!mediaLoaded && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center text-neutral-400 gap-2">
+                  <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+                  <span className="text-xs font-medium">Loading document...</span>
+                </div>
+              )}
+              {targetUrl && (
+                <iframe
+                  src={targetUrl}
+                  onLoad={() => setMediaLoaded(true)}
+                  className="w-full h-full border-0 rounded-lg bg-white"
+                  title="PDF Preview"
+                />
+              )}
+            </div>
+          ) : isText ? (
+            <pre className="w-full h-full max-h-[75vh] text-left bg-white dark:bg-[#121212] text-neutral-900 dark:text-neutral-100 p-6 rounded-lg overflow-auto text-sm font-mono whitespace-pre-wrap shadow-inner border border-neutral-200 dark:border-neutral-800">
+              {previewText || 'Loading preview...'}
+            </pre>
+          ) : isAudio ? (
+            <div className="w-full max-w-md bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl p-6 sm:p-8 shadow-xl flex flex-col items-center text-center space-y-4">
+              <div className="w-16 h-16 rounded-full bg-primary/10 text-primary flex items-center justify-center">
+                <span className="material-symbols-outlined text-3xl">music_note</span>
+              </div>
+              <div className="max-w-full px-2">
+                <h4 className="text-base sm:text-lg font-semibold text-neutral-900 dark:text-white truncate" title={previewFile.name}>
+                  {previewFile.name}
+                </h4>
+              </div>
+              <audio
+                controls
+                autoPlay
+                preload="metadata"
+                src={targetUrl}
+                crossOrigin={typeof targetUrl === 'string' && (targetUrl.startsWith('https://files.cloudguard.site') || targetUrl.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
+                className="w-full max-w-md"
+              />
+            </div>
+          ) : (
+            <div className="text-neutral-400 flex flex-col items-center gap-3 p-8 text-center">
+              <span className="material-symbols-outlined text-4xl">visibility_off</span>
+              <p className="text-sm">Preview not available for this file type.</p>
+              <button
+                type="button"
+                onClick={() => handleDownload && handleDownload(previewFile)}
+                className="mt-2 px-4 py-2 rounded-lg bg-primary text-white text-xs font-medium hover:bg-primary/90 transition-colors"
+              >
+                Download to view
+              </button>
             </div>
           )}
         </div>
@@ -4640,15 +4908,15 @@ function App() {
           handleDownload={handleDownload}
           token={token}
         />
-      ) : (
-        <FilePreviewModal
+      ) : previewFile ? (
+        <UnifiedFilePreviewModal
           previewFile={previewFile}
           previewUrl={previewUrl}
           previewText={previewText}
           closePreview={closePreview}
           handleDownload={handleDownload}
         />
-      )}
+      ) : null}
 
       {/* Delete Confirmation Modal */}
       <DeleteConfirmModal
