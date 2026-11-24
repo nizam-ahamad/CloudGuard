@@ -91,6 +91,14 @@ axios.interceptors.response.use(
   }
 );
 
+// Safely format Authorization header without sending Bearer null, undefined, or cookie-session
+export const getAuthHeaders = (tok) => {
+  if (tok && tok !== 'cookie-session' && tok !== 'null' && tok !== 'undefined') {
+    return { Authorization: `Bearer ${tok}` };
+  }
+  return {};
+};
+
 class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
@@ -139,10 +147,9 @@ function DocxPreviewModal({ previewFile, previewUrl, closePreview, handleDownloa
         const url = previewUrl || (fileId ? await fetchAccessUrl(fileId, token) : null);
         if (!url) throw new Error('Could not resolve file access URL');
 
-        const isFilesCdn = typeof url === 'string' && (url.startsWith('https://files.cloudguard.site') || url.includes('.cloudguard.site'));
         const response = await fetch(url, {
           signal: controller?.signal,
-          ...(isFilesCdn ? { credentials: 'include' } : {}),
+          credentials: 'include',
         });
         if (!response.ok) throw new Error(`HTTP error ${response.status}`);
         const arrayBuffer = await response.arrayBuffer();
@@ -937,7 +944,7 @@ function App() {
     e.preventDefault();
     if (!fileToRename || !newRenameFileName.trim()) return;
     try {
-      await axios.patch(`${API_BASE_URL}/api/files/${fileToRename._id || fileToRename.id}/rename`, { newName: newRenameFileName }, { headers: { Authorization: `Bearer ${token}` } });
+      await axios.patch(`${API_BASE_URL}/api/files/${fileToRename._id || fileToRename.id}/rename`, { newName: newRenameFileName }, { headers: getAuthHeaders(token) });
       setShowRenameFileModal(false);
       setFileToRename(null);
       setNewRenameFileName('');
@@ -957,7 +964,7 @@ function App() {
       await axios.patch(`${API_BASE_URL}/api/folders/${folderToRename._id}/rename`, { 
         newName: trimmed,
         name: trimmed 
-      }, { headers: { Authorization: `Bearer ${token}` } });
+      }, { headers: getAuthHeaders(token) });
       setShowRenameFolderModal(false);
       setFolderToRename(null);
       setNewRenameFolderName('');
@@ -1019,7 +1026,7 @@ function App() {
     setFileToMove(itemsArray.length === 1 ? itemsArray[0] : itemsArray);
     setShowMoveModal(true);
     try {
-      const res = await axios.get(`${API_BASE_URL}/api/folders?all=true`, { headers: { Authorization: `Bearer ${token}` } });
+      const res = await axios.get(`${API_BASE_URL}/api/folders?all=true`, { headers: getAuthHeaders(token) });
       setMoveFolders(Array.isArray(res.data) ? res.data : []);
     } catch (err) {
       console.error('Failed to fetch folders for move', err);
@@ -1108,7 +1115,7 @@ function App() {
           ? `${API_BASE_URL}/api/folders?parentId=${parentId}` 
           : `${API_BASE_URL}/api/folders`;
       }
-      const response = await axios.get(url, { headers: { Authorization: `Bearer ${token}` } });
+      const response = await axios.get(url, { headers: getAuthHeaders(token) });
       setFolders(response.data);
     } catch (error) {
       console.error('Error fetching folders:', error);
@@ -1127,7 +1134,7 @@ function App() {
       const response = await axios.post(`${API_BASE_URL}/api/folders`, {
         name: trimmedName,
         parentId: currentFolderId || null
-      }, { headers: { Authorization: `Bearer ${token}` } });
+      }, { headers: getAuthHeaders(token) });
 
       if (response.status === 201) {
         setShowNewFolderModal(false);
@@ -1158,7 +1165,7 @@ function App() {
     }
 
     if (urlFolderId) {
-      axios.get(`${API_BASE_URL}/api/folders/${urlFolderId}`, { headers: { Authorization: `Bearer ${token}` } })
+      axios.get(`${API_BASE_URL}/api/folders/${urlFolderId}`, { headers: getAuthHeaders(token) })
         .then(res => {
           const folderData = res.data;
           if (folderData?.ancestors && Array.isArray(folderData.ancestors) && folderData.ancestors.length > 0) {
@@ -1424,7 +1431,7 @@ function App() {
 
       const res = await axios.get(`${API_BASE_URL}/api/files`, {
         params: queryParams,
-        headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+        headers: getAuthHeaders(authToken),
         signal: abortControllerRef.current.signal,
       });
 
@@ -1474,7 +1481,7 @@ function App() {
       const authToken = getActiveToken();
       const res = await axios.get(`${API_BASE_URL}/api/files`, {
         params: { recent: 'true', limit: RECENT_PAGE_SIZE, skip: nextSkip },
-        headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+        headers: getAuthHeaders(authToken),
       });
 
       const newItems = res.data?.files || (Array.isArray(res.data) ? res.data : []);
@@ -1626,7 +1633,7 @@ function App() {
           fileIds,
           items: movedItems,
         },
-        { headers: { Authorization: `Bearer ${token}` } }
+        { headers: getAuthHeaders(token) }
       );
 
       // 2. Clear selections & invalidate caching ref
@@ -1694,13 +1701,13 @@ function App() {
           await axios.put(
             `${API_BASE_URL}/api/folders/${itemId}/move`,
             { parentId: destinationId, targetFolderId: destinationId, destinationId },
-            { headers: { Authorization: `Bearer ${authToken}` } }
+            { headers: getAuthHeaders(authToken) }
           );
         } else {
           await axios.put(
             `${API_BASE_URL}/api/files/${itemId}/move`,
             { folderId: destinationId, targetFolderId: destinationId, destinationId },
-            { headers: { Authorization: `Bearer ${authToken}` } }
+            { headers: getAuthHeaders(authToken) }
           );
         }
       } else {
@@ -1714,7 +1721,7 @@ function App() {
         };
 
         await axios.post(`${API_BASE_URL}/api/folders/move-batch`, payload, {
-          headers: { Authorization: `Bearer ${authToken}` },
+          headers: getAuthHeaders(authToken),
         });
       }
 
@@ -1949,7 +1956,7 @@ function App() {
   const handleUndoDelete = async (itemsToRestore) => {
     try {
       const token = getActiveToken();
-      const headers = { Authorization: `Bearer ${token}` };
+      const headers = getAuthHeaders(token);
 
       const folderIds = (itemsToRestore || []).filter(checkIsFolder).map((i) => i._id || i.id);
       const fileIds = (itemsToRestore || []).filter((i) => !checkIsFolder(i)).map((i) => i._id || i.id);
@@ -2103,7 +2110,7 @@ function App() {
 
       try {
         const token = getActiveToken();
-        const headers = { Authorization: `Bearer ${token}` };
+        const headers = getAuthHeaders(token);
 
         // 2. Call dedicated folder or file delete endpoint
         if (isFolder) {
@@ -2153,7 +2160,7 @@ function App() {
 
       try {
         const token = getActiveToken();
-        const headers = { Authorization: `Bearer ${token}` };
+        const headers = getAuthHeaders(token);
 
         await axios.post(
           `${API_BASE_URL}/api/files/delete-batch`,
@@ -2222,7 +2229,7 @@ function App() {
 
         // 1. Request presigned direct S3 upload ticket with quota enforcement
         const presignRes = await axios.post(`${API_BASE_URL}/api/files/presigned-url`, payload, {
-          headers: { Authorization: `Bearer ${getActiveToken()}` },
+          headers: getAuthHeaders(getActiveToken()),
         });
         const presignedUrl = presignRes.data.presignedUrl || presignRes.data.signedUrl;
         const fileId = presignRes.data.fileId;
@@ -2711,7 +2718,7 @@ function App() {
         setPreviewFile(file);
 
         if (type === 'txt' || type === 'md') {
-          const textResponse = await fetch(cachedUrl);
+          const textResponse = await fetch(cachedUrl, { credentials: 'include' });
           if (!textResponse.ok) throw new Error("Failed to fetch file content");
           const text = await textResponse.text();
           setPreviewText(text);
@@ -2726,7 +2733,7 @@ function App() {
       setPreviewFile(file);
 
       if (type === 'txt' || type === 'md') {
-        const textResponse = await fetch(url);
+        const textResponse = await fetch(url, { credentials: 'include' });
         if (!textResponse.ok) throw new Error("Failed to fetch file content");
         const text = await textResponse.text();
         setPreviewText(text);

@@ -8,6 +8,7 @@ import App from './App.jsx'
 import { ToastProvider } from './context/ToastContext'
 import { DownloadProvider } from './context/DownloadContext'
 import { UploadProvider } from './context/UploadContext'
+import { API_BASE_URL } from './config'
 
 // Ensure cross-origin Set-Cookie (cg_vault_session, cg_auth_token) from api.cloudguard.site is sent & received on all API requests
 axios.defaults.withCredentials = true;
@@ -32,6 +33,68 @@ axios.interceptors.request.use((config) => {
   }
   return config;
 });
+
+// Wrap native window.fetch to guarantee credentials: 'include' on all cross-subdomain API & file requests
+const originalFetch = window.fetch;
+window.fetch = function (input, init = {}) {
+  let url = '';
+  if (typeof input === 'string') {
+    url = input;
+  } else if (input && typeof input.url === 'string') {
+    url = input.url;
+  }
+
+  const isCrossSubdomain =
+    url.startsWith('/api') ||
+    url.includes('cloudguard.site') ||
+    url.includes('localhost:5000') ||
+    (API_BASE_URL && url.startsWith(API_BASE_URL));
+
+  const newInit = { ...init };
+
+  if (isCrossSubdomain && !newInit.credentials) {
+    newInit.credentials = 'include';
+  }
+
+  // Strip invalid/placeholder Authorization headers from fetch
+  if (newInit.headers) {
+    if (typeof Headers !== 'undefined' && newInit.headers instanceof Headers) {
+      const auth = newInit.headers.get('Authorization') || newInit.headers.get('authorization');
+      if (typeof auth === 'string') {
+        const trimmed = auth.trim();
+        if (
+          trimmed === 'Bearer' ||
+          trimmed === 'Bearer null' ||
+          trimmed === 'Bearer undefined' ||
+          trimmed === 'Bearer cookie-session' ||
+          trimmed.includes('cookie-session')
+        ) {
+          newInit.headers.delete('Authorization');
+          newInit.headers.delete('authorization');
+        }
+      }
+    } else if (typeof newInit.headers === 'object') {
+      const headers = { ...newInit.headers };
+      const auth = headers.Authorization || headers.authorization;
+      if (typeof auth === 'string') {
+        const trimmed = auth.trim();
+        if (
+          trimmed === 'Bearer' ||
+          trimmed === 'Bearer null' ||
+          trimmed === 'Bearer undefined' ||
+          trimmed === 'Bearer cookie-session' ||
+          trimmed.includes('cookie-session')
+        ) {
+          delete headers.Authorization;
+          delete headers.authorization;
+        }
+      }
+      newInit.headers = headers;
+    }
+  }
+
+  return originalFetch.call(this, input, newInit);
+};
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
 

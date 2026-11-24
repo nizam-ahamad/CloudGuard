@@ -15,23 +15,33 @@ function signEdgePayload(userId, ttlSeconds = 86400) {
 }
 
 /**
+ * Detects whether the current environment or request context is production (.cloudguard.site).
+ */
+function isProdDomain(res) {
+  const req = res?.req;
+  const reqHost = req?.headers?.host || (typeof req?.get === 'function' ? req.get('host') : '') || '';
+  const reqOrigin = req?.headers?.origin || (typeof req?.get === 'function' ? req.get('origin') : '') || '';
+  const forwardedHost = req?.headers?.['x-forwarded-host'] || (typeof req?.get === 'function' ? req.get('x-forwarded-host') : '') || '';
+
+  return (
+    process.env.NODE_ENV === 'production' ||
+    (process.env.CLIENT_URL || '').includes('cloudguard.site') ||
+    (process.env.CDN_DOWNLOAD_URL || '').includes('cloudguard.site') ||
+    reqHost.includes('cloudguard.site') ||
+    reqOrigin.includes('cloudguard.site') ||
+    forwardedHost.includes('cloudguard.site')
+  );
+}
+
+/**
  * Attaches the HttpOnly cg_vault_session edge cookie for files.cloudguard.site access.
  */
 function attachVaultEdgeCookie(res, userId) {
   if (!res || !userId) return;
   const token = signEdgePayload(userId, 86400);
-  const reqHost = res.req?.headers?.host || (typeof res.req?.get === 'function' ? res.req.get('host') : '') || '';
-  const reqOrigin = res.req?.headers?.origin || (typeof res.req?.get === 'function' ? res.req.get('origin') : '') || '';
-  const isCloudguardDomain =
-    (process.env.CDN_DOWNLOAD_URL || '').includes('cloudguard.site') ||
-    (process.env.CLIENT_URL || '').includes('cloudguard.site') ||
-    reqHost.includes('cloudguard.site') ||
-    reqOrigin.includes('cloudguard.site');
-  const isProd = process.env.NODE_ENV === 'production';
-  const cookieOptions = isCloudguardDomain
+  const isProd = isProdDomain(res);
+  const cookieOptions = isProd
     ? { httpOnly: true, secure: true, sameSite: 'none', domain: '.cloudguard.site', path: '/', maxAge: 86400 * 1000 }
-    : isProd
-    ? { httpOnly: true, secure: true, sameSite: 'none', path: '/', maxAge: 86400 * 1000 }
     : { httpOnly: true, sameSite: 'lax', path: '/', maxAge: 86400 * 1000 };
   res.cookie('cg_vault_session', token, cookieOptions);
 }
@@ -41,14 +51,8 @@ function attachVaultEdgeCookie(res, userId) {
  */
 function clearVaultEdgeCookie(res) {
   if (!res) return;
-  const reqHost = res.req?.headers?.host || (typeof res.req?.get === 'function' ? res.req.get('host') : '') || '';
-  const reqOrigin = res.req?.headers?.origin || (typeof res.req?.get === 'function' ? res.req.get('origin') : '') || '';
-  const isCloudguardDomain =
-    (process.env.CDN_DOWNLOAD_URL || '').includes('cloudguard.site') ||
-    (process.env.CLIENT_URL || '').includes('cloudguard.site') ||
-    reqHost.includes('cloudguard.site') ||
-    reqOrigin.includes('cloudguard.site');
-  if (isCloudguardDomain) {
+  const isProd = isProdDomain(res);
+  if (isProd) {
     res.clearCookie('cg_vault_session', { httpOnly: true, secure: true, sameSite: 'none', domain: '.cloudguard.site', path: '/' });
   }
   res.clearCookie('cg_vault_session', { path: '/' });
@@ -59,18 +63,9 @@ function clearVaultEdgeCookie(res) {
  */
 function attachAuthCookie(res, jwtToken) {
   if (!res || !jwtToken) return;
-  const reqHost = res.req?.headers?.host || (typeof res.req?.get === 'function' ? res.req.get('host') : '') || '';
-  const reqOrigin = res.req?.headers?.origin || (typeof res.req?.get === 'function' ? res.req.get('origin') : '') || '';
-  const isCloudguardDomain =
-    (process.env.CDN_DOWNLOAD_URL || '').includes('cloudguard.site') ||
-    (process.env.CLIENT_URL || '').includes('cloudguard.site') ||
-    reqHost.includes('cloudguard.site') ||
-    reqOrigin.includes('cloudguard.site');
-  const isProd = process.env.NODE_ENV === 'production';
-  const cookieOptions = isCloudguardDomain
+  const isProd = isProdDomain(res);
+  const cookieOptions = isProd
     ? { httpOnly: true, secure: true, sameSite: 'none', domain: '.cloudguard.site', path: '/', maxAge: 7 * 24 * 60 * 60 * 1000 }
-    : isProd
-    ? { httpOnly: true, secure: true, sameSite: 'none', path: '/', maxAge: 7 * 24 * 60 * 60 * 1000 }
     : { httpOnly: true, sameSite: 'lax', path: '/', maxAge: 7 * 24 * 60 * 60 * 1000 };
   res.cookie('cg_auth_token', jwtToken, cookieOptions);
 }
@@ -80,14 +75,8 @@ function attachAuthCookie(res, jwtToken) {
  */
 function clearAuthCookie(res) {
   if (!res) return;
-  const reqHost = res.req?.headers?.host || (typeof res.req?.get === 'function' ? res.req.get('host') : '') || '';
-  const reqOrigin = res.req?.headers?.origin || (typeof res.req?.get === 'function' ? res.req.get('origin') : '') || '';
-  const isCloudguardDomain =
-    (process.env.CDN_DOWNLOAD_URL || '').includes('cloudguard.site') ||
-    (process.env.CLIENT_URL || '').includes('cloudguard.site') ||
-    reqHost.includes('cloudguard.site') ||
-    reqOrigin.includes('cloudguard.site');
-  if (isCloudguardDomain) {
+  const isProd = isProdDomain(res);
+  if (isProd) {
     res.clearCookie('cg_auth_token', { httpOnly: true, secure: true, sameSite: 'none', domain: '.cloudguard.site', path: '/' });
   }
   res.clearCookie('cg_auth_token', { path: '/' });
