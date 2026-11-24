@@ -118,6 +118,31 @@ class ErrorBoundary extends React.Component {
   }
 }
 
+// Module-level safe 25-minute signed-URL cache for direct file access
+const ACCESS_URL_CACHE_TTL = 25 * 60 * 1000; // 25 minutes
+const accessUrlCache = new Map(); // fileId -> { url: string, expiresAt: number }
+
+export const getCachedFileAccessUrl = (fileId) => {
+  if (!fileId) return null;
+  const idStr = String(fileId);
+  const entry = accessUrlCache.get(idStr);
+  if (entry && entry.expiresAt > Date.now()) {
+    return entry.url;
+  }
+  if (entry) {
+    accessUrlCache.delete(idStr);
+  }
+  return null;
+};
+
+export const setCachedFileAccessUrl = (fileId, url) => {
+  if (!fileId || !url) return;
+  accessUrlCache.set(String(fileId), {
+    url,
+    expiresAt: Date.now() + ACCESS_URL_CACHE_TTL,
+  });
+};
+
 /**
  * Clean In-Modal .docx Document Preview
  * Unzips word/document.xml with JSZip and renders structured paragraphs, headings, and tables.
@@ -265,21 +290,21 @@ function DocxPreviewModal({ previewFile, previewUrl, closePreview, handleDownloa
         onClick={(e) => e.stopPropagation()}
       >
         {/* Top Bar */}
-        <div className="flex items-center justify-between p-4 border-b border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900/60 shrink-0">
-          <h3 className="font-title-lg text-neutral-900 dark:text-white font-semibold truncate pr-4" title={previewFile.name}>
-            {previewFile.name}
+        <div className="flex items-center justify-between gap-3 w-full min-w-0 px-4 py-3 border-b border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900/60 shrink-0">
+          <h3 className="min-w-0 flex-1 truncate text-sm sm:text-base font-medium text-neutral-900 dark:text-white" title={previewFile.originalName || previewFile.name}>
+            {previewFile.originalName || previewFile.name}
           </h3>
           <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={() => handleDownload && handleDownload(previewFile)}
-              className="bg-primary text-on-primary hover:bg-primary/90 transition-colors p-2 rounded-lg flex items-center justify-center cursor-pointer"
+              className="bg-primary text-on-primary hover:bg-primary/90 transition-colors p-2 rounded-lg flex items-center justify-center cursor-pointer shrink-0"
               title="Download File"
             >
               <span className="material-symbols-outlined">download</span>
             </button>
             <button
               onClick={closePreview}
-              className="p-2 text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white hover:bg-neutral-200 dark:hover:bg-neutral-800 rounded-full transition-colors cursor-pointer"
+              className="p-2 text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white hover:bg-neutral-200 dark:hover:bg-neutral-800 rounded-full transition-colors cursor-pointer shrink-0"
               title="Close"
             >
               <span className="material-symbols-outlined">close</span>
@@ -2710,6 +2735,23 @@ function App() {
     }
   };
 
+  const prefetchFileAccessUrl = useCallback(async (file) => {
+    if (!file || file.isFolder) return;
+    const fileId = file._id || file.id;
+    if (!fileId) return;
+    const idStr = String(fileId);
+    if (getCachedFileAccessUrl(idStr) || getCachedAccessUrl(idStr)) return;
+
+    try {
+      const url = await fetchAccessUrl(idStr, token);
+      if (url) {
+        setCachedFileAccessUrl(idStr, url);
+      }
+    } catch (e) {
+      // Non-blocking prefetch failure ignored
+    }
+  }, [token]);
+
   const handlePreview = async (file) => {
     if (file.isFolder) {
       setCurrentDirectory(file.diskName || file.name);
@@ -2722,7 +2764,7 @@ function App() {
     
     try {
       const type = (file.type || '').toLowerCase();
-      const cachedUrl = getCachedAccessUrl(file._id);
+      const cachedUrl = getCachedFileAccessUrl(file._id) || getCachedAccessUrl(file._id);
 
       if (cachedUrl) {
         setPreviewUrl(cachedUrl);
@@ -2740,6 +2782,7 @@ function App() {
       setPreviewText('Loading...');
       const url = await fetchAccessUrl(file._id, token);
       if (!url) throw new Error("Could not fetch secure access URL");
+      setCachedFileAccessUrl(file._id, url);
       setPreviewUrl(url);
       setPreviewFile(file);
 
@@ -2763,7 +2806,10 @@ function App() {
     }
     try {
       const isLarge = (file.size || 0) >= 1 * 1024 * 1024 * 1024;
-      const res = await triggerDownload(file);
+      const fileId = file._id || file.id;
+      const cachedUrl = getCachedFileAccessUrl(fileId) || getCachedAccessUrl(fileId);
+      const downloadPayload = cachedUrl ? { ...file, accessUrl: cachedUrl, url: cachedUrl } : file;
+      const res = await triggerDownload(downloadPayload);
       if (isLarge || res?.mode === 'stream') {
         toast.info(`Download started in browser: ${file.name}`);
       } else {
@@ -4139,7 +4185,7 @@ function App() {
                       setActiveMenuId={setActiveMenuId}
                       formatSize={formatSize}
                       token={token}
-                      prefetchAccessUrl={prefetchAccessUrl}
+                      prefetchAccessUrl={prefetchFileAccessUrl}
                     />
                   </ErrorBoundary>
                 ))}
@@ -4244,8 +4290,8 @@ function App() {
                     <ErrorBoundary key={file?._id || file?.id || Math.random()}>
                     <tr 
                       onClick={() => file.isFolder ? setCurrentDirectory(file.diskName || file.name) : handlePreview(file)}
-                      onMouseEnter={() => !file.isFolder && prefetchAccessUrl(file._id, token)}
-                      onTouchStart={() => !file.isFolder && prefetchAccessUrl(file._id, token)}
+                      onMouseEnter={() => !file.isFolder && prefetchFileAccessUrl(file)}
+                      onTouchStart={() => !file.isFolder && prefetchFileAccessUrl(file)}
                       className={`flex flex-wrap md:table-row items-center py-2.5 sm:py-3 px-3 sm:px-4 md:p-0 hover:bg-surface-bright dark:hover:bg-zinc-800/70 dark:text-zinc-300 transition-colors group md:h-14 ${
                         activeMenuId === (file._id || file.id) ? 'relative z-50' : 'relative z-0'
                       } ${
@@ -4355,8 +4401,8 @@ function App() {
                             {!file.isFolder && (
                               <button 
                                 onClick={(e) => { e.stopPropagation(); handlePreview(file); setActiveMenuId(null); }} 
-                                onMouseEnter={() => prefetchAccessUrl(file._id, token)}
-                                onTouchStart={() => prefetchAccessUrl(file._id, token)}
+                                onMouseEnter={() => prefetchFileAccessUrl(file)}
+                                onTouchStart={() => prefetchFileAccessUrl(file)}
                                 className="w-full text-left px-4 py-2.5 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:text-gray-900 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-neutral-700/80 transition-colors flex items-center gap-3 cursor-pointer"
                               >
                                 <span className="material-symbols-outlined text-[18px]">visibility</span> Preview

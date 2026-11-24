@@ -28,6 +28,30 @@ import { HeicPreviewImage, preloadMediaItem, prefetchMediaUrl, getCachedPreviewE
 // --------------------------------------------------------------------------
 // MODULE-LEVEL CACHES: Persist across tab switching to prevent network refetching
 // --------------------------------------------------------------------------
+const ACCESS_URL_CACHE_TTL = 25 * 60 * 1000; // 25 minutes TTL
+const accessUrlCache = new Map(); // fileId -> { url: string, expiresAt: number }
+
+export const getCachedPhotosAccessUrl = (fileId) => {
+  if (!fileId) return null;
+  const idStr = String(fileId);
+  const entry = accessUrlCache.get(idStr);
+  if (entry && entry.expiresAt > Date.now()) {
+    return entry.url;
+  }
+  if (entry) {
+    accessUrlCache.delete(idStr);
+  }
+  return null;
+};
+
+export const setCachedPhotosAccessUrl = (fileId, url) => {
+  if (!fileId || !url) return;
+  accessUrlCache.set(String(fileId), {
+    url,
+    expiresAt: Date.now() + ACCESS_URL_CACHE_TTL,
+  });
+};
+
 let globalPhotosCache = null;
 let lastPhotosFetchTimestamp = 0;
 const CACHE_TTL_MS = 60 * 1000; // 60 seconds fresh cache
@@ -349,8 +373,9 @@ export default function PhotosView({ token: propToken }) {
 
     // Check cache first for 0ms instant display and 0 network requests
     const cachedLru = getCachedPreviewEntry(fileId);
-    const cachedUrl = cachedLru?.signedUrl || getCachedAccessUrl(fileId) || urlCacheRef.current.get(fileId);
+    const cachedUrl = getCachedPhotosAccessUrl(fileId) || cachedLru?.signedUrl || getCachedAccessUrl(fileId) || urlCacheRef.current.get(fileId);
     if (cachedUrl) {
+      setCachedPhotosAccessUrl(fileId, cachedUrl);
       urlCacheRef.current.set(fileId, cachedUrl);
       setOriginalUrl(cachedUrl);
       setLoadingOriginal(false);
@@ -370,6 +395,7 @@ export default function PhotosView({ token: propToken }) {
       const token = propToken || (typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null);
       const accessUrl = await fetchAccessUrl(fileId, token);
       if (accessUrl) {
+        setCachedPhotosAccessUrl(fileId, accessUrl);
         urlCacheRef.current.set(fileId, accessUrl);
         putCachedPreviewEntry(fileId, {
           signedUrl: accessUrl,
@@ -390,6 +416,24 @@ export default function PhotosView({ token: propToken }) {
       if (activeLoadIdRef.current === fileId) {
         setLoadingOriginal(false);
       }
+    }
+  }, [propToken]);
+
+  const prefetchFileAccessUrl = useCallback(async (item) => {
+    if (!item) return;
+    const fileId = item._id || item.id;
+    if (!fileId) return;
+    const idStr = String(fileId);
+    if (getCachedPhotosAccessUrl(idStr) || getCachedAccessUrl(idStr)) return;
+
+    try {
+      const token = propToken || (typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null);
+      const url = await fetchAccessUrl(idStr, token);
+      if (url) {
+        setCachedPhotosAccessUrl(idStr, url);
+      }
+    } catch (e) {
+      // Non-blocking prefetch failure ignored
     }
   }, [propToken]);
 
@@ -438,9 +482,16 @@ export default function PhotosView({ token: propToken }) {
     if (!next1 && !next2 && !prev1) return;
 
     const abortController = new AbortController();
-    const getSignedUrl = (file) => {
+    const getSignedUrl = async (file) => {
+      const fileId = file._id;
+      const cached = getCachedPhotosAccessUrl(fileId) || getCachedAccessUrl(fileId);
+      if (cached) return cached;
       const token = propToken || (typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null);
-      return fetchAccessUrl(file._id, token);
+      const url = await fetchAccessUrl(fileId, token);
+      if (url) {
+        setCachedPhotosAccessUrl(fileId, url);
+      }
+      return url;
     };
 
     if (next1) prefetchMediaUrl(next1, getSignedUrl, abortController.signal);
@@ -469,9 +520,16 @@ export default function PhotosView({ token: propToken }) {
     if (!next1 && !next2 && !prev1) return;
 
     const abortController = new AbortController();
-    const getSignedUrl = (file) => {
+    const getSignedUrl = async (file) => {
+      const fileId = file._id;
+      const cached = getCachedPhotosAccessUrl(fileId) || getCachedAccessUrl(fileId);
+      if (cached) return cached;
       const token = propToken || (typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null);
-      return fetchAccessUrl(file._id, token);
+      const url = await fetchAccessUrl(fileId, token);
+      if (url) {
+        setCachedPhotosAccessUrl(fileId, url);
+      }
+      return url;
     };
 
     const timer = setTimeout(async () => {
@@ -530,7 +588,10 @@ export default function PhotosView({ token: propToken }) {
     if (!targetUrl && item._id) {
       try {
         const token = propToken || (typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null);
-        targetUrl = getCachedAccessUrl(item._id) || (await fetchAccessUrl(item._id, token));
+        targetUrl = getCachedPhotosAccessUrl(item._id) || getCachedAccessUrl(item._id) || (await fetchAccessUrl(item._id, token));
+        if (targetUrl) {
+          setCachedPhotosAccessUrl(item._id, targetUrl);
+        }
       } catch (err) {
         console.warn('Failed to fetch access URL for download:', err);
       }
@@ -896,8 +957,8 @@ export default function PhotosView({ token: propToken }) {
                     <div
                       key={item._id}
                       onClick={() => openPreview(item, globalIndex)}
-                      onMouseEnter={() => prefetchAccessUrl(item._id, propToken)}
-                      onTouchStart={() => prefetchAccessUrl(item._id, propToken)}
+                      onMouseEnter={() => prefetchFileAccessUrl(item)}
+                      onTouchStart={() => prefetchFileAccessUrl(item)}
                       className={`group relative aspect-square bg-white dark:bg-zinc-900 rounded-lg sm:rounded-xl overflow-hidden border transition-all shadow-sm active:scale-95 touch-manipulation cursor-pointer ${
                         isSelected
                           ? 'ring-2 ring-emerald-500 border-emerald-500 dark:border-emerald-500'
@@ -995,8 +1056,8 @@ export default function PhotosView({ token: propToken }) {
                     <div
                       key={item._id}
                       onClick={() => openPreview(item, globalIndex)}
-                      onMouseEnter={() => prefetchAccessUrl(item._id, propToken)}
-                      onTouchStart={() => prefetchAccessUrl(item._id, propToken)}
+                      onMouseEnter={() => prefetchFileAccessUrl(item)}
+                      onTouchStart={() => prefetchFileAccessUrl(item)}
                       className={`flex items-center justify-between p-3 cursor-pointer transition-colors ${
                         isSelected
                           ? 'bg-emerald-500/10 dark:bg-emerald-500/15'
@@ -1141,17 +1202,17 @@ export default function PhotosView({ token: propToken }) {
           onTouchStart={handleTouchStart}
           onTouchEnd={handleTouchEnd}
         >
-          <div className="absolute top-3 inset-x-3 sm:inset-x-6 flex items-center justify-between text-zinc-300 z-20 pointer-events-auto">
-            <div className="flex items-center gap-3 min-w-0">
-              <span className="text-xs sm:text-sm font-medium truncate max-w-[180px] sm:max-w-md text-zinc-200">
+          <div className="absolute top-3 inset-x-3 sm:inset-x-6 flex items-center justify-between gap-3 text-zinc-300 z-20 pointer-events-auto">
+            <div className="flex items-center gap-3 min-w-0 flex-1 pr-2">
+              <span className="text-xs sm:text-sm font-medium truncate max-w-[180px] sm:max-w-md text-zinc-200" title={currentPreviewItem.originalName || currentPreviewItem.name}>
                 {currentPreviewItem.originalName || currentPreviewItem.name}
               </span>
-              <span className="text-xs text-zinc-500 hidden sm:inline">
+              <span className="text-xs text-zinc-500 hidden sm:inline shrink-0">
                 ({previewIndex + 1} of {mediaList.length})
               </span>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 shrink-0">
               {/* Move to Bin Button (Left of Download) */}
               <button
                 type="button"
@@ -1226,6 +1287,9 @@ export default function PhotosView({ token: propToken }) {
                 <PreviewVideo
                   key={fullMediaUrl || currentPreviewItem.url}
                   src={fullMediaUrl || currentPreviewItem.url}
+                  posterUrl={currentPreviewItem.thumbnailUrl || currentPreviewItem.thumbnail || undefined}
+                  poster={currentPreviewItem.thumbnailUrl || currentPreviewItem.thumbnail || undefined}
+                  playsInline
                   className="max-h-[80vh] w-auto max-w-full rounded-lg shadow-2xl bg-black"
                 />
               ) : (
@@ -1234,6 +1298,8 @@ export default function PhotosView({ token: propToken }) {
                     <img
                       src={currentPreviewItem.thumbnailUrl || currentPreviewItem.url}
                       alt={currentPreviewItem.name}
+                      loading="lazy"
+                      decoding="async"
                       crossOrigin={typeof (currentPreviewItem.thumbnailUrl || currentPreviewItem.url) === 'string' && ((currentPreviewItem.thumbnailUrl || currentPreviewItem.url).startsWith('https://files.cloudguard.site') || (currentPreviewItem.thumbnailUrl || currentPreviewItem.url).includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
                       className="max-h-[80vh] max-w-full object-contain rounded-lg filter blur-sm opacity-60"
                     />
@@ -1264,6 +1330,8 @@ export default function PhotosView({ token: propToken }) {
                       <img
                         src={currentPreviewItem.thumbnailUrl || currentPreviewItem.accessUrl || currentPreviewItem.url}
                         alt={currentPreviewItem.name}
+                        loading="lazy"
+                        decoding="async"
                         crossOrigin={typeof (currentPreviewItem.thumbnailUrl || currentPreviewItem.accessUrl || currentPreviewItem.url) === 'string' && ((currentPreviewItem.thumbnailUrl || currentPreviewItem.accessUrl || currentPreviewItem.url).startsWith('https://files.cloudguard.site') || (currentPreviewItem.thumbnailUrl || currentPreviewItem.accessUrl || currentPreviewItem.url).includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
                         className={`max-h-[80vh] max-w-full object-contain rounded-lg shadow-2xl transition-opacity duration-300 ${
                           fullMediaUrl ? 'opacity-0 absolute' : 'opacity-100'

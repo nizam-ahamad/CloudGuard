@@ -76,6 +76,11 @@
     - When `TURNSTILE_SECRET_KEY` is present, verification executes against `https://challenges.cloudflare.com/turnstile/v0/siteverify` using a 4000ms `AbortSignal.timeout(4000)` deadline.
     - Google OAuth (`/api/auth/google`), session logout (`/api/auth/logout`), and 2FA verification (`/api/auth/2fa/verify-login`) remain completely unencumbered by Turnstile.
     - Client renders Turnstile dynamically inside active auth components (`AuthPage.jsx` and `Auth.jsx`) in dark mode (`theme: 'dark'`) only when `VITE_TURNSTILE_SITE_KEY` is populated, automatically resetting the widget on failure or view switch.
+11. **Mobile Preview Modal Header Resilience, 25-Min Signed-URL Prefetch Cache & Video Poster Wiring:**
+    - Preview modal headers (`DocxPreviewModal` in `client/src/App.jsx` and media Lightbox in `client/src/pages/PhotosView.jsx`) must maintain responsive geometry across narrow mobile viewports (`360px`–`393px`): header row uses `flex items-center justify-between gap-3 w-full min-w-0`, title element uses `min-w-0 flex-1 truncate text-sm sm:text-base font-medium` with `title={originalName || name}`, and button clusters enforce `flex items-center gap-2 shrink-0` so Download and Close (`X`) buttons are never compressed or pushed off-screen.
+    - Module-level `accessUrlCache` (Map with 25-minute TTL matching S3 signed URL validity) caches direct signed URLs across tab switches and user actions in both `App.jsx` and `PhotosView.jsx`.
+    - Non-blocking hover/touch prefetch (`prefetchFileAccessUrl` triggered on `onMouseEnter` / `onTouchStart` across grid cards, table rows, and action menus) retrieves signed access URLs in advance via lightweight JSON API calls without transferring heavy media bytes.
+    - Lightbox video components (`PreviewVideo` in `PhotosView.jsx`) receive `posterUrl` / `poster` and `playsInline` to display immediate poster frame snapshots while streaming media buffers, and thumbnail/preview `<img>` tags specify `loading="lazy"` and `decoding="async"` for smooth rendering.
 
 ---
 
