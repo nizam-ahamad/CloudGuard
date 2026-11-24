@@ -22,14 +22,16 @@ function attachVaultEdgeCookie(res, userId) {
   const token = signEdgePayload(userId, 86400);
   const reqHost = res.req?.headers?.host || (typeof res.req?.get === 'function' ? res.req.get('host') : '') || '';
   const reqOrigin = res.req?.headers?.origin || (typeof res.req?.get === 'function' ? res.req.get('origin') : '') || '';
-  const isProdDomain =
-    process.env.NODE_ENV === 'production' ||
+  const isCloudguardDomain =
     (process.env.CDN_DOWNLOAD_URL || '').includes('cloudguard.site') ||
     (process.env.CLIENT_URL || '').includes('cloudguard.site') ||
     reqHost.includes('cloudguard.site') ||
     reqOrigin.includes('cloudguard.site');
-  const cookieOptions = isProdDomain
+  const isProd = process.env.NODE_ENV === 'production';
+  const cookieOptions = isCloudguardDomain
     ? { httpOnly: true, secure: true, sameSite: 'none', domain: '.cloudguard.site', path: '/', maxAge: 86400 * 1000 }
+    : isProd
+    ? { httpOnly: true, secure: true, sameSite: 'none', path: '/', maxAge: 86400 * 1000 }
     : { httpOnly: true, sameSite: 'lax', path: '/', maxAge: 86400 * 1000 };
   res.cookie('cg_vault_session', token, cookieOptions);
 }
@@ -41,13 +43,12 @@ function clearVaultEdgeCookie(res) {
   if (!res) return;
   const reqHost = res.req?.headers?.host || (typeof res.req?.get === 'function' ? res.req.get('host') : '') || '';
   const reqOrigin = res.req?.headers?.origin || (typeof res.req?.get === 'function' ? res.req.get('origin') : '') || '';
-  const isProdDomain =
-    process.env.NODE_ENV === 'production' ||
+  const isCloudguardDomain =
     (process.env.CDN_DOWNLOAD_URL || '').includes('cloudguard.site') ||
     (process.env.CLIENT_URL || '').includes('cloudguard.site') ||
     reqHost.includes('cloudguard.site') ||
     reqOrigin.includes('cloudguard.site');
-  if (isProdDomain) {
+  if (isCloudguardDomain) {
     res.clearCookie('cg_vault_session', { httpOnly: true, secure: true, sameSite: 'none', domain: '.cloudguard.site', path: '/' });
   }
   res.clearCookie('cg_vault_session', { path: '/' });
@@ -60,14 +61,16 @@ function attachAuthCookie(res, jwtToken) {
   if (!res || !jwtToken) return;
   const reqHost = res.req?.headers?.host || (typeof res.req?.get === 'function' ? res.req.get('host') : '') || '';
   const reqOrigin = res.req?.headers?.origin || (typeof res.req?.get === 'function' ? res.req.get('origin') : '') || '';
-  const isProdDomain =
-    process.env.NODE_ENV === 'production' ||
+  const isCloudguardDomain =
     (process.env.CDN_DOWNLOAD_URL || '').includes('cloudguard.site') ||
     (process.env.CLIENT_URL || '').includes('cloudguard.site') ||
     reqHost.includes('cloudguard.site') ||
     reqOrigin.includes('cloudguard.site');
-  const cookieOptions = isProdDomain
+  const isProd = process.env.NODE_ENV === 'production';
+  const cookieOptions = isCloudguardDomain
     ? { httpOnly: true, secure: true, sameSite: 'none', domain: '.cloudguard.site', path: '/', maxAge: 7 * 24 * 60 * 60 * 1000 }
+    : isProd
+    ? { httpOnly: true, secure: true, sameSite: 'none', path: '/', maxAge: 7 * 24 * 60 * 60 * 1000 }
     : { httpOnly: true, sameSite: 'lax', path: '/', maxAge: 7 * 24 * 60 * 60 * 1000 };
   res.cookie('cg_auth_token', jwtToken, cookieOptions);
 }
@@ -79,13 +82,12 @@ function clearAuthCookie(res) {
   if (!res) return;
   const reqHost = res.req?.headers?.host || (typeof res.req?.get === 'function' ? res.req.get('host') : '') || '';
   const reqOrigin = res.req?.headers?.origin || (typeof res.req?.get === 'function' ? res.req.get('origin') : '') || '';
-  const isProdDomain =
-    process.env.NODE_ENV === 'production' ||
+  const isCloudguardDomain =
     (process.env.CDN_DOWNLOAD_URL || '').includes('cloudguard.site') ||
     (process.env.CLIENT_URL || '').includes('cloudguard.site') ||
     reqHost.includes('cloudguard.site') ||
     reqOrigin.includes('cloudguard.site');
-  if (isProdDomain) {
+  if (isCloudguardDomain) {
     res.clearCookie('cg_auth_token', { httpOnly: true, secure: true, sameSite: 'none', domain: '.cloudguard.site', path: '/' });
   }
   res.clearCookie('cg_auth_token', { path: '/' });

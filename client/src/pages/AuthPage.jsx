@@ -52,6 +52,17 @@ export default function AuthPage() {
     }
   }, [urlMode]);
 
+  // Immediate safeguard on mount for expired sessions: clear all session flags and prevent auto-redirect
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.location.search.includes('expired=true')) {
+      localStorage.removeItem('cg_session_active');
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      sessionStorage.removeItem('token');
+      sessionStorage.removeItem('user');
+    }
+  }, []);
+
   const [isForgotPassword, setIsForgotPassword] = useState(false);
   const [isOtpMode, setIsOtpMode] = useState(false);
   const [isNewPasswordMode, setIsNewPasswordMode] = useState(false);

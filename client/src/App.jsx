@@ -47,6 +47,27 @@ import { API_BASE_URL } from "./config";
 // Module-level storage cache to persist storage meter state across tab navigation
 let globalStorageStatsCache = null;
 
+// Global axios defaults & request interceptor to guarantee withCredentials and strip invalid Authorization headers
+axios.defaults.withCredentials = true;
+axios.interceptors.request.use((config) => {
+  config.withCredentials = true;
+  const authHeader = config.headers?.Authorization || config.headers?.authorization;
+  if (typeof authHeader === 'string') {
+    const trimmed = authHeader.trim();
+    if (
+      trimmed === 'Bearer' ||
+      trimmed === 'Bearer null' ||
+      trimmed === 'Bearer undefined' ||
+      trimmed === 'Bearer cookie-session' ||
+      trimmed.includes('cookie-session')
+    ) {
+      if (config.headers?.Authorization) delete config.headers.Authorization;
+      if (config.headers?.authorization) delete config.headers.authorization;
+    }
+  }
+  return config;
+});
+
 // Global 401 Interceptor to Stop Request Spam & Redirect
 axios.interceptors.response.use(
   (response) => response,
@@ -56,8 +77,11 @@ axios.interceptors.response.use(
 
     // Never force redirect to /login if the error originated from an auth route
     if (error.response?.status === 401 && !isAuthRoute) {
+      localStorage.removeItem('cg_session_active');
       localStorage.removeItem('token');
       localStorage.removeItem('user');
+      sessionStorage.removeItem('token');
+      sessionStorage.removeItem('user');
       if (window.location.pathname !== '/login' && window.location.pathname !== '/login/') {
         window.location.href = '/login?expired=true';
       }
@@ -379,6 +403,12 @@ function App() {
 
   // Dynamic token verification helper (supports legacy token & HttpOnly cookie session):
   const getActiveToken = () => {
+    if (typeof window !== 'undefined' && window.location.search.includes('expired=true')) {
+      localStorage.removeItem('cg_session_active');
+      localStorage.removeItem('token');
+      sessionStorage.removeItem('token');
+      return null;
+    }
     return localStorage.getItem('token') || sessionStorage.getItem('token') || (localStorage.getItem('cg_session_active') === '1' ? 'cookie-session' : null);
   };
 
@@ -411,6 +441,16 @@ function App() {
 
   // Validate active session on mount with HttpOnly cookie
   useEffect(() => {
+    if (window.location.search.includes('expired=true')) {
+      localStorage.removeItem('cg_session_active');
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      sessionStorage.removeItem('token');
+      sessionStorage.removeItem('user');
+      setToken(null);
+      setUser(null);
+      return;
+    }
     const isSessionActive = localStorage.getItem('cg_session_active') === '1' || Boolean(localStorage.getItem('token') || sessionStorage.getItem('token'));
     if (!isSessionActive) return;
 
@@ -460,7 +500,7 @@ function App() {
       adminCheckPromiseRef.current = {
         token: activeToken,
         promise: axios.get(`${API_BASE_URL}/api/admin/me`, {
-          headers: { Authorization: `Bearer ${activeToken}` }
+          headers: activeToken && activeToken !== 'cookie-session' ? { Authorization: `Bearer ${activeToken}` } : {}
         })
       };
     }
@@ -489,7 +529,7 @@ function App() {
       const activeToken = getActiveToken();
       if (!activeToken) return;
       const res = await axios.get(`${API_BASE_URL}/api/payments/subscription-status`, {
-        headers: { Authorization: `Bearer ${activeToken}` }
+        headers: activeToken && activeToken !== 'cookie-session' ? { Authorization: `Bearer ${activeToken}` } : {}
       });
       if (res.data?.success) {
         setUser((prev) => {
@@ -516,6 +556,13 @@ function App() {
   // Clear ?expired=true from address bar on /login without full reload
   useEffect(() => {
     if (window.location.pathname === '/login' && window.location.search.includes('expired=true')) {
+      localStorage.removeItem('cg_session_active');
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      sessionStorage.removeItem('token');
+      sessionStorage.removeItem('user');
+      setToken(null);
+      setUser(null);
       const cleanUrl = window.location.pathname;
       window.history.replaceState({}, document.title, cleanUrl);
     }
@@ -625,7 +672,7 @@ function App() {
       if (!token) return;
 
       const res = await axios.get(`${API_BASE_URL}/api/storage-stats`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: token && token !== 'cookie-session' ? { Authorization: `Bearer ${token}` } : {},
       });
 
       if (res.data) {
@@ -1710,7 +1757,7 @@ function App() {
   const handleExecuteBatchMove = handleMoveConfirm;
 
   useEffect(() => {
-    if (token) {
+    if (token && token !== 'cookie-session') {
       axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
     } else {
       delete axios.defaults.headers.common['Authorization'];
@@ -2792,7 +2839,8 @@ function App() {
     </div>
   ) : null;
 
-  const activeToken = token || getActiveToken();
+  const isExpired = typeof window !== 'undefined' && window.location.search.includes('expired=true');
+  const activeToken = isExpired ? null : (token || getActiveToken());
   if (!activeToken) {
     const authContent = (() => {
       if (window.location.pathname.startsWith('/reset-password/')) {

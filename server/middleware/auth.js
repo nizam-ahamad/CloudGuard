@@ -1,8 +1,63 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
+/**
+ * Direct fallback parser on raw cookie header for cg_auth_token
+ */
+const parseTokenFromRawCookie = (rawCookie) => {
+  if (typeof rawCookie !== 'string' || !rawCookie.includes('cg_auth_token=')) {
+    return null;
+  }
+  const match = rawCookie.match(/(?:^|;\s*)cg_auth_token=([^;]+)/);
+  if (match && match[1]) {
+    try {
+      return decodeURIComponent(match[1].trim());
+    } catch {
+      return match[1].trim();
+    }
+  }
+  return null;
+};
+
+/**
+ * Extracts and validates Bearer token, ignoring invalid literal placeholders
+ */
+const parseTokenFromAuthHeader = (authHeader) => {
+  if (typeof authHeader !== 'string') return null;
+  const parts = authHeader.split(' ');
+  if (parts.length >= 2 && /^bearer$/i.test(parts[0])) {
+    const val = parts.slice(1).join(' ').trim();
+    // Explicitly ignore invalid literal values
+    if (
+      val &&
+      val !== 'null' &&
+      val !== 'undefined' &&
+      val !== 'cookie-session' &&
+      val !== '[object Object]'
+    ) {
+      return val;
+    }
+  }
+  return null;
+};
+
 const authMiddleware = async (req, res, next) => {
-  const token = req.cookies?.cg_auth_token || req.headers?.authorization?.split(' ')[1] || req.query?.token;
+  // 1. Prioritize HttpOnly cookie (parsed by cookie middleware or raw header fallback)
+  let token = req.cookies?.cg_auth_token || parseTokenFromRawCookie(req.headers?.cookie);
+
+  // 2. Fall back to Authorization Bearer header if valid
+  if (!token) {
+    token = parseTokenFromAuthHeader(req.headers?.authorization || req.headers?.Authorization);
+  }
+
+  // 3. Fall back to query parameter token if valid
+  if (!token && req.query?.token) {
+    const qToken = String(req.query.token).trim();
+    if (qToken && qToken !== 'null' && qToken !== 'undefined' && qToken !== 'cookie-session') {
+      token = qToken;
+    }
+  }
+
   if (!token) {
     return res.status(401).json({ error: 'Access denied. Please log in.', message: 'Access denied. Please log in.' });
   }

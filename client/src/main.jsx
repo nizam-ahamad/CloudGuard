@@ -12,12 +12,23 @@ import { UploadProvider } from './context/UploadContext'
 // Ensure cross-origin Set-Cookie (cg_vault_session, cg_auth_token) from api.cloudguard.site is sent & received on all API requests
 axios.defaults.withCredentials = true;
 
-// Strip dummy cookie-session placeholder from Authorization header to rely on HttpOnly cg_auth_token cookie
+// Ensure credentials on every request and strip invalid or placeholder Authorization headers
 axios.interceptors.request.use((config) => {
+  config.withCredentials = true;
+
   const authHeader = config.headers?.Authorization || config.headers?.authorization;
-  if (typeof authHeader === 'string' && authHeader.includes('cookie-session')) {
-    if (config.headers?.Authorization) delete config.headers.Authorization;
-    if (config.headers?.authorization) delete config.headers.authorization;
+  if (typeof authHeader === 'string') {
+    const trimmed = authHeader.trim();
+    if (
+      trimmed === 'Bearer' ||
+      trimmed === 'Bearer null' ||
+      trimmed === 'Bearer undefined' ||
+      trimmed === 'Bearer cookie-session' ||
+      trimmed.includes('cookie-session')
+    ) {
+      if (config.headers?.Authorization) delete config.headers.Authorization;
+      if (config.headers?.authorization) delete config.headers.authorization;
+    }
   }
   return config;
 });
