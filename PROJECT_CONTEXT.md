@@ -45,6 +45,13 @@ To eliminate automated credential stuffing, bot-driven trial farming, and OTP fl
 4. **OAuth & Secondary Auth Exemption:** Google OAuth (`/api/auth/google`), 2FA challenges (`/api/auth/2fa/verify-login`), and logout (`/api/auth/logout`) remain completely unencumbered by Turnstile.
 5. **Adaptive Client Widget:** The client active auth view (`AuthPage.jsx` mounted at `/login` in `App.jsx`, alongside `Auth.jsx`) renders a dark-theme Turnstile challenge (`theme: 'dark'`) only when `VITE_TURNSTILE_SITE_KEY` is present, with automatic token refresh on errors and mode switches.
 
+### 🕵️ Founder Monitor & Cloaked Admin Architecture
+For platform operations, financial tracking, storage monitoring, and manual Cashfree refund vault resets:
+1. **Dynamic Backend Route Targeting:** The Founder Monitor UI (`client/src/pages/AdminMonitor.jsx` accessed at `/monitor`) resolves `API_BASE_URL` dynamically (`(import.meta.env.VITE_API_URL || (window.location.hostname.endsWith('cloudguard.site') ? 'https://api.cloudguard.site' : 'http://localhost:5000')).replace(/\/$/, '')`). This ensures all API queries (`GET /api/admin/overview`, `POST /api/admin/users/:userId/reset-refund`) route directly to the backend API origin instead of hitting Cloudflare Pages frontend routes (preventing `404 Not Found`).
+2. **Credentialed Requests & Header Hygiene:** Axios calls enforce `{ withCredentials: true }` and systematically strip invalid token placeholders (`Bearer null`, `Bearer cookie-session`), allowing requests to authenticate seamlessly via the primary `HttpOnly` session cookie (`cg_auth_token`).
+3. **Multi-Identifier Normalization & Cookie Fallback:** Admin authorization middleware (`server/middleware/requireAdmin.js`) resolves user IDs across `req.user?.id || req.user?._id || req.user?.userId`. If `req.user` is absent, it parses `cg_auth_token` from cookies or raw headers, Bearer tokens, or query parameters. If `req.user?.email` matches `ADMIN_EMAILS`, requests are allowed immediately; otherwise, MongoDB is queried for the user's email.
+4. **Cloaked 404 Security:** Any unauthenticated, expired, invalid, or non-admin request receives a `404 Not Found` response rather than `401 Unauthorized` or `403 Forbidden`, keeping the existence of the administrative monitor endpoint hidden from unauthorized viewers.
+
 ### ⚡ Zero-EC2-Load & Zero-Egress Storage Architecture
 
 Traditional cloud storage platforms process and transcode files on expensive backend application servers, driving up compute bills and introducing severe I/O bottlenecks. CloudGuard operates on a radically different architectural model:

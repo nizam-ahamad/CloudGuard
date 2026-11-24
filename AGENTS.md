@@ -81,6 +81,9 @@
     - Module-level `accessUrlCache` (Map with 25-minute TTL matching S3 signed URL validity) caches direct signed URLs across tab switches and user actions in both `App.jsx` and `PhotosView.jsx`.
     - Non-blocking hover/touch prefetch (`prefetchFileAccessUrl` triggered on `onMouseEnter` / `onTouchStart` across grid cards, table rows, and action menus) retrieves signed access URLs in advance via lightweight JSON API calls without transferring heavy media bytes.
     - Lightbox video components (`PreviewVideo` in `PhotosView.jsx`) receive `posterUrl` / `poster` and `playsInline` to display immediate poster frame snapshots while streaming media buffers, and thumbnail/preview `<img>` tags specify `loading="lazy"` and `decoding="async"` for smooth rendering.
+12. **Admin Monitor Route Targeting & Cloaked Authorization (`requireAdmin`):**
+    - The Founder Monitor view (`client/src/pages/AdminMonitor.jsx`) defines `API_BASE_URL` dynamically (`(import.meta.env.VITE_API_URL || (window.location.hostname.endsWith('cloudguard.site') ? 'https://api.cloudguard.site' : 'http://localhost:5000')).replace(/\/$/, '')`), ensuring all requests (`GET /api/admin/overview`, `POST /api/admin/users/:userId/reset-refund`) route to the backend domain with `withCredentials: true` and stripped invalid Bearer placeholders (`Bearer null`, `Bearer cookie-session`).
+    - Admin authorization middleware (`server/middleware/requireAdmin.js`) safely resolves `userId` via `req.user?.id || req.user?._id || req.user?.userId` (with fallback to `cg_auth_token` HttpOnly cookie, raw `Cookie` header, Bearer token, and query param token). If `req.user?.email` is present and matches `ADMIN_EMAILS`, it allows access immediately; otherwise it queries MongoDB for the user email and checks `ADMIN_EMAILS`, returning cloaked `404 Not Found` for any unauthenticated or unauthorized access.
 
 ---
 

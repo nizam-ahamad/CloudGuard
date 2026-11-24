@@ -72,9 +72,12 @@ function resolveUserStorageQuota(user) {
  */
 router.get('/me', auth, async (req, res) => {
   try {
-    const userId = req.user?.id || req.user?._id;
+    const userId = req.user?.id || req.user?._id || req.user?.userId;
     if (!userId) {
       return res.status(200).json({ success: true, isAdmin: false });
+    }
+    if (req.user?.email && isAdminEmail(req.user.email)) {
+      return res.status(200).json({ success: true, isAdmin: true });
     }
     const user = await User.findById(userId).select('email').lean();
     return res.status(200).json({

@@ -24,16 +24,21 @@ import {
   Info
 } from 'lucide-react';
 import toast, { Toaster } from 'react-hot-toast';
-import { API_BASE_URL } from '../config';
+
+const API_BASE_URL = (import.meta.env.VITE_API_URL || (typeof window !== 'undefined' && window.location.hostname.endsWith('cloudguard.site') ? 'https://api.cloudguard.site' : 'http://localhost:5000')).replace(/\/$/, '');
 
 const api = axios.create({
   baseURL: `${API_BASE_URL}/api`,
+  withCredentials: true,
 });
 
 api.interceptors.request.use((config) => {
+  config.withCredentials = true;
   const token = localStorage.getItem('token') || sessionStorage.getItem('token');
-  if (token) {
+  if (token && token !== 'null' && token !== 'undefined' && token !== 'cookie-session' && token !== '[object Object]') {
     config.headers.Authorization = `Bearer ${token}`;
+  } else if (config.headers?.Authorization) {
+    delete config.headers.Authorization;
   }
   return config;
 });
@@ -105,7 +110,7 @@ export default function AdminMonitor() {
   const fetchOverview = async (isManualRefresh = false) => {
     try {
       if (isManualRefresh) setRefreshing(true);
-      const res = await api.get('/admin/overview');
+      const res = await api.get(`${API_BASE_URL}/api/admin/overview`, { withCredentials: true });
       if (res.data?.success) {
         setData(res.data);
       } else {
@@ -128,7 +133,7 @@ export default function AdminMonitor() {
     if (!resetTargetUser) return;
     try {
       setIsResetting(true);
-      const res = await api.post(`/admin/users/${resetTargetUser._id}/reset-refund`);
+      const res = await api.post(`${API_BASE_URL}/api/admin/users/${resetTargetUser._id}/reset-refund`, {}, { withCredentials: true });
       if (res.data?.success) {
         toast.success(`Vault for ${resetTargetUser.email} reset to expired 5 GB baseline.`);
         setResetTargetUser(null);
