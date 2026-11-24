@@ -102,6 +102,12 @@
     - Plan selection (`handleSelectPlan`) and checkout (`executeCheckout`) trigger directly for authenticated users, opening the Order Summary modal and initiating Cashfree checkout (`cashfree.checkout({ paymentSessionId, redirectTarget: '_modal' })`) with dynamic SDK script loading from `https://sdk.cashfree.com/js/v3/cashfree.js`.
     - Scheduled and deferred downgrades display confirmation toast notifications and dismiss cleanly without redirecting to `/dashboard`.
     - In `client/src/App.jsx`, `AuthenticatedLoginRedirect` preserves internal redirect targets (`?redirect=/pricing...`) on `/login`, `/register`, and `/signup` routes for authenticated sessions, preventing unintended fallback bounces to `/dashboard`.
+16. **Profile Settings HttpOnly Cookie Auth, Plan State & Invoice Links:**
+    - `ProfileSettings.jsx` resolves `API_BASE_URL` dynamically (`(import.meta.env.VITE_API_URL || (window.location.hostname.endsWith('cloudguard.site') ? 'https://api.cloudguard.site' : 'http://localhost:5000')).replace(/\/$/, '')`) and configures Axios with `withCredentials: true`, systematically stripping invalid Bearer headers (`Bearer null`, `Bearer cookie-session`).
+    - Subscription status (`GET /api/payments/subscription-status`) and history (`GET /api/payments/history`) load on mount and re-fetch when `cloudguard:subscription-updated` fires, updating active tier states and billing history.
+    - All profile endpoints (`/auth/profile`, `/auth/2fa/*`, `/payments/reactivate-subscription`, `/payments/cancel-subscription`, `/payments/cancel-scheduled-downgrade`, `/auth/account`, `/auth/password`) authenticate via HttpOnly session cookies with `withCredentials: true`.
+    - Active, cancelled, and past_due paid plans (`tier_50gb`, `tier_100gb`, `tier_200gb`) render their canonical names (`Essential Vault (50 GB)`, `Pro Vault (100 GB)`, `Ultra Vault (200 GB)`), billing cycle, next renewal / cycle end dates, and Plan Change / Cancel Subscription (or Resume Subscription) controls instead of falling back to `Free Trial (5 GB)`.
+    - In the Billing History table, official receipts link directly to `${API_BASE_URL}/api/payments/invoice/${item.orderId}` (`target="_blank" rel="noopener noreferrer"`).
 
 ---
 

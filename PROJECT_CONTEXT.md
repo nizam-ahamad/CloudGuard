@@ -195,3 +195,8 @@ CloudGuard/
    - The active session is hydrated on mount via `GET /api/auth/me` (`withCredentials: true`), syncing `user` state and calling `/api/payments/subscription-status` without relying on raw JWT tokens in `localStorage`.
    - Clicking any plan opens the Order Summary modal directly for authenticated users, initiating Cashfree checkout (`cashfree.checkout({ paymentSessionId, redirectTarget: '_modal' })`) with dynamic script injection (`https://sdk.cashfree.com/js/v3/cashfree.js`). Scheduled downgrades show confirmation toasts and dismiss without page bounces.
    - In `client/src/App.jsx`, `AuthenticatedLoginRedirect` preserves internal redirect query parameters (`?redirect=/pricing...`) on `/login`, `/register`, and `/signup` for authenticated users instead of falling through to `/dashboard`.
+12. **Profile Settings HttpOnly Cookie Auth, Plan State & Invoice Links:**
+   - `ProfileSettings.jsx` dynamically resolves `API_BASE_URL` with `withCredentials: true` and strips invalid Bearer tokens (`Bearer null`, `Bearer cookie-session`).
+   - Syncs subscription status (`GET /api/payments/subscription-status`) and history (`GET /api/payments/history`) on mount and when `cloudguard:subscription-updated` triggers.
+   - Paid plans (`tier_50gb`, `tier_100gb`, `tier_200gb`) display canonical names (`Essential Vault (50 GB)`, `Pro Vault (100 GB)`, `Ultra Vault (200 GB)`), billing cycle, and expiration/renewal dates with **Change Plan** and **Cancel Subscription** (or **Resume Subscription**) controls.
+   - Official invoice links in Billing History target `${API_BASE_URL}/api/payments/invoice/:orderId` in new tabs.

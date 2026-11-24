@@ -1,25 +1,42 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import axios from 'axios';
 import { Loader2, AlertTriangle, X, Smartphone, Check, Download, ExternalLink, Shield, ShieldCheck, ShieldAlert, KeyRound, Copy, Eye, EyeOff } from 'lucide-react';
 import toast, { Toaster } from 'react-hot-toast';
 import PasswordInput from '../PasswordInput';
-import { API_BASE_URL } from '../config';
 import { useToast } from '../context/ToastContext';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 
+const API_BASE_URL = (
+  import.meta.env.VITE_API_URL ||
+  (window.location.hostname.endsWith('cloudguard.site') ? 'https://api.cloudguard.site' : 'http://localhost:5000')
+).replace(/\/$/, '');
+
 const api = axios.create({
   baseURL: `${API_BASE_URL}/api`,
+  withCredentials: true,
 });
 
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('token') || sessionStorage.getItem('token');
-  if (token) {
+  if (token && token !== 'null' && token !== 'undefined' && token !== 'cookie-session') {
     config.headers.Authorization = `Bearer ${token}`;
+  } else if (config.headers?.Authorization) {
+    delete config.headers.Authorization;
   }
+  config.withCredentials = true;
   return config;
 });
+
+const getPlanDisplayName = (planId) => {
+  if (planId === 'tier_50gb') return 'Essential Vault (50 GB)';
+  if (planId === 'tier_100gb') return 'Pro Vault (100 GB)';
+  if (planId === 'tier_200gb') return 'Ultra Vault (200 GB)';
+  if (planId === 'trial') return 'Free Trial (5 GB)';
+  if (planId && planId !== 'free') return planId.replace('_', ' ');
+  return 'Free Trial (5 GB)';
+};
 
 function PWAInstallCard() {
   const { isInstalled, isIOS, triggerInstall, isInstallable } = usePWAInstall();
@@ -196,10 +213,10 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
   const [subData, setSubData] = useState(null);
   const [billingHistory, setBillingHistory] = useState([]);
 
-  const activePaidPlanId = subData?.subscription?.planId || subData?.plan;
-  const isPaidActiveSub =
-    subData?.subscription?.status === 'active' &&
-    ['tier_50gb', 'tier_100gb', 'tier_200gb'].includes(activePaidPlanId);
+  const activePaidPlanId = subData?.subscription?.planId || subData?.plan || user?.plan;
+  const isPaidPlan = ['tier_50gb', 'tier_100gb', 'tier_200gb'].includes(activePaidPlanId);
+  const subStatus = subData?.subscription?.status || (isPaidPlan ? 'active' : 'free');
+  const isPaidActiveSub = subStatus === 'active' && isPaidPlan;
   const formattedPaidExpiry = subData?.subscription?.expiresAt
     ? new Date(subData.subscription.expiresAt).toLocaleDateString('en-IN', {
         day: '2-digit',
@@ -208,7 +225,7 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
       })
     : null;
 
-  useEffect(() => {
+  const fetchSubscriptionData = useCallback(() => {
     api.get('/payments/subscription-status')
       .then((res) => {
         if (res.data?.success) {
@@ -216,15 +233,28 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
         }
       })
       .catch((err) => console.error('Failed to load subscription status:', err));
+
+    api.get('/payments/history')
+      .then((res) => {
+        if (res.data?.success) {
+          setBillingHistory(res.data.history || []);
+        }
+      })
+      .catch((err) => console.error('Failed to load billing history:', err));
   }, []);
 
   useEffect(() => {
-    api.get('/payments/history')
-      .then(res => {
-        if (res.data?.success) setBillingHistory(res.data.history);
-      })
-      .catch(console.error);
-  }, [subData]);
+    fetchSubscriptionData();
+
+    const handleSubUpdated = () => {
+      fetchSubscriptionData();
+    };
+
+    window.addEventListener('cloudguard:subscription-updated', handleSubUpdated);
+    return () => {
+      window.removeEventListener('cloudguard:subscription-updated', handleSubUpdated);
+    };
+  }, [fetchSubscriptionData]);
 
   // Sync 2FA state from props or fresh fetch
   useEffect(() => {
@@ -525,13 +555,11 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
   const handleConfirmAccountDeletion = async () => {
     setIsDeletingAccount(true);
     try {
-      const token = localStorage.getItem('token');
-      await axios.delete(`${API_BASE_URL}/api/auth/account`, {
+      await api.delete('/auth/account', {
         data: {
           password: isOAuthUser ? undefined : deletePassword,
           confirmText: deleteConfirmText,
         },
-        headers: { Authorization: `Bearer ${token}` },
       });
 
       toast.success('Account and all personal data permanently erased.');
@@ -570,7 +598,7 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
     setIsUpdatingPassword(true);
     try {
       const payload = isGoogleUserWithoutPassword ? { newPassword } : { currentPassword, newPassword };
-      await axios.put(`${API_BASE_URL}/api/auth/password`, payload);
+      await api.put('/auth/password', payload);
 
       const updatedUser = { ...user, hasPassword: true };
       if (typeof setUser === 'function') setUser(updatedUser);
@@ -1129,81 +1157,75 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
               <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-100">
                 Subscription & Vault Plan
               </h3>
-              {subData?.subscription?.status === 'expired' && (
+              {subStatus === 'expired' && (
                 <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 font-semibold">
                   EXPIRED
                 </span>
               )}
-              {subData?.subscription?.status === 'past_due' && (
+              {subStatus === 'past_due' && (
                 <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20 font-semibold">
                   GRACE PERIOD • WRITE-LOCKED
                 </span>
               )}
-              {subData?.subscription?.status === 'active' && subData.subscription.planId !== 'free' && (
+              {subStatus === 'active' && isPaidPlan && (
                 <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 font-semibold">
                   Active
                 </span>
               )}
-              {subData?.subscription?.status === 'cancelled' && (
+              {subStatus === 'cancelled' && (
                 <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 font-semibold">
                   Cancelled
                 </span>
               )}
             </div>
             <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
-              {subData?.subscription?.status === 'expired' ? (
-                'Your previous subscription has ended and vault uploads are locked. Choose a plan to restore storage and upload access.'
-              ) : subData?.subscription?.status === 'past_due' ? (
-                'Uploads are temporarily locked. Renew or free up space before your grace period ends to prevent permanent file deletion.'
-              ) : (
+              Current Tier:{' '}
+              <strong className="text-neutral-800 dark:text-neutral-200">
+                {getPlanDisplayName(activePaidPlanId)}
+              </strong>
+              {isPaidPlan ? (
                 <>
-                  Current Tier: <strong className="text-neutral-800 dark:text-neutral-200 capitalize">
-                    {subData?.subscription?.planId ? subData.subscription.planId.replace('_', ' ') : 'Free Trial (5 GB)'}
-                  </strong>
-                  {subData?.subscription?.expiresAt && subData.subscription.planId === 'trial' ? (
-                        <>
-                          {" "}• 14-Day Free Trial<br />
-                          {`Trial ends: ${new Date(subData.subscription.expiresAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`}
-                        </>
-                      ) : subData?.subscription?.expiresAt && subData.subscription.planId !== 'free' ? (
-                    <>
-                      {' '}• Billing Cycle: <span className="capitalize font-semibold text-neutral-800 dark:text-neutral-200">{subData.subscription.billingCycle || 'Monthly'}</span>
-                      <br />
-                      {subData.subscription.status === 'cancelled'
-                        ? `Access remains active until: ${new Date(subData.subscription.expiresAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })} (No further billing)`
-                        : `Next renewal: ${new Date(subData.subscription.expiresAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`}
-                    </>
-                  ) : (
-                    ' • Standard 5 GB secure zero-trust storage. Upgrade to increase capacity.'
-                  )}
+                  {' '}• Billing Cycle:{' '}
+                  <span className="capitalize font-semibold text-neutral-800 dark:text-neutral-200">
+                    {subData?.subscription?.billingCycle || 'Monthly'}
+                  </span>
+                  <br />
+                  {subStatus === 'cancelled'
+                    ? `Access remains active until: ${formattedPaidExpiry || 'End of billing cycle'} (No further billing)`
+                    : subStatus === 'past_due'
+                    ? `Uploads temporarily locked. Grace period ends: ${formattedPaidExpiry || 'Soon'}. Renew to restore access.`
+                    : subStatus === 'expired'
+                    ? `Subscription expired on: ${formattedPaidExpiry || 'Cycle end'}. Choose a plan to restore access.`
+                    : `Next renewal: ${formattedPaidExpiry || 'Cycle end'}`}
                 </>
+              ) : subData?.subscription?.expiresAt && (subData.subscription.planId === 'trial' || subData.trialExpiresAt) ? (
+                <>
+                  {' '}• 14-Day Free Trial
+                  <br />
+                  {`Trial ends: ${new Date(subData.subscription.expiresAt || subData.trialExpiresAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`}
+                </>
+              ) : (
+                ' • Standard 5 GB secure zero-trust storage. Upgrade to increase capacity.'
               )}
             </p>
           </div>
 
           <div className="flex items-center gap-3 shrink-0">
-            {subData?.subscription?.status === 'expired' ? (
+            {subStatus === 'expired' ? (
               <a
                 href="/pricing"
                 className="text-xs font-semibold px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white transition-colors shrink-0 whitespace-nowrap"
               >
                 Choose a Plan
               </a>
-            ) : subData?.subscription?.status === 'past_due' ? (
-              <a
-                href="/pricing"
-                className="text-xs font-semibold px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white transition-colors shadow-sm shrink-0 whitespace-nowrap"
-              >
-                Restore Access
-              </a>
-            ) : (!subData?.subscription || subData.subscription.planId === 'free' || subData.subscription.planId === 'trial') ? (
+            ) : !isPaidPlan ? (
               <a
                 href="/pricing"
                 className="text-xs font-semibold px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white transition-colors shrink-0 whitespace-nowrap"
               >
                 Upgrade Storage
               </a>
-            ) : subData.subscription.status === 'cancelled' ? (
+            ) : subStatus === 'cancelled' ? (
               <div className="flex items-center gap-2 shrink-0">
                 <button
                   type="button"
@@ -1220,7 +1242,8 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
                   Change Plan
                 </a>
               </div>
-            ) : subData.subscription.status === 'active' ? (
+            ) : (
+              /* active or past_due paid plan */
               <div className="flex items-center gap-2 shrink-0">
                 <a
                   href="/pricing"
@@ -1236,10 +1259,6 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
                   Cancel Subscription
                 </button>
               </div>
-            ) : (
-              <span className="text-xs text-amber-500 font-medium shrink-0 whitespace-nowrap">
-                Cancellation scheduled
-              </span>
             )}
           </div>
         </div>
@@ -1333,7 +1352,8 @@ export default function ProfileSettings({ user, setUser, addToast, onClose }) {
                         rel="noopener noreferrer"
                         className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-200 dark:hover:bg-neutral-700 transition-colors"
                       >
-                        Download
+                        <ExternalLink className="w-3 h-3 mr-0.5" />
+                        <span>View / PDF</span>
                       </a>
                     </td>
                   </tr>
