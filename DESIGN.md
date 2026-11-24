@@ -259,7 +259,7 @@ To protect against MongoDB NoSQL operator injection, ASCII control-character cor
 - **Fail-Open Safe Rollout Guard:** When `TURNSTILE_SECRET_KEY` is unconfigured, server verification immediately returns `{ success: true, skipped: true }`. Local dev environments and pre-key stages remain fully operational without friction.
 - **Edge Verification Deadline:** Verification calls to Cloudflare's `siteverify` endpoint enforce an aggressive 4000ms timeout (`AbortSignal.timeout(4000)`) preventing third-party latency from degrading auth response times.
 - **OAuth & TOTP Exemption:** Google OAuth (`/api/auth/google`), logout (`/api/auth/logout`), and 2FA challenge resolution (`/api/auth/2fa/verify-login`) do not require Turnstile verification.
-- **Non-Breaking Client Integration:** `Auth.jsx` inspects `VITE_TURNSTILE_SITE_KEY`. If present, it asynchronously injects the Turnstile explicit script, rendering the dark-theme widget in `login`, `signup`, and `forgot-password` views with automatic single-use token resets on errors. If empty, the widget is omitted and forms submit normally.
+- **Non-Breaking Client Integration:** The active authentication view (`AuthPage.jsx`, mounted at `/login` in `App.jsx`, alongside `Auth.jsx`) inspects `VITE_TURNSTILE_SITE_KEY`. If present, it asynchronously injects the Turnstile explicit script, rendering the dark-theme widget in `login`, `signup`, and `forgot-password` views with automatic single-use token resets on errors. If empty, the widget is omitted and forms submit normally.
 
 ---
 
@@ -267,6 +267,7 @@ To protect against MongoDB NoSQL operator injection, ASCII control-character cor
 
 | Commit | Date | Milestone Description |
 | :--- | :--- | :--- |
+| `HEAD` | 2026-11-24 | **Active Auth Page Turnstile Integration:** Wired env-gated Cloudflare Turnstile bot verification (`VITE_TURNSTILE_SITE_KEY`), auto-reset, and session token hygiene into `client/src/pages/AuthPage.jsx` (the active component mounted at `/login` in `App.jsx`). |
 | `HEAD` | 2026-11-24 | **Cloudflare Turnstile Bot Defense (Phase 4):** Added env-gated Turnstile verification (`verifyTurnstileToken`) to register, login, and forgot-password routes with 4000ms timeout, fail-open dev rollout, dynamic dark-theme widget in `Auth.jsx`, and Google OAuth exemption. |
 | `7fc5abb` | 2026-11-24 | **Repeat Trial & Refund Cycling Prevention (Phase 3):** Implemented DPDP-compliant zero-PII salted HMAC-SHA256 deletion log (`DeletedAccountLog`), consumed-trial gating on re-registration (`storageLimit: 0`), and persistent refund claim tracking in `payments.js`. |
 | `99cb172` | 2026-11-23 | **HttpOnly Session Auth Migration & CSRF Guard (Phase 2):** Migrated primary API session JWT from localStorage to HttpOnly SameSite=None cookie (`cg_auth_token`) with Origin CSRF protection, Bearer header fallback, tokenVersion revocation, and `cg_session_active` client state. |

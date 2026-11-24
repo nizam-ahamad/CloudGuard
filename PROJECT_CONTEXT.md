@@ -43,7 +43,7 @@ To eliminate automated credential stuffing, bot-driven trial farming, and OTP fl
 2. **Safe Rollout Guard:** Verification is strictly env-gated (`TURNSTILE_SECRET_KEY`). If unconfigured, the verification helper safely skips validation (`{ success: true, skipped: true }`), ensuring local development and staging environments function seamlessly.
 3. **Bounded Verification Latency:** Backend verification to Cloudflare's `siteverify` API is bound to a 4000ms timeout (`AbortSignal.timeout(4000)`).
 4. **OAuth & Secondary Auth Exemption:** Google OAuth (`/api/auth/google`), 2FA challenges (`/api/auth/2fa/verify-login`), and logout (`/api/auth/logout`) remain completely unencumbered by Turnstile.
-5. **Adaptive Client Widget:** The client (`Auth.jsx`) renders a dark-theme Turnstile challenge (`theme: 'dark'`) only when `VITE_TURNSTILE_SITE_KEY` is present, with automatic token refresh on errors and mode switches.
+5. **Adaptive Client Widget:** The client active auth view (`AuthPage.jsx` mounted at `/login` in `App.jsx`, alongside `Auth.jsx`) renders a dark-theme Turnstile challenge (`theme: 'dark'`) only when `VITE_TURNSTILE_SITE_KEY` is present, with automatic token refresh on errors and mode switches.
 
 ### ⚡ Zero-EC2-Load & Zero-Egress Storage Architecture
 
