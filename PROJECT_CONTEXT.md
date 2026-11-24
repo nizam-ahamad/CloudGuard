@@ -190,3 +190,8 @@ CloudGuard/
    - Word documents (`.docx`) use client-side in-memory XML parsing via `DocxPreviewModal` (`jszip`) with a single scrollable body container.
    - Video streaming begins immediately on frame 1 using `preload="metadata"` and `onLoadedData` playback triggers (omitting `autoPlay` to avoid Chromium buffer stalls), supported by `posterUrl` thumbnails and non-blocking centered buffering spinners.
    - AI malware inspection caps scans at 512 MB; files above this threshold are marked `unverified`.
+11. **Pricing Page HttpOnly Cookie Session Hydration & Cashfree Checkout Modal:**
+   - `Pricing.jsx` dynamically resolves `API_BASE_URL` to the backend domain with `withCredentials: true` and strips invalid Bearer headers (`Bearer null`, `Bearer cookie-session`).
+   - The active session is hydrated on mount via `GET /api/auth/me` (`withCredentials: true`), syncing `user` state and calling `/api/payments/subscription-status` without relying on raw JWT tokens in `localStorage`.
+   - Clicking any plan opens the Order Summary modal directly for authenticated users, initiating Cashfree checkout (`cashfree.checkout({ paymentSessionId, redirectTarget: '_modal' })`) with dynamic script injection (`https://sdk.cashfree.com/js/v3/cashfree.js`). Scheduled downgrades show confirmation toasts and dismiss without page bounces.
+   - In `client/src/App.jsx`, `AuthenticatedLoginRedirect` preserves internal redirect query parameters (`?redirect=/pricing...`) on `/login`, `/register`, and `/signup` for authenticated users instead of falling through to `/dashboard`.

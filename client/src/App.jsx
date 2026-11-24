@@ -645,6 +645,27 @@ function UnifiedFilePreviewModal({ previewFile, previewUrl, previewText, closePr
   );
 }
 
+function AuthenticatedLoginRedirect() {
+  const [searchParams] = useSearchParams();
+  const rawRedirect = searchParams.get('redirect');
+  const plan = searchParams.get('plan');
+  const cycle = searchParams.get('cycle');
+
+  let dest = '/dashboard';
+  if (rawRedirect && rawRedirect.startsWith('/') && !rawRedirect.startsWith('//')) {
+    dest = rawRedirect;
+    const extraParams = new URLSearchParams();
+    if (plan) extraParams.set('plan', plan);
+    if (cycle) extraParams.set('cycle', cycle);
+    const extraStr = extraParams.toString();
+    if (extraStr) {
+      dest += (dest.includes('?') ? '&' : '?') + extraStr;
+    }
+  }
+
+  return <Navigate to={dest} replace />;
+}
+
 function App() {
   const toast = useToast();
   const { triggerDownload, startDownload } = useDownload();
@@ -3402,6 +3423,8 @@ function App() {
         <Routes>
           <Route path="/" element={<LandingPage />} />
           <Route path="/login" element={<AuthPage />} />
+          <Route path="/register" element={<AuthPage />} />
+          <Route path="/signup" element={<AuthPage />} />
           <Route path="/pricing" element={<Pricing />} />
           <Route path="/privacy" element={<PrivacyPolicy />} />
           <Route path="/privacy-policy" element={<Navigate to="/privacy" replace />} />
@@ -5271,6 +5294,9 @@ function App() {
     <>
       <Routes>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/login" element={<AuthenticatedLoginRedirect />} />
+        <Route path="/register" element={<AuthenticatedLoginRedirect />} />
+        <Route path="/signup" element={<AuthenticatedLoginRedirect />} />
         <Route path="/dashboard" element={dashboardContent} />
         <Route path="/dashboard/photos" element={dashboardContent} />
         <Route path="/pricing" element={<Pricing />} />

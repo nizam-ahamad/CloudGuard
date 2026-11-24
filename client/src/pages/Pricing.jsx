@@ -15,18 +15,26 @@ import {
 import CloudGuardLogo from '../CloudGuardLogo';
 import Footer from '../components/Footer';
 import axios from 'axios';
-import { API_BASE_URL } from '../config';
 import toast, { Toaster } from 'react-hot-toast';
+
+const API_BASE_URL = (
+  import.meta.env.VITE_API_URL ||
+  (window.location.hostname.endsWith('cloudguard.site') ? 'https://api.cloudguard.site' : 'http://localhost:5000')
+).replace(/\/$/, '');
 
 const api = axios.create({
   baseURL: `${API_BASE_URL}/api`,
+  withCredentials: true,
 });
 
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('token') || sessionStorage.getItem('token');
-  if (token) {
+  if (token && token !== 'null' && token !== 'undefined' && token !== 'cookie-session') {
     config.headers.Authorization = `Bearer ${token}`;
+  } else if (config.headers?.Authorization) {
+    delete config.headers.Authorization;
   }
+  config.withCredentials = true;
   return config;
 });
 
@@ -163,52 +171,85 @@ export default function Pricing() {
   const [previews, setPreviews] = useState({});
   const [loadingPlanId, setLoadingPlanId] = useState(null);
 
-  const token = localStorage.getItem('token') || sessionStorage.getItem('token');
-  const ctaLink = token ? '/dashboard' : '/login';
+  const ctaLink = user ? '/dashboard' : '/login';
 
-  const defaultCashfreeMode = (
-    import.meta.env.VITE_CASHFREE_ENV ||
-    import.meta.env.VITE_CASHFREE_MODE ||
-    (import.meta.env.PROD ? 'production' : 'sandbox')
-  ).toLowerCase() === 'production' ? 'production' : 'sandbox';
-
-  const loadCashfree = async (mode = defaultCashfreeMode) => {
+  const ensureCashfreeSdk = async () => {
     if (typeof window.Cashfree === 'function') {
-      return window.Cashfree({ mode });
+      return true;
     }
-    throw new Error('Cashfree SDK is not loaded. Please refresh and try again.');
+    return new Promise((resolve, reject) => {
+      const existingScript = document.querySelector('script[src*="cashfree.com"]');
+      if (existingScript) {
+        if (typeof window.Cashfree === 'function') return resolve(true);
+        existingScript.addEventListener('load', () => resolve(true), { once: true });
+        existingScript.addEventListener('error', () => reject(new Error('Failed to load Cashfree SDK')), { once: true });
+        return;
+      }
+      const script = document.createElement('script');
+      script.src = 'https://sdk.cashfree.com/js/v3/cashfree.js';
+      script.async = true;
+      script.onload = () => resolve(true);
+      script.onerror = () => reject(new Error('Failed to load Cashfree SDK from server.'));
+      document.head.appendChild(script);
+    });
   };
 
   const refreshUser = async () => {
-    if (token) {
-      try {
-        const res = await api.get('/payments/subscription-status');
-        if (res.data?.success) {
-          setUserSubData(res.data);
-          setUser((prev) => ({
-            ...(prev || {}),
-            ...res.data,
-            plan: res.data.plan || res.data.subscription?.planId || prev?.plan || 'free',
-            subscription: res.data.subscription || prev?.subscription,
-          }));
-          const sub = res.data.subscription;
-          if (sub && sub.status === 'active' && sub.planId && sub.planId !== 'free') {
-            setCurrentPlanId(sub.planId);
-          } else if (res.data.plan && res.data.plan !== 'free') {
-            setCurrentPlanId(res.data.plan);
-          } else {
-            setCurrentPlanId('free');
-          }
+    try {
+      const res = await api.get('/payments/subscription-status');
+      if (res.data?.success) {
+        setUserSubData(res.data);
+        setUser((prev) => ({
+          ...(prev || {}),
+          ...res.data,
+          plan: res.data.plan || res.data.subscription?.planId || prev?.plan || 'free',
+          subscription: res.data.subscription || prev?.subscription,
+        }));
+        const sub = res.data.subscription;
+        if (sub && sub.status === 'active' && sub.planId && sub.planId !== 'free') {
+          setCurrentPlanId(sub.planId);
+        } else if (res.data.plan && res.data.plan !== 'free') {
+          setCurrentPlanId(res.data.plan);
+        } else {
+          setCurrentPlanId('free');
         }
-      } catch (err) {
-        console.error('Failed to load subscription status in pricing:', err);
       }
+    } catch (err) {
+      console.warn('Failed to load subscription status in pricing:', err?.response?.data || err?.message || err);
     }
   };
 
+  // Hydrate session on mount via GET /api/auth/me with HttpOnly cookies
   useEffect(() => {
-    refreshUser();
-  }, [token]);
+    let isMounted = true;
+    async function hydrateSession() {
+      try {
+        const res = await axios.get(`${API_BASE_URL}/api/auth/me`, { withCredentials: true });
+        if (res.data?.user && isMounted) {
+          const authUser = res.data.user;
+          setUser(authUser);
+          try {
+            localStorage.setItem('user', JSON.stringify(authUser));
+            localStorage.setItem('cg_session_active', '1');
+            window.dispatchEvent(new Event('cloudguard:auth-changed'));
+          } catch (_) {}
+          await refreshUser();
+        }
+      } catch (err) {
+        if (isMounted && err.response?.status === 401) {
+          setUser(null);
+          try {
+            localStorage.removeItem('cg_session_active');
+          } catch (_) {}
+        }
+      }
+    }
+
+    hydrateSession();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   // Fetch preview deltas for all plans when billingCycle or user plan changes
   useEffect(() => {
@@ -360,7 +401,7 @@ export default function Pricing() {
 
     if (isFree) {
       sessionStorage.removeItem('cloudguard_pending_checkout');
-      if (token) {
+      if (user) {
         navigate('/dashboard');
       } else {
         navigate('/login?mode=signup');
@@ -369,7 +410,7 @@ export default function Pricing() {
     }
 
     // Paid tier for unauthenticated users
-    if (!user || !token) {
+    if (!user) {
       sessionStorage.setItem('cloudguard_pending_checkout', JSON.stringify({
         planId: targetTierId,
         billingCycle,
@@ -455,12 +496,19 @@ export default function Pricing() {
       }
 
       // CASE 2: Paid Transition / Standard Purchase via Cashfree
-      const { paymentSessionId, orderId, cashfreeEnv } = res.data;
-      if (!paymentSessionId) throw new Error('Payment session initialization failed');
+      const { paymentSessionId, orderId } = res.data;
+      if (!paymentSessionId) throw new Error(res.data.error || 'Payment session initialization failed');
 
-      const rawMode = cashfreeEnv || import.meta.env.VITE_CASHFREE_ENV || import.meta.env.VITE_CASHFREE_MODE || (import.meta.env.PROD ? 'production' : 'sandbox');
-      const mode = String(rawMode).toLowerCase().trim() === 'production' ? 'production' : 'sandbox';
-      const cashfree = await loadCashfree(mode);
+      await ensureCashfreeSdk();
+      const cfMode = (
+        import.meta.env.VITE_CASHFREE_ENV ||
+        (window.location.hostname.endsWith('cloudguard.site') ? 'production' : 'sandbox')
+      ).toLowerCase() === 'sandbox' ? 'sandbox' : 'production';
+
+      if (typeof window.Cashfree !== 'function') {
+        throw new Error('Cashfree SDK is not available. Please refresh and try again.');
+      }
+      const cashfree = window.Cashfree({ mode: cfMode });
       const checkoutOptions = {
         paymentSessionId,
         redirectTarget: '_modal',
@@ -542,7 +590,7 @@ export default function Pricing() {
 
   // Auto-Resume Checkout After Login: opens Order Summary modal
   useEffect(() => {
-    if (!token || !user) return;
+    if (!user) return;
     if (user.plan !== 'free' && isPreviewsLoading) return;
     if (hasAutoResumedCheckoutRef.current) return;
 
@@ -615,7 +663,7 @@ export default function Pricing() {
         billingCycle: effectiveCycle,
       });
     }
-  }, [token, user, isPreviewsLoading, searchParams, userPlanId, userBillingCycle, userSubStatus, userSubData, previews]);
+  }, [user, isPreviewsLoading, searchParams, userPlanId, userBillingCycle, userSubStatus, userSubData, previews]);
 
   // Generate tier list with dynamic labels
   const tiers = TIERS_CONFIG.map((tier) => {
@@ -635,8 +683,8 @@ export default function Pricing() {
 
     let ctaText = 'Get Started';
     if (tier.id === 'trial') {
-      ctaText = token ? 'Active in Vault' : 'Start Free Trial';
-    } else if (token) {
+      ctaText = user ? 'Active in Vault' : 'Start Free Trial';
+    } else if (user) {
       ctaText = `Upgrade to ${tier.name.replace(' Vault', '')}`;
     }
 
@@ -683,7 +731,7 @@ export default function Pricing() {
               to={ctaLink} 
               className="text-xs font-mono uppercase tracking-widest text-slate-300 hover:text-white px-4 py-2 border border-[#262626] hover:border-neutral-500 rounded-lg transition-colors"
             >
-              {token ? 'Vault Dashboard' : 'Sign In'}
+              {user ? 'Vault Dashboard' : 'Sign In'}
             </Link>
           </div>
         </div>
@@ -844,7 +892,7 @@ export default function Pricing() {
                     >
                       <span>Evaluation Completed</span>
                     </button>
-                  ) : token ? (
+                  ) : user ? (
                     <button
                       disabled={true}
                       type="button"
