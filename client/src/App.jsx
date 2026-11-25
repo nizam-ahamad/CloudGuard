@@ -526,21 +526,15 @@ function UnifiedFilePreviewModal(props) {
 
 function UnifiedFilePreviewModalInner({ previewFile, previewUrl, previewText, closePreview, handleDownload }) {
   const [mediaLoaded, setMediaLoaded] = useState(false);
+  const [isVideoLoading, setIsVideoLoading] = useState(true);
   const [videoError, setVideoError] = useState(false);
   const videoRef = useRef(null);
-  const hasBufferedVideoFrameRef = useRef(false);
 
   const fileExt = (previewFile.type || (previewFile.name || '').split('.').pop() || '').toLowerCase();
   const isVideo = Boolean(
     previewFile.mimeType?.startsWith('video/') ||
     previewFile.mimetype?.startsWith('video/') ||
     ['mp4', 'webm', 'ogg', 'mov', 'mkv', 'avi', 'flv', 'wmv', 'm4v', '3gp'].includes(fileExt)
-  );
-  const isMobileOrTouch = typeof window !== 'undefined' && (window.innerWidth < 768 || navigator.maxTouchPoints > 0 || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent));
-  const isUnsupportedMobileVideo = isVideo && isMobileOrTouch && (
-    /\.(mkv|avi|flv|wmv)$/i.test(previewFile.originalName || previewFile.name || '') ||
-    previewFile.mimeType === 'video/x-matroska' ||
-    previewFile.mimetype === 'video/x-matroska'
   );
   const isImage = Boolean(
     previewFile.mimeType?.startsWith('image/') ||
@@ -571,24 +565,15 @@ function UnifiedFilePreviewModalInner({ previewFile, previewUrl, previewText, cl
 
   useEffect(() => {
     setMediaLoaded(false);
+    setIsVideoLoading(true);
     setVideoError(false);
-    hasBufferedVideoFrameRef.current = false;
   }, [previewFile?._id || previewFile?.id, targetUrl]);
 
   useEffect(() => {
-    if (!isVideo || !targetUrl || isUnsupportedMobileVideo) return undefined;
+    if (!isVideo || !targetUrl) return undefined;
 
-    hasBufferedVideoFrameRef.current = false;
     const videoEl = videoRef.current;
-    const timeoutId = setTimeout(() => {
-      if (!hasBufferedVideoFrameRef.current) {
-        setMediaLoaded(true);
-        setVideoError(true);
-      }
-    }, 15000);
-
     return () => {
-      clearTimeout(timeoutId);
       if (videoEl) {
         try {
           videoEl.pause();
@@ -597,7 +582,7 @@ function UnifiedFilePreviewModalInner({ previewFile, previewUrl, previewText, cl
         } catch (_) {}
       }
     };
-  }, [isVideo, targetUrl, isUnsupportedMobileVideo]);
+  }, [isVideo, targetUrl]);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -681,31 +666,11 @@ function UnifiedFilePreviewModalInner({ previewFile, previewUrl, previewText, cl
 
           {isVideo ? (
             <div className="relative z-10 flex items-center justify-center w-full h-full max-h-[75vh]">
-              {isUnsupportedMobileVideo ? (
-                <div className="relative z-10 max-w-sm w-full mx-auto rounded-2xl bg-neutral-900/80 backdrop-blur-xl border border-white/15 p-6 text-center shadow-2xl flex flex-col items-center gap-3">
-                  <span className="material-symbols-outlined text-4xl text-amber-400">videocam_off</span>
-                  <p className="text-sm font-semibold text-white">
-                    MKV format isn&apos;t supported for inline mobile playback
-                  </p>
-                  <p className="text-xs text-neutral-300 leading-relaxed">
-                    Mobile browsers only stream MP4, MOV, and WebM natively. Download the file to play it in VLC or your device&apos;s media player.
-                  </p>
-                  {typeof handleDownload === 'function' && (
-                    <button
-                      type="button"
-                      onClick={() => handleDownload(previewFile)}
-                      className="mt-1 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-colors cursor-pointer"
-                    >
-                      <Download className="w-4 h-4" />
-                      <span>Download Video</span>
-                    </button>
-                  )}
-                </div>
-              ) : videoError ? (
+              {videoError ? (
                 <div className="relative z-10 max-w-sm w-full mx-auto rounded-2xl bg-neutral-900/80 backdrop-blur-xl border border-white/15 p-6 text-center shadow-2xl flex flex-col items-center gap-3">
                   <span className="material-symbols-outlined text-4xl text-amber-400">videocam_off</span>
                   <p className="text-sm font-medium text-white">
-                    This video format or slow connection couldn&apos;t stream inline
+                    This video format couldn&apos;t stream inline
                   </p>
                   {typeof handleDownload === 'function' && (
                     <button
@@ -720,7 +685,7 @@ function UnifiedFilePreviewModalInner({ previewFile, previewUrl, previewText, cl
                 </div>
               ) : (
                 <div className="relative flex items-center justify-center w-full h-full">
-                  {targetUrl ? (
+                  {targetUrl && (
                     <video
                       ref={videoRef}
                       src={targetUrl}
@@ -729,49 +694,34 @@ function UnifiedFilePreviewModalInner({ previewFile, previewUrl, previewText, cl
                       playsInline
                       preload="metadata"
                       crossOrigin={typeof targetUrl === 'string' && (targetUrl.startsWith('https://files.cloudguard.site') || targetUrl.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
-                      onLoadedMetadata={() => {
-                        hasBufferedVideoFrameRef.current = true;
-                        setMediaLoaded(true);
-                        setVideoError(false);
-                      }}
                       onLoadedData={(e) => {
-                        hasBufferedVideoFrameRef.current = true;
-                        setMediaLoaded(true);
+                        setIsVideoLoading(false);
                         setVideoError(false);
                         const p = e.currentTarget.play();
                         if (p && typeof p.catch === 'function') p.catch(() => {});
                       }}
                       onCanPlay={() => {
-                        hasBufferedVideoFrameRef.current = true;
-                        setMediaLoaded(true);
+                        setIsVideoLoading(false);
                         setVideoError(false);
                       }}
                       onPlaying={() => {
-                        hasBufferedVideoFrameRef.current = true;
-                        setMediaLoaded(true);
+                        setIsVideoLoading(false);
                         setVideoError(false);
                       }}
                       onError={() => {
-                        setMediaLoaded(true);
+                        setIsVideoLoading(false);
                         setVideoError(true);
                       }}
                       className="max-h-[75vh] w-auto max-w-full rounded-lg shadow-2xl bg-black relative z-10"
                     >
                       Your browser does not support the video tag.
                     </video>
-                  ) : displayThumbnail ? (
-                    <img
-                      src={displayThumbnail}
-                      alt={previewFile.name}
-                      crossOrigin={typeof displayThumbnail === 'string' && (displayThumbnail.startsWith('https://files.cloudguard.site') || displayThumbnail.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
-                      className="max-h-[75vh] w-auto max-w-full rounded-lg shadow-2xl object-contain bg-black relative z-10"
-                    />
-                  ) : null}
+                  )}
 
-                  {!mediaLoaded && (
-                    <div className="pointer-events-none absolute bottom-14 left-1/2 -translate-x-1/2 z-20 inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/75 backdrop-blur-md border border-white/15 text-white text-xs font-medium shadow-lg">
-                      <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-400" />
-                      <span>Buffering stream...</span>
+                  {isVideoLoading && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center text-white gap-2 pointer-events-none z-20">
+                      <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+                      <span className="text-xs font-medium drop-shadow">Loading video...</span>
                     </div>
                   )}
                 </div>
