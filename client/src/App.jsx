@@ -15,6 +15,7 @@ import DeleteConfirmModal from './components/DeleteConfirmModal';
 import ProfileSettings from './components/ProfileSettings';
 import ShareModal from './components/ShareModal';
 import CookieConsent from './components/CookieConsent';
+import GoogleAnalytics from './components/GoogleAnalytics';
 import QuotaUpgradeModal from './components/QuotaUpgradeModal';
 import BinView from './components/BinView';
 import FileGridCard from './components/FileGridCard';
@@ -3735,6 +3736,7 @@ function App() {
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
         <CookieConsent />
+        <GoogleAnalytics />
       </>
     );
   }
@@ -6113,6 +6115,7 @@ function App() {
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
       <CookieConsent />
+      <GoogleAnalytics />
       <QuotaUpgradeModal
         quotaData={quotaUpgradeState}
         onResume={resumePausedUpload}
