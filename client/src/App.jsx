@@ -404,19 +404,19 @@ function DocxPreviewModalInner({ previewFile, previewUrl, closePreview, handleDo
 
   return (
     <div
-      className="fixed inset-0 z-50 w-screen max-w-full overflow-x-hidden flex items-center justify-center bg-black/75 backdrop-blur-xl p-2 sm:p-4 animate-enter select-none"
+      className="fixed inset-0 z-50 w-screen max-w-full overflow-x-hidden flex items-center justify-center bg-black/60 dark:bg-black/75 backdrop-blur-xl p-2 sm:p-4 animate-enter select-none"
       onClick={closePreview}
     >
       <div
-        className="w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col bg-[#141414]/95 border border-white/10 rounded-2xl shadow-2xl text-neutral-100"
+        className="w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl shadow-2xl text-neutral-900 dark:text-neutral-100"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Top Bar */}
-        <div className="flex items-center justify-between gap-2 sm:gap-3 w-full max-w-full px-3 sm:px-4 py-3 border-b border-white/10 shrink-0">
+        <div className="flex items-center justify-between gap-2 sm:gap-3 w-full max-w-full px-3 sm:px-4 py-3 border-b border-neutral-200 dark:border-neutral-800 bg-white/95 dark:bg-neutral-900/95 shrink-0">
           <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
-            <span className="material-symbols-outlined text-blue-400 text-[20px] shrink-0">description</span>
+            <span className="material-symbols-outlined text-blue-600 dark:text-blue-400 text-[20px] shrink-0">description</span>
             <span
-              className="block min-w-0 flex-1 truncate text-sm sm:text-base font-medium text-white"
+              className="block min-w-0 flex-1 truncate text-sm sm:text-base font-medium text-neutral-900 dark:text-white"
               title={previewFile.originalName || previewFile.name}
             >
               {previewFile.originalName || previewFile.name}
@@ -426,7 +426,7 @@ function DocxPreviewModalInner({ previewFile, previewUrl, closePreview, handleDo
             <button
               type="button"
               onClick={() => handleDownload && handleDownload(previewFile)}
-              className="p-2 rounded-full bg-neutral-800/80 hover:bg-neutral-700 text-neutral-200 hover:text-white border border-neutral-700/50 transition-colors cursor-pointer shrink-0"
+              className="p-2 rounded-full bg-neutral-100 hover:bg-neutral-200 text-neutral-700 hover:text-neutral-900 border border-neutral-200 dark:bg-neutral-800/80 dark:hover:bg-neutral-700 dark:text-neutral-200 dark:hover:text-white dark:border-neutral-700/50 transition-colors cursor-pointer shrink-0"
               title="Download File"
               aria-label="Download File"
             >
@@ -435,7 +435,7 @@ function DocxPreviewModalInner({ previewFile, previewUrl, closePreview, handleDo
             <button
               type="button"
               onClick={closePreview}
-              className="p-2 rounded-full bg-neutral-800/80 hover:bg-neutral-700 text-neutral-200 hover:text-white border border-neutral-700/50 transition-colors cursor-pointer shrink-0"
+              className="p-2 rounded-full bg-neutral-100 hover:bg-neutral-200 text-neutral-700 hover:text-neutral-900 border border-neutral-200 dark:bg-neutral-800/80 dark:hover:bg-neutral-700 dark:text-neutral-200 dark:hover:text-white dark:border-neutral-700/50 transition-colors cursor-pointer shrink-0"
               title="Close"
               aria-label="Close"
             >
@@ -445,21 +445,21 @@ function DocxPreviewModalInner({ previewFile, previewUrl, closePreview, handleDo
         </div>
 
         {/* Body Container */}
-        <div className="relative flex-1 overflow-y-auto bg-neutral-100 dark:bg-neutral-950 p-4 sm:p-6 flex justify-center items-start">
+        <div className="relative flex-1 overflow-y-auto bg-neutral-100/90 dark:bg-neutral-950 p-4 sm:p-6 flex justify-center items-start">
           <div
             aria-hidden="true"
-            className="absolute inset-0 bg-gradient-to-br from-white/5 via-neutral-900/60 to-black/80 backdrop-blur-md pointer-events-none select-none"
+            className="absolute inset-0 bg-gradient-to-br from-neutral-100 via-white to-neutral-200/80 dark:from-white/5 dark:via-neutral-900/60 dark:to-black/80 backdrop-blur-md pointer-events-none select-none"
           />
           {loading ? (
-            <div className="relative z-10 flex flex-col items-center justify-center py-12 gap-3 text-neutral-300 my-auto">
+            <div className="relative z-10 flex flex-col items-center justify-center py-12 gap-3 text-neutral-700 dark:text-neutral-200 my-auto">
               <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
               <span className="text-xs sm:text-sm font-medium">Parsing Word document...</span>
             </div>
           ) : error ? (
-            <div className="relative z-10 text-neutral-400 flex flex-col items-center gap-3 text-center max-w-md p-6 my-auto">
-              <span className="material-symbols-outlined text-4xl text-neutral-400">visibility_off</span>
+            <div className="relative z-10 bg-white/90 dark:bg-neutral-900/90 border border-neutral-200 dark:border-neutral-800 text-neutral-800 dark:text-neutral-200 rounded-2xl flex flex-col items-center gap-3 text-center max-w-md p-6 my-auto shadow-xl">
+              <span className="material-symbols-outlined text-4xl text-neutral-500 dark:text-neutral-400">visibility_off</span>
               <p className="font-medium text-sm">Preview not available for this file type.</p>
-              <p className="text-xs text-neutral-400">The document may be password-protected, encrypted, or malformed. Download the file to view it in Microsoft Word.</p>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400">The document may be password-protected, encrypted, or malformed. Download the file to view it in Microsoft Word.</p>
             </div>
           ) : (
             <div className="relative z-10 w-full max-w-3xl mx-auto rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-5 sm:p-8 text-neutral-900 dark:text-neutral-100 shadow-xl space-y-3 text-sm leading-relaxed select-text">
@@ -596,29 +596,29 @@ function UnifiedFilePreviewModalInner({ previewFile, previewUrl, previewText, cl
 
   return (
     <div
-      className="fixed inset-0 z-50 w-screen max-w-full overflow-x-hidden flex items-center justify-center bg-black/75 backdrop-blur-xl p-2 sm:p-4 animate-enter select-none"
+      className="fixed inset-0 z-50 w-screen max-w-full overflow-x-hidden flex items-center justify-center bg-black/60 dark:bg-black/75 backdrop-blur-xl p-2 sm:p-4 animate-enter select-none"
       onClick={closePreview}
     >
       <div
-        className="w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col bg-[#141414]/95 border border-white/10 rounded-2xl shadow-2xl text-neutral-100"
+        className="w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl shadow-2xl text-neutral-900 dark:text-neutral-100"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Top Header Bar */}
-        <div className="flex items-center justify-between gap-2 sm:gap-3 w-full max-w-full px-3 sm:px-4 py-3 border-b border-white/10 shrink-0">
+        <div className="flex items-center justify-between gap-2 sm:gap-3 w-full max-w-full px-3 sm:px-4 py-3 border-b border-neutral-200 dark:border-neutral-800 bg-white/95 dark:bg-neutral-900/95 shrink-0">
           <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
             {isVideo ? (
-              <span className="material-symbols-outlined text-amber-400 text-[20px] shrink-0">movie</span>
+              <span className="material-symbols-outlined text-amber-600 dark:text-amber-400 text-[20px] shrink-0">movie</span>
             ) : isImage ? (
-              <span className="material-symbols-outlined text-blue-400 text-[20px] shrink-0">image</span>
+              <span className="material-symbols-outlined text-blue-600 dark:text-blue-400 text-[20px] shrink-0">image</span>
             ) : isPdf ? (
-              <span className="material-symbols-outlined text-red-400 text-[20px] shrink-0">picture_as_pdf</span>
+              <span className="material-symbols-outlined text-red-600 dark:text-red-400 text-[20px] shrink-0">picture_as_pdf</span>
             ) : isAudio ? (
-              <span className="material-symbols-outlined text-emerald-400 text-[20px] shrink-0">music_note</span>
+              <span className="material-symbols-outlined text-emerald-600 dark:text-emerald-400 text-[20px] shrink-0">music_note</span>
             ) : (
-              <span className="material-symbols-outlined text-neutral-400 text-[20px] shrink-0">description</span>
+              <span className="material-symbols-outlined text-neutral-500 dark:text-neutral-400 text-[20px] shrink-0">description</span>
             )}
             <span
-              className="block min-w-0 flex-1 truncate text-sm sm:text-base font-medium text-white"
+              className="block min-w-0 flex-1 truncate text-sm sm:text-base font-medium text-neutral-900 dark:text-white"
               title={previewFile.originalName || previewFile.name}
             >
               {previewFile.originalName || previewFile.name}
@@ -631,7 +631,7 @@ function UnifiedFilePreviewModalInner({ previewFile, previewUrl, previewText, cl
               onClick={() => handleDownload && handleDownload(previewFile)}
               title="Download File"
               aria-label="Download File"
-              className="p-2 rounded-full bg-neutral-800/80 hover:bg-neutral-700 text-neutral-200 hover:text-white border border-neutral-700/50 transition-colors cursor-pointer shrink-0"
+              className="p-2 rounded-full bg-neutral-100 hover:bg-neutral-200 text-neutral-700 hover:text-neutral-900 border border-neutral-200 dark:bg-neutral-800/80 dark:hover:bg-neutral-700 dark:text-neutral-200 dark:hover:text-white dark:border-neutral-700/50 transition-colors cursor-pointer shrink-0"
             >
               <Download className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
             </button>
@@ -640,7 +640,7 @@ function UnifiedFilePreviewModalInner({ previewFile, previewUrl, previewText, cl
               onClick={closePreview}
               title="Close"
               aria-label="Close"
-              className="p-2 rounded-full bg-neutral-800/80 hover:bg-neutral-700 text-neutral-200 hover:text-white border border-neutral-700/50 transition-colors cursor-pointer shrink-0"
+              className="p-2 rounded-full bg-neutral-100 hover:bg-neutral-200 text-neutral-700 hover:text-neutral-900 border border-neutral-200 dark:bg-neutral-800/80 dark:hover:bg-neutral-700 dark:text-neutral-200 dark:hover:text-white dark:border-neutral-700/50 transition-colors cursor-pointer shrink-0"
             >
               <X className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
             </button>
@@ -648,28 +648,34 @@ function UnifiedFilePreviewModalInner({ previewFile, previewUrl, previewText, cl
         </div>
 
         {/* Media Viewport Container */}
-        <div className="relative flex-1 overflow-hidden bg-black/40 p-2 sm:p-4 flex items-center justify-center min-h-[300px]">
+        <div className="relative flex-1 overflow-hidden bg-neutral-100/90 dark:bg-neutral-950 p-2 sm:p-4 flex items-center justify-center min-h-[300px]">
           {ambientBlurSrc ? (
-            <img
-              src={ambientBlurSrc}
-              alt=""
-              aria-hidden="true"
-              crossOrigin={typeof ambientBlurSrc === 'string' && (ambientBlurSrc.startsWith('https://files.cloudguard.site') || ambientBlurSrc.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
-              className="absolute inset-0 w-full h-full object-cover scale-110 blur-2xl opacity-35 pointer-events-none select-none"
-            />
+            <>
+              <img
+                src={ambientBlurSrc}
+                alt=""
+                aria-hidden="true"
+                crossOrigin={typeof ambientBlurSrc === 'string' && (ambientBlurSrc.startsWith('https://files.cloudguard.site') || ambientBlurSrc.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
+                className="absolute inset-0 w-full h-full object-cover scale-110 blur-2xl opacity-25 dark:opacity-35 pointer-events-none select-none"
+              />
+              <div
+                aria-hidden="true"
+                className="absolute inset-0 bg-white/35 dark:bg-black/35 pointer-events-none select-none"
+              />
+            </>
           ) : (
             <div
               aria-hidden="true"
-              className="absolute inset-0 bg-gradient-to-br from-white/5 via-neutral-900/60 to-black/80 backdrop-blur-md pointer-events-none select-none"
+              className="absolute inset-0 bg-gradient-to-br from-neutral-100 via-white to-neutral-200/80 dark:from-white/5 dark:via-neutral-900/60 dark:to-black/80 backdrop-blur-md pointer-events-none select-none"
             />
           )}
 
           {isVideo ? (
             <div className="relative z-10 flex items-center justify-center w-full h-full max-h-[75vh]">
               {videoError ? (
-                <div className="relative z-10 max-w-sm w-full mx-auto rounded-2xl bg-neutral-900/80 backdrop-blur-xl border border-white/15 p-6 text-center shadow-2xl flex flex-col items-center gap-3">
-                  <span className="material-symbols-outlined text-4xl text-amber-400">videocam_off</span>
-                  <p className="text-sm font-medium text-white">
+                <div className="relative z-10 max-w-sm w-full mx-auto rounded-2xl bg-white/90 dark:bg-neutral-900/90 backdrop-blur-xl border border-neutral-200 dark:border-neutral-800 p-6 text-center shadow-2xl flex flex-col items-center gap-3 text-neutral-800 dark:text-neutral-200">
+                  <span className="material-symbols-outlined text-4xl text-amber-500 dark:text-amber-400">videocam_off</span>
+                  <p className="text-sm font-medium text-neutral-800 dark:text-neutral-200">
                     This video format couldn&apos;t stream inline
                   </p>
                   {typeof handleDownload === 'function' && (
@@ -719,7 +725,7 @@ function UnifiedFilePreviewModalInner({ previewFile, previewUrl, previewText, cl
                   )}
 
                   {isVideoLoading && (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center text-white gap-2 pointer-events-none z-20">
+                    <div className="absolute inset-0 flex flex-col items-center justify-center text-neutral-700 dark:text-neutral-200 gap-2 pointer-events-none z-20">
                       <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
                       <span className="text-xs font-medium drop-shadow">Loading video...</span>
                     </div>
@@ -730,7 +736,7 @@ function UnifiedFilePreviewModalInner({ previewFile, previewUrl, previewText, cl
           ) : isHeic ? (
             <div className="relative z-10 flex items-center justify-center w-full h-full max-h-[75vh]">
               {!mediaLoaded && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center text-neutral-300 gap-2 z-20 pointer-events-none">
+                <div className="absolute inset-0 flex flex-col items-center justify-center text-neutral-700 dark:text-neutral-200 gap-2 z-20 pointer-events-none">
                   <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
                   <span className="text-xs font-medium">Loading high-resolution photo...</span>
                 </div>
@@ -749,7 +755,7 @@ function UnifiedFilePreviewModalInner({ previewFile, previewUrl, previewText, cl
           ) : isImage ? (
             <div className="relative z-10 flex items-center justify-center w-full h-full max-h-[75vh]">
               {!mediaLoaded && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center text-neutral-300 gap-2 z-20 pointer-events-none">
+                <div className="absolute inset-0 flex flex-col items-center justify-center text-neutral-700 dark:text-neutral-200 gap-2 z-20 pointer-events-none">
                   <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
                   <span className="text-xs font-medium">Loading image...</span>
                 </div>
@@ -781,7 +787,7 @@ function UnifiedFilePreviewModalInner({ previewFile, previewUrl, previewText, cl
               ) : (
                 <>
                   {!mediaLoaded && (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center text-neutral-300 gap-2 pointer-events-none">
+                    <div className="absolute inset-0 flex flex-col items-center justify-center text-neutral-700 dark:text-neutral-200 gap-2 pointer-events-none">
                       <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
                       <span className="text-xs font-medium">Loading document...</span>
                     </div>
@@ -798,7 +804,7 @@ function UnifiedFilePreviewModalInner({ previewFile, previewUrl, previewText, cl
               )}
             </div>
           ) : isText ? (
-            <pre className="relative z-10 w-full h-full max-h-[75vh] text-left bg-white dark:bg-[#121212] text-neutral-900 dark:text-neutral-100 p-6 rounded-lg overflow-auto text-sm font-mono whitespace-pre-wrap shadow-inner border border-neutral-200 dark:border-neutral-800">
+            <pre className="relative z-10 w-full h-full max-h-[75vh] text-left bg-white dark:bg-neutral-950 text-neutral-800 dark:text-neutral-200 p-6 rounded-lg overflow-auto text-sm font-mono whitespace-pre-wrap shadow-inner border border-neutral-200 dark:border-neutral-800">
               {previewText || 'Loading preview...'}
             </pre>
           ) : isAudio ? (
@@ -821,8 +827,8 @@ function UnifiedFilePreviewModalInner({ previewFile, previewUrl, previewText, cl
               />
             </div>
           ) : (
-            <div className="relative z-10 text-neutral-300 flex flex-col items-center gap-3 p-8 text-center">
-              <span className="material-symbols-outlined text-4xl">visibility_off</span>
+            <div className="relative z-10 bg-white/90 dark:bg-neutral-900/90 border border-neutral-200 dark:border-neutral-800 text-neutral-800 dark:text-neutral-200 rounded-2xl flex flex-col items-center gap-3 p-8 text-center shadow-xl">
+              <span className="material-symbols-outlined text-4xl text-neutral-500 dark:text-neutral-400">visibility_off</span>
               <p className="text-sm">Preview not available for this file type.</p>
               <button
                 type="button"
