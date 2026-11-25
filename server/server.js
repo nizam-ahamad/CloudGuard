@@ -972,6 +972,7 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/files', require('./routes/files'));
 app.use('/api/folders', require('./routes/folders'));
 app.use('/api/photos', require('./routes/photos'));
+app.use('/api/shares', require('./routes/shares'));
 app.use('/api/payments', require('./routes/payments'));
 app.use('/api', require('./routes/photos'));
 app.use('/api/admin', require('./routes/admin'));

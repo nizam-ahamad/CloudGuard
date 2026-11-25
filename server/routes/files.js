@@ -20,6 +20,7 @@ const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const User = require('../models/User');
 const File = require('../models/File');
 const Folder = require('../models/Folder');
+const Share = require('../models/Share');
 const { buildTenantQuery } = require('../utils/tenantQuery');
 const { permanentlyDeleteS3Keys, purgeAllVersionsUnderPrefix } = require('../utils/s3Delete');
 const { applyCdnToUrl } = require('../utils/cdnHelper');
@@ -209,6 +210,7 @@ const scheduleFilePurge = (fileId, rawUserId, delayMs = 12000) => {
       }
 
       await File.deleteOne({ _id: file._id, ...userMatch });
+      await Share.deleteMany({ itemType: 'file', itemId: file._id });
       console.log(`[Auto-Purge] Un-restored file "${file.name}" permanently deleted from S3 & DB.`);
     } catch (err) {
       console.error('[Deferred File Purge Error]:', err);
@@ -267,10 +269,12 @@ const scheduleBatchPurge = (fileIds = [], folderIds = [], rawUserId, delayMs = 1
         }
 
         if (validToPurge.length > 0) {
+          const purgedFileIds = validToPurge.map((f) => f._id);
           await File.deleteMany({
-            _id: { $in: validToPurge.map((f) => f._id) },
+            _id: { $in: purgedFileIds },
             ...userMatch,
           });
+          await Share.deleteMany({ itemType: 'file', itemId: { $in: purgedFileIds } });
         }
       }
 
@@ -335,8 +339,12 @@ const scheduleBatchPurge = (fileIds = [], folderIds = [], rawUserId, delayMs = 1
                 },
               ],
             });
+            if (childFiles.length > 0) {
+              await Share.deleteMany({ itemType: 'file', itemId: { $in: childFiles.map((cf) => cf._id) } });
+            }
 
             await Folder.deleteMany({ _id: { $in: uniqueFolderObjectIds }, ...userMatch });
+            await Share.deleteMany({ itemType: 'folder', itemId: { $in: uniqueFolderObjectIds } });
           }
         }
       }
@@ -2219,9 +2227,11 @@ const handleBinPermanentDelete = async (req, res) => {
 
     if (fileIdsToDelete.length > 0) {
       await File.deleteMany({ _id: { $in: fileIdsToDelete } });
+      await Share.deleteMany({ itemType: 'file', itemId: { $in: fileIdsToDelete } });
     }
     if (folderIdsToDelete.length > 0) {
       await Folder.deleteMany({ _id: { $in: folderIdsToDelete } });
+      await Share.deleteMany({ itemType: 'folder', itemId: { $in: folderIdsToDelete } });
     }
 
     // 4. Decrement user.storageUsed

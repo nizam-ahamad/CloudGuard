@@ -3590,9 +3590,9 @@ function App() {
           <SidebarUpgradeCard user={user} isCollapsed={isCollapsed} />
         </div>
 
-        {/* Footer Navigation & Storage Meter */}
+        {/* Footer Navigation */}
         <div className="flex flex-col gap-0.5 mt-auto border-t border-slate-200 dark:border-zinc-800 pt-2 px-3 shrink-0">
-          {isAdmin && (
+          {isAdmin === true && (
             <button 
               type="button"
               onClick={() => { 
@@ -3627,27 +3627,6 @@ function App() {
               </div>
             )}
           </button>
-
-          {!isCollapsed && (
-            <div className="pt-2 pb-3 px-3 mt-1 border-t border-slate-200/80 dark:border-zinc-800/80">
-              <div className="flex items-center justify-between text-[11px] font-medium text-neutral-600 dark:text-zinc-400 mb-1">
-                <span>Storage</span>
-                <span className="tabular-nums text-neutral-800 dark:text-zinc-200">
-                  {storageStats
-                    ? `${formatBytes(storageStats.storageUsed || storageStats.usedBytes || storageStats.used || 0)} / ${formatBytes(storageStats.storageLimit || storageStats.totalLimitBytes || storageStats.limit || defaultStorageLimit, 0)}`
-                    : '...'}
-                </span>
-              </div>
-              <div className="w-full h-1.5 rounded-full bg-neutral-200 dark:bg-zinc-800 overflow-hidden">
-                <div
-                  className="h-full rounded-full bg-emerald-500 transition-all duration-300"
-                  style={{
-                    width: `${storageStats ? Math.min(100, Math.round(((storageStats.storageUsed || storageStats.usedBytes || storageStats.used || 0) / (storageStats.storageLimit || storageStats.totalLimitBytes || storageStats.limit || defaultStorageLimit)) * 100)) : 0}%`,
-                  }}
-                />
-              </div>
-            </div>
-          )}
           
           <button 
             onClick={() => setIsCollapsed(!isCollapsed)}
