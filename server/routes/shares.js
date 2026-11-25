@@ -41,6 +41,29 @@ async function signDirectThumbnailUrl(thumbnailKey, expiresIn = 3600) {
   }
 }
 
+async function signDirectPdfPreviewUrl(file) {
+  const bucket = getBucketName();
+  if (!file?.s3Key || !bucket) return null;
+  const mime = String(file.mimeType || file.mimetype || '').toLowerCase();
+  const name = String(file.originalName || file.name || '').toLowerCase();
+  if (mime !== 'application/pdf' && !name.endsWith('.pdf')) {
+    return null;
+  }
+  try {
+    return await getSignedUrl(
+      s3Client,
+      new GetObjectCommand({
+        Bucket: bucket,
+        Key: file.s3Key,
+      }),
+      { expiresIn: 3600 }
+    );
+  } catch (err) {
+    console.warn('[Shares] Failed to sign direct PDF preview URL:', err.message);
+    return null;
+  }
+}
+
 /**
  * Verifies whether `folderId` is directly shared with `recipientId` OR is a descendant
  * of an active, non-trashed Folder shared with `recipientId`.
@@ -360,6 +383,7 @@ router.get('/with-me', authMiddleware, async (req, res) => {
       rawFiles.map(async (f) => ({
         ...f,
         thumbnailUrl: f.thumbnailKey ? await signDirectThumbnailUrl(f.thumbnailKey) : null,
+        previewUrl: await signDirectPdfPreviewUrl(f),
       }))
     );
 
@@ -430,6 +454,7 @@ router.get('/folder/:folderId/contents', authMiddleware, async (req, res) => {
         id: String(f._id),
         name: f.name || f.originalName,
         thumbnailUrl: f.thumbnailKey ? await signDirectThumbnailUrl(f.thumbnailKey, 3600) : null,
+        previewUrl: await signDirectPdfPreviewUrl(f),
       }))
     );
 

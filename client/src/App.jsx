@@ -18,7 +18,7 @@ import CookieConsent from './components/CookieConsent';
 import QuotaUpgradeModal from './components/QuotaUpgradeModal';
 import BinView from './components/BinView';
 import FileGridCard from './components/FileGridCard';
-import { loadMediaThumbnails, getMediaThumbnail } from './utils/cardPreviewGenerator';
+import { loadMediaThumbnails, getMediaThumbnail, getPdfjs, pdfThumbnailCache } from './utils/cardPreviewGenerator';
 import LandingPage from './pages/LandingPage';
 import AuthPage from './pages/AuthPage';
 import PrivacyPolicy from './pages/PrivacyPolicy';
@@ -44,6 +44,108 @@ import { Folder, FolderInput, X, Search, MoreVertical, Pencil, Info, LayoutGrid,
 import { extractDroppedItems, createFolderHierarchy } from './utils/folderUpload';
 
 import { API_BASE_URL } from "./config";
+
+/**
+ * Read-only PDF Page-1 Card Preview for "Shared with me" cards using direct Backblaze B2 previewUrl
+ */
+function SharedPdfCardPreview({ file, fileName }) {
+  const fileId = file?._id ? String(file._id) : null;
+  const [thumbUrl, setThumbUrl] = useState(() => (fileId ? pdfThumbnailCache.get(fileId) || null : null));
+
+  useEffect(() => {
+    if (!fileId || !file?.previewUrl || thumbUrl) return;
+    if (Number(file?.size || 0) > 15 * 1024 * 1024) return;
+
+    let isMounted = true;
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+
+    (async () => {
+      try {
+        const res = await fetch(file.previewUrl, { signal: controller?.signal });
+        if (!res.ok) return;
+        const arrayBuffer = await res.arrayBuffer();
+        if (!isMounted) return;
+
+        const pdfjsLib = await getPdfjs();
+        const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+        const page = await pdf.getPage(1);
+        const unscaled = page.getViewport({ scale: 1 });
+        const scale = Math.min(0.8, Math.max(0.6, 320 / (unscaled.width || 595)));
+        const viewport = page.getViewport({ scale });
+
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(viewport.width);
+        canvas.height = Math.round(viewport.height);
+        const ctx = canvas.getContext('2d', { alpha: false });
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        await page.render({ canvasContext: ctx, viewport }).promise;
+        let dataUrl = null;
+        try {
+          dataUrl = canvas.toDataURL('image/webp', 0.8);
+        } catch (_) {}
+        if (!dataUrl || !dataUrl.startsWith('data:image/webp')) {
+          try {
+            dataUrl = canvas.toDataURL('image/png');
+          } catch (_) {}
+        }
+
+        try {
+          page.cleanup();
+          pdf.destroy();
+        } catch (_) {}
+
+        if (dataUrl && isMounted) {
+          pdfThumbnailCache.set(fileId, dataUrl);
+          setThumbUrl(dataUrl);
+        }
+      } catch (_) {}
+    })();
+
+    return () => {
+      isMounted = false;
+      controller?.abort();
+    };
+  }, [fileId, file?.previewUrl, file?.size, thumbUrl]);
+
+  return (
+    <div className="relative w-full h-full flex items-center justify-center">
+      {thumbUrl ? (
+        <img
+          src={thumbUrl}
+          alt={fileName}
+          loading="lazy"
+          decoding="async"
+          className="w-full h-full object-cover object-top transition-transform duration-200 group-hover:scale-105"
+        />
+      ) : (
+        <div className="w-20 sm:w-24 h-24 sm:h-28 bg-white dark:bg-[#1c1d20] rounded-md shadow-sm border border-neutral-200/90 dark:border-neutral-700/80 p-2 sm:p-2.5 flex flex-col justify-between select-none">
+          <div className="flex items-center justify-between">
+            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold tracking-wider leading-none uppercase bg-red-500 text-white">
+              PDF
+            </span>
+            <div className="w-2 h-2 rounded-bl bg-neutral-200 dark:bg-neutral-700/80" />
+          </div>
+          <div className="space-y-1.5 my-auto px-0.5">
+            <div className="h-1.5 w-full bg-neutral-200 dark:bg-neutral-700/70 rounded-full" />
+            <div className="h-1.5 w-4/5 bg-neutral-200 dark:bg-neutral-700/70 rounded-full" />
+            <div className="h-1.5 w-3/5 bg-neutral-200 dark:bg-neutral-700/70 rounded-full" />
+          </div>
+          <div className="flex items-center justify-between pt-1 border-t border-neutral-100 dark:border-neutral-800">
+            <div className="h-1 w-8 bg-neutral-200 dark:bg-neutral-700/60 rounded-full" />
+            <span className="text-[9px] font-mono text-neutral-400 dark:text-neutral-500 uppercase">pdf</span>
+          </div>
+        </div>
+      )}
+      <div className="absolute top-2 left-2 z-10 pointer-events-none">
+        <span className="px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider leading-none uppercase bg-red-500 text-white shadow-sm">
+          PDF
+        </span>
+      </div>
+    </div>
+  );
+}
 
 // Module-level storage cache to persist storage meter state across tab navigation
 let globalStorageStatsCache = null;
@@ -4380,7 +4482,7 @@ function App() {
                             </div>
 
                             {/* Preview Thumbnail */}
-                            <div className="w-full h-32 sm:h-36 rounded-lg overflow-hidden bg-neutral-100 dark:bg-neutral-800/50 flex items-center justify-center mb-2.5 border border-neutral-200/60 dark:border-neutral-800/60">
+                            <div className="w-full h-32 sm:h-36 rounded-lg overflow-hidden bg-neutral-100 dark:bg-neutral-800/50 flex items-center justify-center mb-2.5 border border-neutral-200/60 dark:border-neutral-800/60 relative">
                               {file.thumbnailUrl ? (
                                 <img
                                   src={file.thumbnailUrl}
@@ -4390,6 +4492,8 @@ function App() {
                                   crossOrigin={typeof file.thumbnailUrl === 'string' && file.thumbnailUrl.includes('files.cloudguard.site') ? 'use-credentials' : undefined}
                                   className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-105"
                                 />
+                              ) : (file.mimeType === 'application/pdf' || fileName.toLowerCase().endsWith('.pdf')) && file.previewUrl ? (
+                                <SharedPdfCardPreview file={file} fileName={fileName} />
                               ) : (
                                 <FileText className="w-8 h-8 text-neutral-400 dark:text-zinc-500" />
                               )}

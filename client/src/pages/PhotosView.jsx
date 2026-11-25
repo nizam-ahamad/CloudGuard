@@ -287,6 +287,19 @@ export default function PhotosView({ token: propToken }) {
   const [loading, setLoading] = useState(() => !globalPhotosCache);
   const [previewIndex, setPreviewIndex] = useState(null);
 
+  // Track broken thumbnail IDs without fetching full-size assets from the grid
+  const [brokenThumbIds, setBrokenThumbIds] = useState(() => new Set());
+  const markThumbBroken = useCallback((id) => {
+    if (!id) return;
+    const idStr = String(id);
+    setBrokenThumbIds((prev) => {
+      if (prev.has(idStr)) return prev;
+      const next = new Set(prev);
+      next.add(idStr);
+      return next;
+    });
+  }, []);
+
   // Multi-select state
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -1143,14 +1156,32 @@ export default function PhotosView({ token: propToken }) {
                       </div>
 
                       {/* Card Thumbnail Container */}
-                      <div className="relative w-full h-full overflow-hidden bg-neutral-100 dark:bg-neutral-900 flex items-center justify-center">
-                        <PhotosThumbnailTile
-                          item={item}
-                          isVideo={isVideo}
-                          propToken={propToken}
-                          imgClassName="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                          iconClassName="w-8 h-8"
-                        />
+                      <div className="relative w-full h-full overflow-hidden bg-zinc-900 flex items-center justify-center">
+                        {(() => {
+                          const displayThumbnail = item.thumbnailUrl || item.thumbnail || (!isHeicFile(item) ? (item.url || item.accessUrl) : null);
+                          if (!displayThumbnail || brokenThumbIds.has(String(item._id))) {
+                            return (
+                              <div className="w-full h-full flex items-center justify-center bg-zinc-900">
+                                {isVideo ? (
+                                  <Play className="w-8 h-8 text-zinc-500" />
+                                ) : (
+                                  <ImageIcon className="w-8 h-8 text-zinc-500" />
+                                )}
+                              </div>
+                            );
+                          }
+                          return (
+                            <img
+                              src={displayThumbnail}
+                              alt={item.name || ''}
+                              loading="lazy"
+                              decoding="async"
+                              crossOrigin={typeof displayThumbnail === 'string' && (displayThumbnail.startsWith('https://files.cloudguard.site') || displayThumbnail.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                              onError={() => markThumbBroken(item._id)}
+                            />
+                          );
+                        })()}
 
                         {/* Video Badge Overlay */}
                         {isVideo && (
@@ -1221,14 +1252,32 @@ export default function PhotosView({ token: propToken }) {
                         </div>
 
                         {/* 40x40 Thumbnail */}
-                        <div className="w-10 h-10 rounded-lg bg-zinc-100 dark:bg-zinc-800 overflow-hidden shrink-0 flex items-center justify-center border border-zinc-200 dark:border-zinc-700/50 relative">
-                          <PhotosThumbnailTile
-                            item={item}
-                            isVideo={isVideo}
-                            propToken={propToken}
-                            imgClassName="w-full h-full object-cover object-center"
-                            iconClassName="w-4 h-4"
-                          />
+                        <div className="w-10 h-10 rounded-lg bg-zinc-900 overflow-hidden shrink-0 flex items-center justify-center border border-zinc-200 dark:border-zinc-700/50 relative">
+                          {(() => {
+                            const displayThumbnail = item.thumbnailUrl || item.thumbnail || (!isHeicFile(item) ? (item.url || item.accessUrl) : null);
+                            if (!displayThumbnail || brokenThumbIds.has(String(item._id))) {
+                              return (
+                                <div className="w-full h-full flex items-center justify-center bg-zinc-900">
+                                  {isVideo ? (
+                                    <Play className="w-4 h-4 text-zinc-500" />
+                                  ) : (
+                                    <ImageIcon className="w-4 h-4 text-zinc-500" />
+                                  )}
+                                </div>
+                              );
+                            }
+                            return (
+                              <img
+                                src={displayThumbnail}
+                                alt={item.name || ''}
+                                loading="lazy"
+                                decoding="async"
+                                crossOrigin={typeof displayThumbnail === 'string' && (displayThumbnail.startsWith('https://files.cloudguard.site') || displayThumbnail.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
+                                className="w-full h-full object-cover object-center"
+                                onError={() => markThumbBroken(item._id)}
+                              />
+                            );
+                          })()}
                           {isVideo && (
                             <div className="absolute inset-0 bg-black/40 flex items-center justify-center pointer-events-none">
                               <Play className="w-3.5 h-3.5 fill-white text-white" />
