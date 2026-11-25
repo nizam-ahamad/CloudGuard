@@ -11,6 +11,7 @@ import MoveModal from './components/MoveModal';
 import FolderDetailsModal from './components/FolderDetailsModal';
 import FileDetailsModal from './components/FileDetailsModal';
 import FilePreviewModal, { HeicPreviewImage } from './components/FilePreviewModal';
+import MobilePdfViewer from './components/MobilePdfViewer';
 import DeleteConfirmModal from './components/DeleteConfirmModal';
 import ProfileSettings from './components/ProfileSettings';
 import ShareModal from './components/ShareModal';
@@ -530,6 +531,7 @@ function UnifiedFilePreviewModal({ previewFile, previewUrl, previewText, closePr
   );
   const isHeic = fileExt === 'heic' || fileExt === 'heif' || previewFile?.mimeType === 'image/heic' || previewFile?.mimeType === 'image/heif';
   const isPdf = fileExt === 'pdf' || previewFile?.mimeType === 'application/pdf';
+  const isMobileViewport = typeof window !== 'undefined' && (window.innerWidth < 768 || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent));
   const isAudio = Boolean(
     previewFile?.mimeType?.startsWith('audio/') ||
     previewFile?.mimetype?.startsWith('audio/') ||
@@ -695,19 +697,29 @@ function UnifiedFilePreviewModal({ previewFile, previewUrl, previewText, closePr
             </div>
           ) : isPdf ? (
             <div className="w-full h-[75vh] relative flex items-center justify-center">
-              {!mediaLoaded && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center text-neutral-400 gap-2">
-                  <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-                  <span className="text-xs font-medium">Loading document...</span>
-                </div>
-              )}
-              {targetUrl && (
-                <iframe
-                  src={targetUrl}
-                  onLoad={() => setMediaLoaded(true)}
-                  className="w-full h-full border-0 rounded-lg bg-white"
-                  title="PDF Preview"
+              {isMobileViewport ? (
+                <MobilePdfViewer
+                  url={targetUrl}
+                  fileName={previewFile.originalName || previewFile.name}
+                  onDownload={() => handleDownload && handleDownload(previewFile)}
                 />
+              ) : (
+                <>
+                  {!mediaLoaded && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center text-neutral-400 gap-2">
+                      <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+                      <span className="text-xs font-medium">Loading document...</span>
+                    </div>
+                  )}
+                  {targetUrl && (
+                    <iframe
+                      src={targetUrl}
+                      onLoad={() => setMediaLoaded(true)}
+                      className="w-full h-full border-0 rounded-lg bg-white"
+                      title="PDF Preview"
+                    />
+                  )}
+                </>
               )}
             </div>
           ) : isText ? (

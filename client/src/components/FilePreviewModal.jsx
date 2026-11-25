@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { fetchAccessUrl } from '../utils/accessUrlCache';
+import MobilePdfViewer from './MobilePdfViewer';
 
 // -------------------------------------------------------------
 // Bounded 25-Item Session LRU Cache & In-Flight Deduplication
@@ -593,6 +594,8 @@ export default function FilePreviewModal({
   const [activeHeicLoadedId, setActiveHeicLoadedId] = useState(null);
   const thumbnailUrl = previewFile?.thumbnailUrl || previewFile?.thumbnail;
   const fileExt = (previewFile.type || (previewFile.name || '').split('.').pop() || '').toLowerCase();
+  const isPdf = fileExt === 'pdf' || previewFile?.mimeType === 'application/pdf';
+  const isMobileViewport = typeof window !== 'undefined' && (window.innerWidth < 768 || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent));
   const isHeic = fileExt === 'heic' || fileExt === 'heif' || previewFile?.mimeType === 'image/heic' || previewFile?.mimeType === 'image/heif';
   const isAudio = Boolean(
     previewFile?.mimeType?.startsWith('audio/') ||
@@ -797,8 +800,16 @@ export default function FilePreviewModal({
                 <span className="text-xs font-medium">Loading high-resolution photo...</span>
               </div>
             )
-          ) : fileExt === 'pdf' ? (
-            effectiveUrl ? (
+          ) : isPdf ? (
+            isMobileViewport ? (
+              <div className="w-full h-[70vh] relative flex items-center justify-center">
+                <MobilePdfViewer
+                  url={effectiveUrl}
+                  fileName={previewFile.originalName || previewFile.name}
+                  onDownload={() => handleDownload && handleDownload(previewFile)}
+                />
+              </div>
+            ) : effectiveUrl ? (
               <iframe src={effectiveUrl} className="w-full h-[70vh] border-0 rounded" title="PDF Preview" />
             ) : (
               <div className="flex flex-col items-center justify-center gap-2 text-neutral-400 min-h-[200px]">
