@@ -13,6 +13,7 @@ import FileDetailsModal from './components/FileDetailsModal';
 import FilePreviewModal, { HeicPreviewImage } from './components/FilePreviewModal';
 import DeleteConfirmModal from './components/DeleteConfirmModal';
 import ProfileSettings from './components/ProfileSettings';
+import ShareModal from './components/ShareModal';
 import CookieConsent from './components/CookieConsent';
 import QuotaUpgradeModal from './components/QuotaUpgradeModal';
 import BinView from './components/BinView';
@@ -39,7 +40,7 @@ import {
 import { HeaderDownloadButton, useDownload } from './context/DownloadContext';
 import { HeaderUploadButton, useUpload, UploadProvider } from './context/UploadContext';
 import { getCachedAccessUrl, fetchAccessUrl, prefetchAccessUrl } from './utils/accessUrlCache';
-import { Folder, FolderInput, X, Search, MoreVertical, Pencil, Info, LayoutGrid, List, Check, Trash2, Image, Play, ChevronLeft, ChevronRight, Download, Clock, UploadCloud, FolderPlus, Menu, Sun, Moon, Loader2, FileText, ChevronDown, FileUp, FolderUp, ArrowUp, ArrowDown, ShieldCheck, Users } from 'lucide-react';
+import { Folder, FolderInput, X, Search, MoreVertical, Pencil, Info, LayoutGrid, List, Check, Trash2, Image, Play, ChevronLeft, ChevronRight, Download, Clock, UploadCloud, FolderPlus, Menu, Sun, Moon, Loader2, FileText, ChevronDown, FileUp, FolderUp, ArrowUp, ArrowDown, ShieldCheck, Users, Share2 } from 'lucide-react';
 import { extractDroppedItems, createFolderHierarchy } from './utils/folderUpload';
 
 import { API_BASE_URL } from "./config";
@@ -1208,6 +1209,20 @@ function App() {
   const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
   const [activeMenuId, setActiveMenuId] = useState(null);
   const [activeFolderMenuId, setActiveFolderMenuId] = useState(null);
+  const [shareModalTarget, setShareModalTarget] = useState(null);
+  const [sharedItems, setSharedItems] = useState({ folders: [], files: [] });
+  const [sharedLoading, setSharedLoading] = useState(false);
+  const [sharedFolderId, setSharedFolderId] = useState(null);
+  const [sharedBreadcrumbs, setSharedBreadcrumbs] = useState([]);
+  const [activeSharedMenuId, setActiveSharedMenuId] = useState(null);
+  const [sharedByMeItems, setSharedByMeItems] = useState([]);
+  const [sharedByMeLoading, setSharedByMeLoading] = useState(false);
+  const [sharedSubTab, setSharedSubTab] = useState('with-me');
+
+  const sharedByMeIdSet = useMemo(
+    () => new Set(sharedByMeItems.map((entry) => String(entry.item?._id))),
+    [sharedByMeItems]
+  );
 
   const isSettingsOpen = searchParams.get('view') === 'settings' && location.pathname === '/dashboard';
   const isSharedActive = location.pathname === '/dashboard' && !searchParams.get('view') && (searchParams.get('tab') === 'shared' || viewMode === 'shared');
@@ -1648,6 +1663,8 @@ function App() {
       newParams.delete('folder');
       newParams.set('tab', 'shared');
       setViewMode('shared');
+      setSharedFolderId(null);
+      setSharedBreadcrumbs([]);
       setSearchParams(newParams);
       if (location.pathname !== '/dashboard') {
         navigate('/dashboard?tab=shared');
@@ -2245,6 +2262,80 @@ function App() {
       fetchFolders(activeFolderId, '');
     }
   }, [viewMode, searchQuery]);
+
+  const fetchSharedItems = useCallback(async (targetFolderId = null) => {
+    const activeToken = getActiveToken();
+    if (!activeToken) return;
+    setSharedLoading(true);
+    try {
+      const headers = getAuthHeaders();
+      if (!targetFolderId) {
+        const res = await axios.get(`${API_BASE_URL}/api/shares/with-me`, {
+          headers,
+          withCredentials: true,
+        });
+        setSharedItems({
+          folders: Array.isArray(res.data?.folders) ? res.data.folders : [],
+          files: Array.isArray(res.data?.files) ? res.data.files : [],
+        });
+        setSharedBreadcrumbs([]);
+        setSharedFolderId(null);
+      } else {
+        const res = await axios.get(`${API_BASE_URL}/api/shares/folder/${targetFolderId}/contents`, {
+          headers,
+          withCredentials: true,
+        });
+        setSharedItems({
+          folders: Array.isArray(res.data?.folders) ? res.data.folders : [],
+          files: Array.isArray(res.data?.files) ? res.data.files : [],
+        });
+        setSharedBreadcrumbs(Array.isArray(res.data?.breadcrumbs) ? res.data.breadcrumbs : []);
+        setSharedFolderId(targetFolderId);
+      }
+    } catch (err) {
+      console.error('Failed to load shared items:', err);
+      addToast('error', err.response?.data?.error || 'Failed to load shared items');
+    } finally {
+      setSharedLoading(false);
+    }
+  }, []);
+
+  const fetchSharedByMe = useCallback(async () => {
+    const activeToken = getActiveToken();
+    if (!activeToken) return;
+    setSharedByMeLoading(true);
+    try {
+      const res = await axios.get(`${API_BASE_URL}/api/shares/by-me`, {
+        headers: getAuthHeaders(),
+        withCredentials: true,
+      });
+      const items = Array.isArray(res.data?.items) ? res.data.items : [];
+      setSharedByMeItems(items);
+      if (items.length === 0) {
+        setSharedSubTab('with-me');
+      }
+    } catch (err) {
+      console.warn('Failed to fetch outbound shares:', err?.message || err);
+    } finally {
+      setSharedByMeLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (token) {
+      fetchSharedByMe();
+    } else {
+      setSharedByMeItems([]);
+      setSharedSubTab('with-me');
+    }
+  }, [token, fetchSharedByMe]);
+
+  useEffect(() => {
+    if (viewMode === 'shared' || searchParams.get('tab') === 'shared') {
+      fetchSharedItems(sharedFolderId);
+      fetchSharedByMe();
+    }
+  }, [viewMode, searchParams, fetchSharedItems, fetchSharedByMe]);
 
   const handleSortByName = () => {
     if (sortBy === 'name') {
@@ -3100,8 +3191,98 @@ function App() {
     }
   };
 
+  const handleSharedFileDownload = async (file) => {
+    if (!file || !file._id) return;
+    try {
+      const res = await axios.get(`${API_BASE_URL}/api/shares/file/${file._id}/access?download=true`, {
+        headers: getAuthHeaders(),
+        withCredentials: true,
+      });
+      const signedUrl = res.data?.url;
+      if (!signedUrl) throw new Error('Could not generate shared download URL');
+
+      const a = document.createElement('a');
+      a.href = signedUrl;
+      a.download = file.originalName || file.name || 'download';
+      a.rel = 'noopener noreferrer';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      toast.success(`Download started: ${file.originalName || file.name}`);
+    } catch (err) {
+      toast.error(err.response?.data?.error || err.message || 'Shared download failed');
+    }
+  };
+
+  const handleSharedFilePreview = async (file) => {
+    if (!file || !file._id) return;
+    try {
+      const res = await axios.get(`${API_BASE_URL}/api/shares/file/${file._id}/access`, {
+        headers: getAuthHeaders(),
+        withCredentials: true,
+      });
+      const signedUrl = res.data?.url;
+      if (!signedUrl) throw new Error('Could not generate shared preview URL');
+
+      const accessFile = res.data?.file || file;
+      const fileName = accessFile.originalName || accessFile.name || file.name || 'file';
+      const ext = (fileName.split('.').pop() || '').toLowerCase();
+
+      setPreviewUrl(signedUrl);
+      setPreviewFile({
+        ...accessFile,
+        name: fileName,
+        type: ext,
+        isShared: true,
+      });
+
+      if (ext === 'txt' || ext === 'md' || ext === 'csv' || ext === 'json' || ext === 'log') {
+        setPreviewText('Loading...');
+        const textRes = await fetch(signedUrl);
+        if (textRes.ok) {
+          setPreviewText(await textRes.text());
+        } else {
+          setPreviewText('Failed to load text preview.');
+        }
+      }
+    } catch (err) {
+      addToast('error', err.response?.data?.error || err.message || 'Shared preview failed');
+    }
+  };
+
+  const handleRemoveFromShared = async (shareId, itemLabel) => {
+    if (!shareId) return;
+    try {
+      await axios.delete(`${API_BASE_URL}/api/shares/${shareId}`, {
+        headers: getAuthHeaders(),
+        withCredentials: true,
+      });
+      toast.success(`Removed "${itemLabel}" from Shared with me`);
+      fetchSharedItems(sharedFolderId);
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to remove shared item');
+    }
+  };
+
+  const handleRevokeByMeShare = async (shareId, recipientLabel, itemName) => {
+    if (!shareId) return;
+    try {
+      await axios.delete(`${API_BASE_URL}/api/shares/${shareId}`, {
+        headers: getAuthHeaders(),
+        withCredentials: true,
+      });
+      toast.success(`Removed ${recipientLabel} from "${itemName}"`);
+      fetchSharedByMe();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to revoke share access');
+    }
+  };
+
   const handleDownload = async (file) => {
     if (!file || file.isFolder) return;
+    if (file.isShared) {
+      return handleSharedFileDownload(file);
+    }
     if (file.isMalicious || file.status === 'Malicious' || file.status === 'malware' || file.securityStatus === 'threat_purged') {
       toast.error('Cannot download infected file');
       return;
@@ -3806,7 +3987,7 @@ function App() {
 
       {/* Main Content Canvas */}
       <main 
-        onClick={() => { setShowProfileMenu(false); setIsSidebarOpen(false); setActiveMenuId(null); setActiveFolderMenuId(null); }} 
+        onClick={() => { setShowProfileMenu(false); setIsSidebarOpen(false); setActiveMenuId(null); setActiveFolderMenuId(null); setActiveSharedMenuId(null); }} 
         className={`pt-24 pb-28 px-margin-mobile md:px-margin-desktop max-w-container-max mx-auto w-full min-h-screen bg-white dark:bg-[#131314] transition-all duration-300 ease-in-out ${isCollapsed ? 'md:ml-20' : 'md:ml-64'}`}
       >
         <TrialBanner user={user} />
@@ -3829,27 +4010,418 @@ function App() {
         ) : location.pathname === '/dashboard/photos' ? (
           <PhotosView token={token} />
         ) : viewMode === 'shared' || searchParams.get('tab') === 'shared' ? (
-          <div className="space-y-6">
-            <div>
-              <h2 className="font-headline-lg-mobile md:font-headline-lg text-headline-lg-mobile md:text-headline-lg font-bold text-on-surface dark:text-[#e3e3e3] mb-1">
-                Shared with me
-              </h2>
-              <p className="text-xs sm:font-body-md sm:text-body-md text-on-surface-variant dark:text-zinc-400">
-                Collaborate securely on encrypted files and folders shared with your vault.
-              </p>
+          <div className="space-y-6 pb-20">
+            {/* Header & Interactive Breadcrumbs */}
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div>
+                <h2 className="font-headline-lg-mobile md:font-headline-lg text-headline-lg-mobile md:text-headline-lg font-bold text-on-surface dark:text-[#e3e3e3] mb-1">
+                  {sharedSubTab === 'by-me' && sharedByMeItems.length > 0 ? 'Shared by me' : 'Shared with me'}
+                </h2>
+                <p className="text-xs sm:font-body-md sm:text-body-md text-on-surface-variant dark:text-zinc-400">
+                  {sharedSubTab === 'by-me' && sharedByMeItems.length > 0
+                    ? 'Manage files and folders you have shared with other CloudGuard users.'
+                    : 'Read-only files and folders shared with your vault.'}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2.5 self-start sm:self-auto flex-wrap">
+                {sharedByMeItems.length > 0 && (
+                  <div className="inline-flex items-center p-1 rounded-xl bg-neutral-100 dark:bg-zinc-900 border border-neutral-200 dark:border-zinc-800">
+                    <button
+                      type="button"
+                      onClick={() => setSharedSubTab('with-me')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                        sharedSubTab === 'with-me'
+                          ? 'bg-white dark:bg-zinc-800 text-neutral-900 dark:text-white shadow-sm'
+                          : 'text-neutral-500 dark:text-zinc-400 hover:text-neutral-900 dark:hover:text-white'
+                      }`}
+                    >
+                      Shared with me
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSharedSubTab('by-me')}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                        sharedSubTab === 'by-me'
+                          ? 'bg-white dark:bg-zinc-800 text-neutral-900 dark:text-white shadow-sm'
+                          : 'text-neutral-500 dark:text-zinc-400 hover:text-neutral-900 dark:hover:text-white'
+                      }`}
+                    >
+                      <span>Shared by me</span>
+                      <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
+                        {sharedByMeItems.length}
+                      </span>
+                    </button>
+                  </div>
+                )}
+
+                {sharedSubTab === 'with-me' && sharedFolderId && (
+                  <button
+                    type="button"
+                    onClick={() => fetchSharedItems(null)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-neutral-100 hover:bg-neutral-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-neutral-700 dark:text-zinc-200 transition-colors cursor-pointer"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                    <span>Back to Shared root</span>
+                  </button>
+                )}
+              </div>
             </div>
 
-            <div className="rounded-2xl border border-dashed border-neutral-300 dark:border-zinc-800 bg-neutral-50/70 dark:bg-[#1e1f20]/60 py-16 px-6 text-center flex flex-col items-center justify-center">
-              <div className="w-12 h-12 rounded-full bg-neutral-200/70 dark:bg-zinc-800/80 flex items-center justify-center mb-4">
-                <Users className="w-6 h-6 text-neutral-500 dark:text-zinc-400" />
+            {sharedSubTab === 'by-me' && sharedByMeItems.length > 0 ? (
+              <div className="space-y-3">
+                {sharedByMeItems.map((entry) => {
+                  const isFolder = entry.itemType === 'folder';
+                  const itemObj = entry.item;
+
+                  return (
+                    <div
+                      key={`${entry.itemType}:${itemObj._id}`}
+                      className="rounded-xl border border-neutral-200 dark:border-neutral-800/80 bg-white dark:bg-neutral-900/60 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm dark:shadow-none"
+                    >
+                      {/* Item Info */}
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <div className="w-11 h-11 rounded-lg bg-neutral-100 dark:bg-zinc-800/80 border border-neutral-200/70 dark:border-zinc-700/60 flex items-center justify-center shrink-0 overflow-hidden">
+                          {isFolder ? (
+                            <Folder className="w-5 h-5 text-blue-600 fill-blue-500/20 dark:text-blue-400 dark:fill-blue-400/25" />
+                          ) : itemObj.thumbnailUrl ? (
+                            <img
+                              src={itemObj.thumbnailUrl}
+                              alt={itemObj.name}
+                              loading="lazy"
+                              decoding="async"
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <FileText className="w-5 h-5 text-neutral-400 dark:text-zinc-500" />
+                          )}
+                        </div>
+
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 truncate" title={itemObj.name}>
+                            {itemObj.name}
+                          </p>
+                          <p className="text-xs text-neutral-500 dark:text-zinc-400">
+                            {isFolder ? 'Folder' : formatSize(itemObj.size || 0)} • {entry.recipients.length} {entry.recipients.length === 1 ? 'recipient' : 'recipients'}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Recipient Chips & + Share */}
+                      <div className="flex items-center flex-wrap gap-2 sm:justify-end">
+                        {entry.recipients.map((recipient) => (
+                          <div
+                            key={recipient.shareId}
+                            className="inline-flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 rounded-full bg-neutral-100 dark:bg-zinc-800/90 border border-neutral-200 dark:border-zinc-700/80 text-xs"
+                          >
+                            <span className="font-medium text-neutral-800 dark:text-zinc-200 max-w-[140px] truncate" title={recipient.email}>
+                              {recipient.name || recipient.email}
+                            </span>
+                            <span className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold uppercase bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                              Viewer
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleRevokeByMeShare(recipient.shareId, recipient.email, itemObj.name)}
+                              title={`Remove access for ${recipient.email}`}
+                              className="p-0.5 rounded-full text-neutral-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-neutral-200 dark:hover:bg-zinc-700 transition-colors cursor-pointer"
+                              aria-label={`Remove ${recipient.email}`}
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ))}
+
+                        <button
+                          type="button"
+                          onClick={() => setShareModalTarget({ item: itemObj, itemType: entry.itemType })}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 border border-emerald-500/25 transition-colors cursor-pointer shrink-0"
+                        >
+                          <Share2 className="w-3 h-3" />
+                          <span>+ Share</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-              <h3 className="text-sm sm:text-base font-semibold text-neutral-900 dark:text-[#e3e3e3] mb-1.5">
-                Nothing shared with you yet
-              </h3>
-              <p className="text-xs sm:text-sm text-neutral-500 dark:text-zinc-400 max-w-md">
-                Files and folders shared with you by other CloudGuard users will appear here.
-              </p>
-            </div>
+            ) : (
+              <>
+            {sharedBreadcrumbs.length > 0 && (
+              <nav className="flex items-center flex-wrap gap-1.5 text-xs sm:text-sm text-neutral-500 dark:text-zinc-400 bg-neutral-50 dark:bg-[#1e1f20] px-3.5 py-2 rounded-xl border border-neutral-200/80 dark:border-zinc-800/80">
+                <button
+                  type="button"
+                  onClick={() => fetchSharedItems(null)}
+                  className="font-medium text-neutral-700 dark:text-zinc-200 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors cursor-pointer"
+                >
+                  Shared with me
+                </button>
+                {sharedBreadcrumbs.map((crumb, idx) => {
+                  const isLast = idx === sharedBreadcrumbs.length - 1;
+                  return (
+                    <React.Fragment key={crumb._id}>
+                      <ChevronRight className="w-3.5 h-3.5 shrink-0 text-neutral-400" />
+                      {isLast ? (
+                        <span className="font-semibold text-neutral-900 dark:text-white truncate max-w-[200px]">
+                          {crumb.name}
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => fetchSharedItems(crumb._id)}
+                          className="font-medium text-neutral-700 dark:text-zinc-200 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors truncate max-w-[180px] cursor-pointer"
+                        >
+                          {crumb.name}
+                        </button>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+              </nav>
+            )}
+
+            {sharedLoading ? (
+              <div className="flex flex-col items-center justify-center py-20 text-neutral-400 gap-2">
+                <Loader2 className="w-6 h-6 animate-spin text-emerald-500" />
+                <span className="text-xs font-medium">Loading shared items...</span>
+              </div>
+            ) : sharedItems.folders.length === 0 && sharedItems.files.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-neutral-300 dark:border-zinc-800 bg-neutral-50/70 dark:bg-[#1e1f20]/60 py-16 px-6 text-center flex flex-col items-center justify-center">
+                <div className="w-12 h-12 rounded-full bg-neutral-200/70 dark:bg-zinc-800/80 flex items-center justify-center mb-4">
+                  <Users className="w-6 h-6 text-neutral-500 dark:text-zinc-400" />
+                </div>
+                <h3 className="text-sm sm:text-base font-semibold text-neutral-900 dark:text-[#e3e3e3] mb-1.5">
+                  {sharedFolderId ? 'This shared folder is empty' : 'Nothing shared with you yet'}
+                </h3>
+                <p className="text-xs sm:text-sm text-neutral-500 dark:text-zinc-400 max-w-md">
+                  {sharedFolderId
+                    ? 'There are no active files or subfolders inside this directory.'
+                    : 'Files and folders shared with you by other CloudGuard users will appear here.'}
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-6">
+                {/* Shared Folders Grid */}
+                {sharedItems.folders.length > 0 && (
+                  <div className="space-y-2.5">
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-zinc-400">
+                      Folders ({sharedItems.folders.length})
+                    </h3>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4">
+                      {sharedItems.folders.map((folder) => {
+                        const menuKey = `shared-folder:${folder._id}`;
+                        const isMenuOpen = activeSharedMenuId === menuKey;
+                        const ownerName = folder.sharedBy?.name || folder.sharedBy?.email;
+
+                        return (
+                          <div
+                            key={folder._id}
+                            onClick={() => fetchSharedItems(folder._id)}
+                            className={`group relative flex flex-col justify-between p-4 rounded-xl border border-neutral-200 dark:border-neutral-800/80 bg-white dark:bg-neutral-900/60 hover:bg-neutral-50/90 dark:hover:bg-neutral-800/50 hover:border-neutral-300 dark:hover:border-neutral-700 shadow-sm dark:shadow-none transition-all duration-150 cursor-pointer select-none min-h-[120px] ${
+                              isMenuOpen ? 'z-50' : 'z-0'
+                            }`}
+                          >
+                            {/* Three Dots Menu */}
+                            <div
+                              onClick={(e) => e.stopPropagation()}
+                              className="absolute top-2.5 right-2.5 shrink-0 z-20"
+                            >
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setActiveSharedMenuId(isMenuOpen ? null : menuKey);
+                                }}
+                                className="p-1.5 rounded-lg bg-black/80 hover:bg-black text-white shadow-md backdrop-blur-sm border border-white/15 transition-all flex items-center justify-center shrink-0 cursor-pointer opacity-100"
+                                title="More options"
+                                aria-label="More options"
+                              >
+                                <MoreVertical size={16} className="text-white stroke-[2.5]" />
+                              </button>
+
+                              {isMenuOpen && (
+                                <div className="absolute right-0 top-full mt-1.5 w-44 rounded-xl bg-white/95 dark:bg-[#18181b]/95 backdrop-blur-md border border-neutral-200 dark:border-neutral-800 shadow-2xl p-1.5 z-[100] animate-in fade-in zoom-in-95">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setActiveSharedMenuId(null);
+                                      fetchSharedItems(folder._id);
+                                    }}
+                                    className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-neutral-700 dark:text-zinc-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition-colors cursor-pointer text-left"
+                                  >
+                                    <Folder className="w-4 h-4 text-neutral-400 shrink-0" />
+                                    <span>Open</span>
+                                  </button>
+                                  {folder.shareId && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setActiveSharedMenuId(null);
+                                        handleRemoveFromShared(folder.shareId, folder.name);
+                                      }}
+                                      className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-lg transition-colors cursor-pointer text-left"
+                                    >
+                                      <Trash2 className="w-4 h-4 shrink-0" />
+                                      <span>Remove from shared</span>
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="flex flex-col items-center justify-center flex-1 pt-3 pb-1">
+                              <Folder className="w-8 h-8 text-blue-600 fill-blue-500/20 dark:text-blue-400 dark:fill-blue-400/25 shrink-0 mb-2" />
+                              <span
+                                className="text-xs sm:text-sm font-medium text-neutral-800 dark:text-neutral-200 truncate max-w-full text-center"
+                                title={folder.name}
+                              >
+                                {folder.name}
+                              </span>
+                            </div>
+
+                            {ownerName && (
+                              <p className="text-[11px] text-neutral-500 dark:text-zinc-400 truncate text-center mt-1">
+                                Shared by {ownerName}
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Shared Files Grid */}
+                {sharedItems.files.length > 0 && (
+                  <div className="space-y-2.5">
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-zinc-400">
+                      Files ({sharedItems.files.length})
+                    </h3>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4">
+                      {sharedItems.files.map((file) => {
+                        const menuKey = `shared-file:${file._id}`;
+                        const isMenuOpen = activeSharedMenuId === menuKey;
+                        const fileName = file.originalName || file.name || 'File';
+                        const ownerName = file.sharedBy?.name || file.sharedBy?.email;
+
+                        return (
+                          <div
+                            key={file._id}
+                            onClick={() => handleSharedFilePreview(file)}
+                            className={`group relative flex flex-col justify-between p-3 rounded-xl border border-neutral-200 dark:border-neutral-800/80 bg-white dark:bg-neutral-900/60 hover:bg-neutral-50/90 dark:hover:bg-neutral-800/50 hover:border-neutral-300 dark:hover:border-neutral-700 shadow-sm dark:shadow-none transition-all duration-150 cursor-pointer select-none ${
+                              isMenuOpen ? 'z-50' : 'z-0'
+                            }`}
+                          >
+                            {/* Three Dots Menu */}
+                            <div
+                              onClick={(e) => e.stopPropagation()}
+                              className="absolute top-2.5 right-2.5 shrink-0 z-20"
+                            >
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setActiveSharedMenuId(isMenuOpen ? null : menuKey);
+                                }}
+                                className="p-1.5 rounded-lg bg-black/80 hover:bg-black text-white shadow-md backdrop-blur-sm border border-white/15 transition-all flex items-center justify-center shrink-0 cursor-pointer opacity-100"
+                                title="More options"
+                                aria-label="More options"
+                              >
+                                <MoreVertical size={16} className="text-white stroke-[2.5]" />
+                              </button>
+
+                              {isMenuOpen && (
+                                <div className="absolute right-0 top-full mt-1.5 w-48 rounded-xl bg-white/95 dark:bg-[#18181b]/95 backdrop-blur-md border border-neutral-200 dark:border-neutral-800 shadow-2xl p-1.5 z-[100] animate-in fade-in zoom-in-95">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setActiveSharedMenuId(null);
+                                      handleSharedFilePreview(file);
+                                    }}
+                                    className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-neutral-700 dark:text-zinc-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition-colors cursor-pointer text-left"
+                                  >
+                                    <span className="material-symbols-outlined text-[16px] text-neutral-400 shrink-0">visibility</span>
+                                    <span>Preview</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setActiveSharedMenuId(null);
+                                      handleSharedFileDownload(file);
+                                    }}
+                                    className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-neutral-700 dark:text-zinc-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition-colors cursor-pointer text-left"
+                                  >
+                                    <Download className="w-4 h-4 text-neutral-400 shrink-0" />
+                                    <span>Download</span>
+                                  </button>
+                                  {file.shareId && (
+                                    <>
+                                      <div className="h-[1px] bg-neutral-200 dark:bg-neutral-800 my-1" />
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setActiveSharedMenuId(null);
+                                          handleRemoveFromShared(file.shareId, fileName);
+                                        }}
+                                        className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-lg transition-colors cursor-pointer text-left"
+                                      >
+                                        <Trash2 className="w-4 h-4 shrink-0" />
+                                        <span>Remove from shared</span>
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Preview Thumbnail */}
+                            <div className="w-full h-32 sm:h-36 rounded-lg overflow-hidden bg-neutral-100 dark:bg-neutral-800/50 flex items-center justify-center mb-2.5 border border-neutral-200/60 dark:border-neutral-800/60">
+                              {file.thumbnailUrl ? (
+                                <img
+                                  src={file.thumbnailUrl}
+                                  alt={fileName}
+                                  loading="lazy"
+                                  decoding="async"
+                                  crossOrigin={typeof file.thumbnailUrl === 'string' && file.thumbnailUrl.includes('files.cloudguard.site') ? 'use-credentials' : undefined}
+                                  className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-105"
+                                />
+                              ) : (
+                                <FileText className="w-8 h-8 text-neutral-400 dark:text-zinc-500" />
+                              )}
+                            </div>
+
+                            {/* Metadata */}
+                            <div className="min-w-0 space-y-0.5">
+                              <p
+                                className="text-xs sm:text-sm font-medium text-neutral-800 dark:text-neutral-200 truncate"
+                                title={fileName}
+                              >
+                                {fileName}
+                              </p>
+                              <p className="text-[11px] text-neutral-400 dark:text-zinc-500 truncate">
+                                {formatSize(file.size)}
+                              </p>
+                              {ownerName && (
+                                <p className="text-[11px] text-emerald-600 dark:text-emerald-400 truncate">
+                                  Shared by {ownerName}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+              </>
+            )}
           </div>
         ) : viewMode === 'bin' || searchParams.get('view') === 'bin' || searchParams.get('tab') === 'bin' ? (
           <BinView onStorageUpdate={fetchStorageStats} searchQuery={searchQuery} token={token} />
@@ -4276,6 +4848,17 @@ function App() {
                               <button 
                                 onClick={(e) => { 
                                   e.stopPropagation(); 
+                                  setShareModalTarget({ item: folder, itemType: 'folder' });
+                                  setActiveFolderMenuId(null); 
+                                }} 
+                                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-neutral-700 dark:text-zinc-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition-colors cursor-pointer text-left"
+                              >
+                                <Share2 className="w-4 h-4 text-neutral-400 dark:text-zinc-400 shrink-0" />
+                                <span>Share</span>
+                              </button>
+                              <button 
+                                onClick={(e) => { 
+                                  e.stopPropagation(); 
                                   openMoveModal({ ...folder, isFolder: true });
                                   setActiveFolderMenuId(null); 
                                 }} 
@@ -4328,9 +4911,16 @@ function App() {
                         {/* Card Content: Permanently Visible Folder Icon + Name */}
                         <div className="flex flex-col items-center justify-center flex-1 pt-3 pb-1">
                           <Folder className="w-8 h-8 text-blue-600 fill-blue-500/20 dark:text-blue-400 dark:fill-blue-400/25 shrink-0 transition-transform mb-2" />
-                          <span className="text-sm font-medium text-neutral-800 dark:text-neutral-200 group-hover:text-black dark:group-hover:text-white truncate max-w-full text-center transition-colors">
-                            {folder.name}
-                          </span>
+                          <div className="flex items-center justify-center gap-1.5 max-w-full">
+                            <span className="text-sm font-medium text-neutral-800 dark:text-neutral-200 group-hover:text-black dark:group-hover:text-white truncate transition-colors">
+                              {folder.name}
+                            </span>
+                            {sharedByMeIdSet.has(String(folder._id)) && (
+                              <span title="Shared" className="inline-flex items-center text-neutral-400 dark:text-zinc-400 shrink-0">
+                                <Users className="w-3.5 h-3.5" />
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
                     );
@@ -4379,6 +4969,11 @@ function App() {
                           <span className="text-sm font-medium text-neutral-800 dark:text-neutral-200 group-hover:text-black dark:group-hover:text-white truncate transition-colors">
                             {folder.name}
                           </span>
+                          {sharedByMeIdSet.has(String(folder._id)) && (
+                            <span title="Shared" className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-neutral-100 dark:bg-zinc-800 text-neutral-500 dark:text-zinc-400 text-[10px] font-medium shrink-0">
+                              <Users className="w-3 h-3" />
+                            </span>
+                          )}
                         </div>
 
                         {/* Right: Three Dots Action Menu */}
@@ -4401,6 +4996,17 @@ function App() {
 
                           {activeFolderMenuId === folder._id && (
                             <div className="absolute right-0 top-full mt-1.5 w-44 sm:w-48 rounded-xl bg-white/95 dark:bg-[#18181b]/95 backdrop-blur-md border border-neutral-200 dark:border-neutral-800 shadow-2xl p-1.5 z-[100] transform transition-all duration-150 ease-out origin-top-right animate-in fade-in zoom-in-95">
+                              <button 
+                                onClick={(e) => { 
+                                  e.stopPropagation(); 
+                                  setShareModalTarget({ item: folder, itemType: 'folder' });
+                                  setActiveFolderMenuId(null); 
+                                }} 
+                                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-neutral-700 dark:text-zinc-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition-colors cursor-pointer text-left"
+                              >
+                                <Share2 className="w-4 h-4 text-neutral-400 dark:text-zinc-400 shrink-0" />
+                                <span>Share</span>
+                              </button>
                               <button 
                                 onClick={(e) => { 
                                   e.stopPropagation(); 
@@ -4499,7 +5105,16 @@ function App() {
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 pb-4 sm:pb-32">
                 {filteredFiles.map((file, index) => (
                   <ErrorBoundary key={file?._id || file?.id || Math.random()}>
-                    <FileGridCard
+                    <div className="relative">
+                      {sharedByMeIdSet.has(String(file._id)) && (
+                        <span
+                          title="Shared"
+                          className="pointer-events-none absolute top-2.5 right-11 z-20 inline-flex items-center justify-center w-6 h-6 rounded-lg bg-black/70 text-emerald-400 backdrop-blur-sm border border-white/15 shadow-sm"
+                        >
+                          <Users className="w-3.5 h-3.5" />
+                        </span>
+                      )}
+                      <FileGridCard
                       file={file}
                       index={index}
                       totalFiles={filteredFiles.length}
@@ -4522,6 +5137,7 @@ function App() {
                       token={token}
                       prefetchAccessUrl={prefetchFileAccessUrl}
                     />
+                    </div>
                   </ErrorBoundary>
                 ))}
               </div>
@@ -4681,7 +5297,14 @@ function App() {
                             </span>
                           </div>
                           <div className="flex flex-col min-w-0 flex-1">
-                            <span className="font-medium truncate max-w-full md:max-w-[250px]" title={file.name}>{file.name}</span>
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span className="font-medium truncate max-w-full md:max-w-[250px]" title={file.name}>{file.name}</span>
+                              {sharedByMeIdSet.has(String(file._id)) && (
+                                <span title="Shared" className="inline-flex items-center text-neutral-400 dark:text-zinc-400 shrink-0">
+                                  <Users className="w-3.5 h-3.5" />
+                                </span>
+                              )}
+                            </div>
                             <div className="md:hidden flex items-center gap-1.5 sm:gap-2 text-[11px] sm:text-xs text-gray-500 dark:text-zinc-400 mt-0.5 whitespace-nowrap min-w-0">
                               <span className="whitespace-nowrap">{file.date}</span>
                               <span className="shrink-0">•</span>
@@ -4746,6 +5369,11 @@ function App() {
                             {!file.isFolder && !file.isMalicious && file.status !== 'Malicious' && file.status !== 'malware' && file.securityStatus !== 'threat_purged' && (
                               <button onClick={(e) => { e.stopPropagation(); setActiveMenuId(null); handleDownload(file); }} className="w-full text-left px-4 py-2.5 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:text-gray-900 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-neutral-700/80 transition-colors flex items-center gap-3 cursor-pointer">
                                 <span className="material-symbols-outlined text-[18px]">download</span> Download
+                              </button>
+                            )}
+                            {!file.isFolder && (
+                              <button onClick={(e) => { e.stopPropagation(); setShareModalTarget({ item: file, itemType: 'file' }); setActiveMenuId(null); }} className="w-full text-left px-4 py-2.5 text-sm text-neutral-700 dark:text-[#e3e3e3] hover:text-gray-900 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-neutral-700/80 transition-colors flex items-center gap-3 cursor-pointer">
+                                <Share2 size={18} strokeWidth={1.5} /> Share
                               </button>
                             )}
                             {!file.isFolder && (
@@ -4984,6 +5612,17 @@ function App() {
           handleDownload={handleDownload}
         />
       ) : null}
+
+      {/* Share Item Modal */}
+      <ShareModal
+        isOpen={Boolean(shareModalTarget)}
+        onClose={() => {
+          setShareModalTarget(null);
+          fetchSharedByMe();
+        }}
+        item={shareModalTarget?.item || null}
+        itemType={shareModalTarget?.itemType || 'file'}
+      />
 
       {/* Delete Confirmation Modal */}
       <DeleteConfirmModal

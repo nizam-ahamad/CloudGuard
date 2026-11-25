@@ -23,7 +23,7 @@ function getBucketName() {
   return process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
 }
 
-async function signDirectThumbnailUrl(thumbnailKey) {
+async function signDirectThumbnailUrl(thumbnailKey, expiresIn = 3600) {
   const bucket = getBucketName();
   if (!thumbnailKey || !bucket) return null;
   try {
@@ -33,7 +33,7 @@ async function signDirectThumbnailUrl(thumbnailKey) {
         Bucket: bucket,
         Key: thumbnailKey,
       }),
-      { expiresIn: 300 }
+      { expiresIn }
     );
   } catch (err) {
     console.warn('[Shares] Failed to sign direct thumbnail URL:', err.message);
@@ -429,7 +429,7 @@ router.get('/folder/:folderId/contents', authMiddleware, async (req, res) => {
         _id: String(f._id),
         id: String(f._id),
         name: f.name || f.originalName,
-        thumbnailUrl: f.thumbnailKey ? await signDirectThumbnailUrl(f.thumbnailKey) : null,
+        thumbnailUrl: f.thumbnailKey ? await signDirectThumbnailUrl(f.thumbnailKey, 3600) : null,
       }))
     );
 
@@ -445,6 +445,121 @@ router.get('/folder/:folderId/contents', authMiddleware, async (req, res) => {
   } catch (err) {
     console.error('Error loading shared folder contents:', err);
     return res.status(500).json({ error: 'Failed to load shared folder contents' });
+  }
+});
+
+// -------------------------------------------------------------
+// 5b. GET /api/shares/by-me — Outbound shares grouped by item
+// -------------------------------------------------------------
+router.get('/by-me', authMiddleware, async (req, res) => {
+  try {
+    const rawUserId = req.user?.id || req.user?._id || req.user?.userId;
+    if (!rawUserId || !mongoose.Types.ObjectId.isValid(String(rawUserId))) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    const shareDocs = await Share.find({ ownerId: rawUserId })
+      .sort({ createdAt: -1 })
+      .populate('recipientId', 'name email')
+      .lean();
+
+    if (shareDocs.length === 0) {
+      return res.status(200).json({ items: [], sharedItemIds: [] });
+    }
+
+    const fileIds = shareDocs.filter((s) => s.itemType === 'file').map((s) => s.itemId);
+    const folderIds = shareDocs.filter((s) => s.itemType === 'folder').map((s) => s.itemId);
+
+    const [ownedFiles, ownedFolders] = await Promise.all([
+      fileIds.length > 0
+        ? File.find(
+            buildTenantQuery(rawUserId, {
+              _id: { $in: fileIds },
+              isTrash: { $ne: true },
+              isDeleted: { $ne: true },
+              isMalicious: { $ne: true },
+              securityStatus: { $in: ['clean', 'unverified'] },
+            })
+          )
+            .select('name originalName size mimeType mimetype thumbnailKey createdAt uploadedAt updatedAt')
+            .lean()
+        : [],
+      folderIds.length > 0
+        ? Folder.find(
+            buildTenantQuery(rawUserId, {
+              _id: { $in: folderIds },
+              isTrash: { $ne: true },
+            })
+          )
+            .select('name createdAt updatedAt')
+            .lean()
+        : [],
+    ]);
+
+    const filesWithThumbs = await Promise.all(
+      ownedFiles.map(async (f) => ({
+        ...f,
+        thumbnailUrl: f.thumbnailKey ? await signDirectThumbnailUrl(f.thumbnailKey, 3600) : null,
+      }))
+    );
+
+    const fileMap = new Map(filesWithThumbs.map((f) => [String(f._id), f]));
+    const folderMap = new Map(ownedFolders.map((f) => [String(f._id), f]));
+    const groupedMap = new Map();
+
+    for (const share of shareDocs) {
+      const idStr = String(share.itemId);
+      const itemDoc = share.itemType === 'file' ? fileMap.get(idStr) : folderMap.get(idStr);
+      if (!itemDoc) continue; // Ignore shares for trashed or deleted items
+
+      const groupKey = `${share.itemType}:${idStr}`;
+      if (!groupedMap.has(groupKey)) {
+        groupedMap.set(groupKey, {
+          itemType: share.itemType,
+          item:
+            share.itemType === 'file'
+              ? {
+                  _id: String(itemDoc._id),
+                  name: itemDoc.originalName || itemDoc.name,
+                  size: itemDoc.size || 0,
+                  mimeType: itemDoc.mimeType || itemDoc.mimetype || '',
+                  thumbnailUrl: itemDoc.thumbnailUrl || null,
+                  updatedAt: itemDoc.updatedAt || itemDoc.uploadedAt || itemDoc.createdAt,
+                  createdAt: itemDoc.createdAt || itemDoc.uploadedAt,
+                }
+              : {
+                  _id: String(itemDoc._id),
+                  name: itemDoc.name,
+                  updatedAt: itemDoc.updatedAt || itemDoc.createdAt,
+                  createdAt: itemDoc.createdAt,
+                },
+          recipients: [],
+          latestSharedAt: share.createdAt,
+        });
+      }
+
+      const entry = groupedMap.get(groupKey);
+      entry.recipients.push({
+        shareId: String(share._id),
+        recipientId: share.recipientId?._id ? String(share.recipientId._id) : String(share.recipientId),
+        name: share.recipientId?.name || share.recipientEmail,
+        email: share.recipientId?.email || share.recipientEmail,
+        permission: share.permission || 'viewer',
+        sharedAt: share.createdAt,
+      });
+
+      if (share.createdAt && new Date(share.createdAt) > new Date(entry.latestSharedAt)) {
+        entry.latestSharedAt = share.createdAt;
+      }
+    }
+
+    const items = Array.from(groupedMap.values());
+    const sharedItemIds = items.map((entry) => String(entry.item._id));
+
+    return res.status(200).json({ items, sharedItemIds });
+  } catch (err) {
+    console.error('Error fetching outbound shares:', err);
+    return res.status(500).json({ error: 'Failed to load outbound shares' });
   }
 });
 

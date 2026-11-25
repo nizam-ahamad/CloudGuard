@@ -101,6 +101,7 @@ CloudGuard/
 │   │   │   ├── MoveModal.jsx             # Recursive folder destination picker
 │   │   │   ├── FileDetailsModal.jsx      # File metadata, MIME details, and audit history
 │   │   │   ├── FolderDetailsModal.jsx    # Recursive folder statistics and size calculation
+│   │   │   ├── ShareModal.jsx            # Owner email sharing, recipient list, and viewer revocation modal
 │   │   │   ├── StorageQuotaBanner.jsx    # Quota threshold warning banner
 │   │   │   ├── SubscriptionAlertBanner.jsx # Billing and expiration alerts
 │   │   │   ├── TrialBanner.jsx           # 14-day evaluation countdown banner
@@ -129,6 +130,7 @@ CloudGuard/
 │   │   ├── files.js                      # Uploads, multipart chunking, presigning, trash, and permanent purge
 │   │   ├── folders.js                    # Hierarchical directory CRUD and single-query BFS subtree lookups
 │   │   ├── photos.js                     # Media-specific presigned thumbnail and preview indexing
+│   │   ├── shares.js                     # Tenant-isolated read-only file/folder sharing and direct B2 access URLs
 │   │   ├── auth.js                       # JWT authentication, Argon2/Bcrypt hashing, and OTP verification
 │   │   ├── payments.js                   # Cashfree subscriptions, webhooks, and PDF invoice generation
 │   │   └── admin.js                      # Founder analytics, user quotas, and storage reconciliation
@@ -136,6 +138,7 @@ CloudGuard/
 │   │   ├── User.js                       # User schema, storage limits, and subscription state
 │   │   ├── File.js                       # File metadata, s3Key, thumbnailKey, and securityStatus
 │   │   ├── Folder.js                     # Recursive directory schema with unique sibling constraint
+│   │   ├── Share.js                      # Viewer share grants (ownerId, recipientId, itemType, itemId)
 │   │   └── Payment.js                    # Payment transaction and subscription history
 │   ├── middleware/
 │   │   ├── auth.js                       # Bearer JWT verification
@@ -207,3 +210,7 @@ CloudGuard/
    - `client/src/config.js` deterministically maps `API_BASE_URL` to `https://api.cloudguard.site` on all `cloudguard.site` hosts or in production builds, preventing empty-string fallbacks from breaking relative `/api/...` calls on Cloudflare Pages.
    - All client-side API requests across dashboard, photos, upload/download contexts, bin view, banners, and modals specify `withCredentials: true` (or `credentials: 'include'`) and sanitize Authorization headers so `Bearer null` / `Bearer cookie-session` is never transmitted.
    - Telemetry and quota sync routines rely on `cg_session_active` rather than raw storage tokens, maintaining live meters and banners under pure HttpOnly cookie authentication.
+14. **Tenant-Isolated Sharing & Read-Only "Shared with me" / Conditional "Shared by me":**
+   - `server/models/Share.js` and `server/routes/shares.js` implement viewer-only file/folder sharing with `buildTenantQuery` ownership checks (`POST /api/shares`, `GET /api/shares/item/:itemType/:itemId`, `GET /api/shares/by-me`), cycle-protected non-trashed ancestor traversal, and `Share.deleteMany` cleanup on permanent purge (`server/routes/files.js`).
+   - Shared file previews, downloads, subfolder thumbnails (`GET /api/shares/folder/:folderId/contents`), and outbound share thumbnails (`GET /api/shares/by-me`) receive direct Backblaze B2 presigned `GetObjectCommand` URLs via `AWS_ENDPOINT` (300s for access, 3600s for thumbnails, without `CDN_DOWNLOAD_URL` rewriting) so `cg_vault_session` single-tenant path isolation stays intact.
+   - `client/src/components/ShareModal.jsx` and `client/src/App.jsx` render owner invite/revoke controls, inline `Users` shared badges on owned **My Files** cards/rows, a conditional **Shared with me | Shared by me** segmented toggle (hidden when `0` outbound shares), a strictly read-only **Shared with me** view, and a compact zero-scroll sidebar where **Monitor** renders strictly when `isAdmin === true`.

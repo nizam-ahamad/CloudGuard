@@ -120,6 +120,12 @@
     - `POST /api/folders/ensure-tree` only falls back to the legacy per-folder loop on HTTP 404; all other errors (400, 401, 403, 500) propagate their error messages directly without fallback masking.
     - On the backend (`server/routes/folders.js`), `POST /api/folders/ensure-tree` validates segment lengths against 50 characters and catches Mongoose `ValidationError` to return a clean HTTP 400 (`{ error: 'Folder name cannot exceed 50 characters' }`) rather than 500.
     - `processFolderUpload` in `client/src/App.jsx` catches folder upload errors, extracts `err?.response?.data?.error || err?.message || 'Failed to upload folder'`, and surfaces it in user toasts, eliminating raw Axios status code errors (`Request failed with status code 400`).
+19. **Tenant-Isolated Sharing (`Share`) & Read-Only "Shared with me" / Outbound "Shared by me" UX:**
+    - `server/models/Share.js` tracks read-only (`permission: 'viewer'`) shares with a unique compound index `{ ownerId, recipientId, itemType, itemId }`.
+    - `server/routes/shares.js` (mounted at `/api/shares` in `server/server.js`) enforces ownership via `buildTenantQuery` on `POST /api/shares`, `GET /api/shares/item/:itemType/:itemId`, and `GET /api/shares/by-me` (which returns active, non-trashed outbound shared items grouped with recipients plus `sharedItemIds`), owner-or-recipient checks on `DELETE /api/shares/:shareId`, and non-trashed recursive ancestor checks (`isTrash: { $ne: true }` at every level with cycle guard) on `GET /api/shares/with-me`, `GET /api/shares/folder/:folderId/contents`, and `GET /api/shares/file/:fileId/access`.
+    - Shared file previews, downloads, subfolder thumbnails (`GET /api/shares/folder/:folderId/contents`), and outbound share thumbnails (`GET /api/shares/by-me`) issue direct Backblaze B2 presigned `GetObjectCommand` URLs via `AWS_ENDPOINT` (300s for access, 3600s for thumbnails, without rewriting to `CDN_DOWNLOAD_URL`) so `cg_vault_session` single-tenant path isolation remains intact.
+    - Permanent file and folder purges in `server/routes/files.js` remove orphaned `Share` documents via `Share.deleteMany`.
+    - `client/src/components/ShareModal.jsx` and `client/src/App.jsx` implement email invite/revoke controls, inline `Users` shared badges on owned items in **My Files**, a conditional **Shared with me | Shared by me** segmented toggle (hidden when `sharedByMeItems.length === 0`), and a strictly read-only **Shared with me** browser inside a compact zero-scroll sidebar where **Monitor** renders strictly when `isAdmin === true`.
 
 ---
 
