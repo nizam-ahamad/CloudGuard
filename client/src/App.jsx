@@ -3741,113 +3741,145 @@ function App() {
         </div>
       )}
       {/* SideNavBar */}
-      <nav className={`bg-slate-50 dark:bg-[#1e1f20] h-screen ${isCollapsed ? 'w-20' : 'w-64'} fixed left-0 top-0 border-r border-slate-200 dark:border-zinc-800 flex flex-col py-3 z-50 transform transition-all duration-300 ease-in-out overflow-x-hidden md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-        <div 
-          onClick={handleNavigateHomeRoot}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              handleNavigateHomeRoot(e);
-            }
-          }}
-          role="button"
-          tabIndex={0}
-          className={`w-full py-2 mb-2 flex items-center justify-center cursor-pointer select-none shrink-0 ${isCollapsed ? 'px-2 gap-0' : 'px-3 gap-2.5'}`}
-        >
-          <div className="flex justify-center items-center shrink-0">
-            <CloudGuardLogo className="h-9 w-auto flex-shrink-0" />
+      <aside className={`bg-slate-50 dark:bg-[#1e1f20] h-screen ${isCollapsed ? 'w-[72px]' : 'w-64'} fixed left-0 top-0 border-r border-slate-200 dark:border-zinc-800 flex flex-col shrink-0 overflow-hidden pb-3 z-50 transform transition-[width,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[width] md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+        {/* Fixed Single-Row Sidebar Header (h-16 locked in both states) */}
+        <div className="h-16 px-3 mb-1 flex items-center justify-between shrink-0 relative">
+          <div
+            onClick={handleNavigateHomeRoot}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                handleNavigateHomeRoot(e);
+              }
+            }}
+            role="button"
+            tabIndex={0}
+            title="CloudGuard Home"
+            className={`flex items-center min-w-0 cursor-pointer select-none transition-opacity duration-200 ${
+              isCollapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'
+            }`}
+          >
+            <div className="w-10 h-10 flex justify-center items-center shrink-0">
+              <CloudGuardLogo className="h-9 w-auto shrink-0" />
+            </div>
+            <h1
+              className={`font-headline-md text-xl font-bold text-primary dark:text-[#e3e3e3] whitespace-nowrap overflow-hidden transition-[max-width,opacity,transform,margin] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                isCollapsed
+                  ? 'max-w-0 opacity-0 -translate-x-1 ml-0 pointer-events-none'
+                  : 'max-w-[140px] opacity-100 translate-x-0 ml-2'
+              }`}
+            >
+              CloudGuard
+            </h1>
           </div>
-          <div className={`overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-auto opacity-100'}`}>
-            <h1 className="font-headline-md text-xl font-bold text-primary dark:text-[#e3e3e3]">CloudGuard</h1>
-          </div>
+
+          <button
+            type="button"
+            onClick={() => setIsCollapsed(true)}
+            title="Collapse sidebar (Ctrl+B)"
+            aria-label="Collapse sidebar"
+            className={`hidden md:flex items-center justify-center w-8 h-8 rounded-lg text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface dark:hover:text-white hover:bg-surface-container-high dark:hover:bg-white/5 transition-opacity duration-200 cursor-pointer shrink-0 ${
+              isCollapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'
+            }`}
+          >
+            <span className="material-symbols-outlined w-4 h-4 !text-[18px] inline-flex items-center justify-center leading-none">
+              view_sidebar
+            </span>
+          </button>
+
+          {/* Centered Expand Button in Collapsed Mode (exact same h-16 box, zero vertical jump) */}
+          <button
+            type="button"
+            onClick={() => setIsCollapsed(false)}
+            title="Expand sidebar (Ctrl+B)"
+            aria-label="Expand sidebar"
+            className={`hidden md:flex absolute inset-0 m-auto items-center justify-center w-10 h-10 rounded-xl text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface dark:hover:text-white hover:bg-surface-container-high dark:hover:bg-white/5 transition-opacity duration-200 cursor-pointer ${
+              isCollapsed ? 'opacity-100' : 'opacity-0 pointer-events-none'
+            }`}
+          >
+            <span className="material-symbols-outlined w-4 h-4 !text-[18px] inline-flex items-center justify-center leading-none rotate-180">
+              view_sidebar
+            </span>
+          </button>
         </div>
+
         {/* Main Navigation */}
-        <div className="flex-1 px-3 space-y-0.5">
+        <nav className="flex-1 px-3 space-y-0.5">
           <button 
             type="button"
             onClick={() => handleNavClick('files')}
-            className={`group relative w-full flex items-center min-h-[36px] py-1.5 rounded-full font-semibold cursor-pointer active:opacity-80 transition-colors duration-200 text-left ${isCollapsed ? 'justify-center px-0 gap-0' : 'px-3 gap-2.5'} ${isFilesActive ? 'text-secondary bg-surface-container-low dark:bg-[#282a2c] dark:text-[#e3e3e3]' : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'}`}
+            title={isCollapsed ? 'My Files' : undefined}
+            className={`group relative w-full h-10 flex items-center px-3.5 rounded-full font-semibold cursor-pointer active:opacity-80 transition-colors duration-200 text-left ${isFilesActive ? 'text-secondary bg-surface-container-low dark:bg-[#282a2c] dark:text-[#e3e3e3]' : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'}`}
           >
-            <span className="material-symbols-outlined w-4 h-4 !text-[17px] inline-flex items-center justify-center leading-none shrink-0" data-weight={isFilesActive ? "fill" : ""}>folder_open</span>
-            <span className={`font-semibold text-[13px] sm:text-sm overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-auto opacity-100'}`}>My Files</span>
-            {isCollapsed && (
-              <div className="absolute left-full ml-4 px-3 py-1 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-800 dark:text-[#e3e3e3] text-xs rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
-                My Files
-              </div>
-            )}
+            <span className="w-5 h-5 shrink-0 flex items-center justify-center">
+              <span className="material-symbols-outlined w-4 h-4 !text-[17px] inline-flex items-center justify-center leading-none shrink-0" data-weight={isFilesActive ? "fill" : ""}>folder_open</span>
+            </span>
+            <span className={`font-semibold text-[13px] sm:text-sm whitespace-nowrap overflow-hidden transition-[max-width,opacity,transform,margin] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${isCollapsed ? 'max-w-0 opacity-0 -translate-x-1 ml-0 pointer-events-none' : 'max-w-[160px] opacity-100 translate-x-0 ml-3'}`}>My Files</span>
           </button>
 
           <button 
             type="button"
             onClick={() => handleNavClick('photos')}
-            className={`group relative w-full flex items-center min-h-[36px] py-1.5 rounded-full font-semibold cursor-pointer active:opacity-80 transition-colors duration-200 text-left ${isCollapsed ? 'justify-center px-0 gap-0' : 'px-3 gap-2.5'} ${
+            title={isCollapsed ? 'Photos' : undefined}
+            className={`group relative w-full h-10 flex items-center px-3.5 rounded-full font-semibold cursor-pointer active:opacity-80 transition-colors duration-200 text-left ${
               isPhotosActive
                 ? 'text-secondary bg-surface-container-low dark:bg-[#282a2c] dark:text-[#e3e3e3]'
                 : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'
             }`}
           >
-            <span className="material-symbols-outlined w-4 h-4 !text-[17px] inline-flex items-center justify-center leading-none shrink-0" data-weight={isPhotosActive ? "fill" : ""}>photo_library</span>
-            <span className={`font-semibold text-[13px] sm:text-sm overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-auto opacity-100'}`}>Photos</span>
-            {isCollapsed && (
-              <div className="absolute left-full ml-4 px-3 py-1 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-800 dark:text-[#e3e3e3] text-xs rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
-                Photos
-              </div>
-            )}
+            <span className="w-5 h-5 shrink-0 flex items-center justify-center">
+              <span className="material-symbols-outlined w-4 h-4 !text-[17px] inline-flex items-center justify-center leading-none shrink-0" data-weight={isPhotosActive ? "fill" : ""}>photo_library</span>
+            </span>
+            <span className={`font-semibold text-[13px] sm:text-sm whitespace-nowrap overflow-hidden transition-[max-width,opacity,transform,margin] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${isCollapsed ? 'max-w-0 opacity-0 -translate-x-1 ml-0 pointer-events-none' : 'max-w-[160px] opacity-100 translate-x-0 ml-3'}`}>Photos</span>
           </button>
 
           <button
             type="button"
             onClick={() => handleNavClick('shared')}
-            className={`group relative w-full flex items-center min-h-[36px] py-1.5 rounded-full font-semibold cursor-pointer active:opacity-80 transition-colors duration-200 text-left ${isCollapsed ? 'justify-center px-0 gap-0' : 'px-3 gap-2.5'} ${
+            title={isCollapsed ? 'Shared with me' : undefined}
+            className={`group relative w-full h-10 flex items-center px-3.5 rounded-full font-semibold cursor-pointer active:opacity-80 transition-colors duration-200 text-left ${
               isSharedActive
                 ? 'text-secondary bg-surface-container-low dark:bg-[#282a2c] dark:text-[#e3e3e3]'
                 : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'
             }`}
           >
-            <Users className="w-4 h-4 shrink-0" />
-            <span className={`font-semibold text-[13px] sm:text-sm overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-auto opacity-100'}`}>Shared with me</span>
-            {isCollapsed && (
-              <div className="absolute left-full ml-4 px-3 py-1 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-800 dark:text-[#e3e3e3] text-xs rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
-                Shared with me
-              </div>
-            )}
+            <span className="w-5 h-5 shrink-0 flex items-center justify-center">
+              <Users className="w-4 h-4 shrink-0" />
+            </span>
+            <span className={`font-semibold text-[13px] sm:text-sm whitespace-nowrap overflow-hidden transition-[max-width,opacity,transform,margin] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${isCollapsed ? 'max-w-0 opacity-0 -translate-x-1 ml-0 pointer-events-none' : 'max-w-[160px] opacity-100 translate-x-0 ml-3'}`}>Shared with me</span>
           </button>
           
           <button 
             type="button"
             onClick={() => handleNavClick('recent')}
-            className={`group relative w-full flex items-center min-h-[36px] py-1.5 rounded-full font-semibold cursor-pointer active:opacity-80 transition-colors duration-200 text-left ${isCollapsed ? 'justify-center px-0 gap-0' : 'px-3 gap-2.5'} ${isRecentActive ? 'text-secondary bg-surface-container-low dark:bg-[#282a2c] dark:text-[#e3e3e3]' : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'}`}
+            title={isCollapsed ? 'Recent' : undefined}
+            className={`group relative w-full h-10 flex items-center px-3.5 rounded-full font-semibold cursor-pointer active:opacity-80 transition-colors duration-200 text-left ${isRecentActive ? 'text-secondary bg-surface-container-low dark:bg-[#282a2c] dark:text-[#e3e3e3]' : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'}`}
           >
-            <span className="material-symbols-outlined w-4 h-4 !text-[17px] inline-flex items-center justify-center leading-none shrink-0" data-weight={isRecentActive ? "fill" : ""}>history</span>
-            <span className={`font-semibold text-[13px] sm:text-sm overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-auto opacity-100'}`}>Recent</span>
-            {isCollapsed && (
-              <div className="absolute left-full ml-4 px-3 py-1 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-800 dark:text-[#e3e3e3] text-xs rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
-                Recent
-              </div>
-            )}
+            <span className="w-5 h-5 shrink-0 flex items-center justify-center">
+              <span className="material-symbols-outlined w-4 h-4 !text-[17px] inline-flex items-center justify-center leading-none shrink-0" data-weight={isRecentActive ? "fill" : ""}>history</span>
+            </span>
+            <span className={`font-semibold text-[13px] sm:text-sm whitespace-nowrap overflow-hidden transition-[max-width,opacity,transform,margin] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${isCollapsed ? 'max-w-0 opacity-0 -translate-x-1 ml-0 pointer-events-none' : 'max-w-[160px] opacity-100 translate-x-0 ml-3'}`}>Recent</span>
           </button>
 
           <button 
             type="button"
             onClick={() => handleNavClick('bin')}
-            className={`group relative w-full flex items-center min-h-[36px] py-1.5 rounded-full font-semibold cursor-pointer active:opacity-80 transition-colors duration-200 text-left ${isCollapsed ? 'justify-center px-0 gap-0' : 'px-3 gap-2.5'} ${
+            title={isCollapsed ? 'Bin' : undefined}
+            className={`group relative w-full h-10 flex items-center px-3.5 rounded-full font-semibold cursor-pointer active:opacity-80 transition-colors duration-200 text-left ${
               isBinActive
                 ? 'text-secondary bg-surface-container-low dark:bg-[#282a2c] dark:text-[#e3e3e3]'
                 : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'
             }`}
           >
-            <span className="material-symbols-outlined w-4 h-4 !text-[17px] inline-flex items-center justify-center leading-none shrink-0" data-weight={isBinActive ? "fill" : ""}>delete</span>
-            <span className={`font-semibold text-[13px] sm:text-sm overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-auto opacity-100'}`}>Bin</span>
-            {isCollapsed && (
-              <div className="absolute left-full ml-4 px-3 py-1 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-800 dark:text-[#e3e3e3] text-xs rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
-                Bin
-              </div>
-            )}
+            <span className="w-5 h-5 shrink-0 flex items-center justify-center">
+              <span className="material-symbols-outlined w-4 h-4 !text-[17px] inline-flex items-center justify-center leading-none shrink-0" data-weight={isBinActive ? "fill" : ""}>delete</span>
+            </span>
+            <span className={`font-semibold text-[13px] sm:text-sm whitespace-nowrap overflow-hidden transition-[max-width,opacity,transform,margin] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${isCollapsed ? 'max-w-0 opacity-0 -translate-x-1 ml-0 pointer-events-none' : 'max-w-[160px] opacity-100 translate-x-0 ml-3'}`}>Bin</span>
           </button>
-        </div>
+        </nav>
 
         {/* Persistent Sidebar Upgrade Card (Free/Trial & Vault Plan) */}
-        <div className="my-1.5 shrink-0 [&>a]:!my-0 [&>a]:!py-2 [&>a]:!h-auto [&>a]:min-h-[36px]">
+        <div className="my-1.5 shrink-0 [&>a]:!mx-3 [&>a]:!my-0 [&>a]:!h-10 [&>a>div:first-child]:!min-w-[3rem] [&>a>div:first-child]:!w-12">
           <SidebarUpgradeCard user={user} isCollapsed={isCollapsed} />
         </div>
 
@@ -3860,15 +3892,13 @@ function App() {
                 setIsSidebarOpen(false); 
                 navigate('/monitor');
               }}
-              className={`group relative w-full flex items-center min-h-[36px] py-1.5 rounded-full font-semibold cursor-pointer active:opacity-80 transition-colors duration-200 text-left ${isCollapsed ? 'justify-center px-0 gap-0' : 'px-3 gap-2.5'} ${location.pathname === '/monitor' ? 'bg-surface-container-low dark:bg-[#282a2c] text-neutral-900 dark:text-white' : 'text-neutral-500 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800/60 hover:text-neutral-900 dark:hover:text-white'}`}
+              title={isCollapsed ? 'Monitor' : undefined}
+              className={`group relative w-full h-10 flex items-center px-3.5 rounded-full font-semibold cursor-pointer active:opacity-80 transition-colors duration-200 text-left ${location.pathname === '/monitor' ? 'bg-surface-container-low dark:bg-[#282a2c] text-neutral-900 dark:text-white' : 'text-neutral-500 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800/60 hover:text-neutral-900 dark:hover:text-white'}`}
             >
-              <span className="material-symbols-outlined w-4 h-4 !text-[17px] inline-flex items-center justify-center leading-none shrink-0" data-weight={location.pathname === '/monitor' ? "fill" : ""}>monitoring</span>
-              <span className={`font-semibold text-[13px] sm:text-sm overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-auto opacity-100'}`}>Monitor</span>
-              {isCollapsed && (
-                <div className="absolute left-full ml-4 px-3 py-1 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-800 dark:text-[#e3e3e3] text-xs rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
-                  Monitor
-                </div>
-              )}
+              <span className="w-5 h-5 shrink-0 flex items-center justify-center">
+                <span className="material-symbols-outlined w-4 h-4 !text-[17px] inline-flex items-center justify-center leading-none shrink-0" data-weight={location.pathname === '/monitor' ? "fill" : ""}>monitoring</span>
+              </span>
+              <span className={`font-semibold text-[13px] sm:text-sm whitespace-nowrap overflow-hidden transition-[max-width,opacity,transform,margin] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${isCollapsed ? 'max-w-0 opacity-0 -translate-x-1 ml-0 pointer-events-none' : 'max-w-[160px] opacity-100 translate-x-0 ml-3'}`}>Monitor</span>
             </button>
           )}
           <button 
@@ -3878,33 +3908,19 @@ function App() {
               setIsSidebarOpen(false); 
               navigate('/dashboard?view=settings');
             }}
-            className={`group relative w-full flex items-center min-h-[36px] py-1.5 rounded-full font-semibold cursor-pointer active:opacity-80 transition-colors duration-200 text-left ${isCollapsed ? 'justify-center px-0 gap-0' : 'px-3 gap-2.5'} ${isSettingsOpen ? 'bg-surface-container-low dark:bg-[#282a2c] text-neutral-900 dark:text-white' : 'text-neutral-500 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800/60 hover:text-neutral-900 dark:hover:text-white'}`}
+            title={isCollapsed ? 'Settings' : undefined}
+            className={`group relative w-full h-10 flex items-center px-3.5 rounded-full font-semibold cursor-pointer active:opacity-80 transition-colors duration-200 text-left ${isSettingsOpen ? 'bg-surface-container-low dark:bg-[#282a2c] text-neutral-900 dark:text-white' : 'text-neutral-500 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800/60 hover:text-neutral-900 dark:hover:text-white'}`}
           >
-            <span className="material-symbols-outlined w-4 h-4 !text-[17px] inline-flex items-center justify-center leading-none shrink-0" data-weight={isSettingsOpen ? "fill" : ""}>settings</span>
-            <span className={`font-semibold text-[13px] sm:text-sm overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-auto opacity-100'}`}>Settings</span>
-            {isCollapsed && (
-              <div className="absolute left-full ml-4 px-3 py-1 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-800 dark:text-[#e3e3e3] text-xs rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
-                Settings
-              </div>
-            )}
-          </button>
-          
-          <button 
-            onClick={() => setIsCollapsed(!isCollapsed)}
-            className="hidden md:flex group relative w-full items-center justify-center min-h-[36px] py-1.5 text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface dark:hover:text-white hover:bg-surface-container-high dark:hover:bg-white/5 rounded-xl transition-colors"
-          >
-            <span className="material-symbols-outlined w-4 h-4 !text-[18px] inline-flex items-center justify-center leading-none transition-transform duration-300" style={{ transform: isCollapsed ? 'rotate(180deg)' : 'rotate(0deg)' }}>
-              view_sidebar
+            <span className="w-5 h-5 shrink-0 flex items-center justify-center">
+              <span className="material-symbols-outlined w-4 h-4 !text-[17px] inline-flex items-center justify-center leading-none shrink-0" data-weight={isSettingsOpen ? "fill" : ""}>settings</span>
             </span>
-            <div className="absolute left-full ml-4 px-3 py-1 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-800 dark:text-[#e3e3e3] text-xs rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
-              Toggle Sidebar (Ctrl+B)
-            </div>
+            <span className={`font-semibold text-[13px] sm:text-sm whitespace-nowrap overflow-hidden transition-[max-width,opacity,transform,margin] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${isCollapsed ? 'max-w-0 opacity-0 -translate-x-1 ml-0 pointer-events-none' : 'max-w-[160px] opacity-100 translate-x-0 ml-3'}`}>Settings</span>
           </button>
         </div>
-      </nav>
+      </aside>
 
       {/* TopAppBar */}
-      <header className={`fixed top-0 right-0 w-full z-30 transition-all duration-300 ease-in-out select-none ${isCollapsed ? 'md:w-[calc(100%-80px)]' : 'md:w-[calc(100%-256px)]'}`}>
+      <header className={`fixed top-0 right-0 w-full z-30 transition-[width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] select-none ${isCollapsed ? 'md:w-[calc(100%-72px)]' : 'md:w-[calc(100%-256px)]'}`}>
         <div className="bg-white/95 dark:bg-neutral-950/95 backdrop-blur-md h-16 border-b border-neutral-200/80 dark:border-neutral-800/80 flex justify-between items-center px-2.5 sm:px-6">
           {/* 1. Left: Hamburger & Brand Title */}
           <div className="flex items-center gap-1.5 sm:gap-3 min-w-0 shrink-0">
@@ -4068,7 +4084,7 @@ function App() {
       {/* Main Content Canvas */}
       <main 
         onClick={() => { setShowProfileMenu(false); setIsSidebarOpen(false); setActiveMenuId(null); setActiveFolderMenuId(null); setActiveSharedMenuId(null); }} 
-        className={`pt-24 pb-28 px-margin-mobile md:px-margin-desktop max-w-container-max mx-auto w-full min-h-screen bg-white dark:bg-[#131314] transition-all duration-300 ease-in-out ${isCollapsed ? 'md:ml-20' : 'md:ml-64'}`}
+        className={`pt-24 pb-28 px-margin-mobile md:px-margin-desktop max-w-container-max mx-auto w-full min-h-screen bg-white dark:bg-[#131314] transition-[margin,padding] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${isCollapsed ? 'md:ml-[72px]' : 'md:ml-64'}`}
       >
         <TrialBanner user={user} />
         <SubscriptionAlertBanner />
