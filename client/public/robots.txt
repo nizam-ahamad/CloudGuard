@@ -1,7 +1,141 @@
-User-agent: *
+# CloudGuard Vault - Robots & AI Crawler Policy
+# Canonical Public URLs:
+#   https://cloudguard.site/
+#   https://cloudguard.site/pricing
+#   https://cloudguard.site/login
+#   https://cloudguard.site/terms
+#   https://cloudguard.site/privacy
+#   https://cloudguard.site/refund-policy
+
+# Google Search & Gemini
+User-agent: Googlebot
+Allow: /
+Allow: /pricing
+Allow: /login
+Allow: /terms
+Allow: /privacy
+Allow: /refund-policy
+Disallow: /dashboard
+Disallow: /monitor
+Disallow: /api
+
+User-agent: Google-Extended
 Allow: /
 Disallow: /dashboard
-Disallow: /api/
+Disallow: /monitor
+Disallow: /api
+
+User-agent: GoogleOther
+Allow: /
+Disallow: /dashboard
+Disallow: /monitor
+Disallow: /api
+
+# OpenAI / ChatGPT
+User-agent: GPTBot
+Allow: /
+Disallow: /dashboard
+Disallow: /monitor
+Disallow: /api
+
+User-agent: OAI-SearchBot
+Allow: /
+Disallow: /dashboard
+Disallow: /monitor
+Disallow: /api
+
+User-agent: ChatGPT-User
+Allow: /
+Disallow: /dashboard
+Disallow: /monitor
+Disallow: /api
+
+# Anthropic / Claude
+User-agent: ClaudeBot
+Allow: /
+Disallow: /dashboard
+Disallow: /monitor
+Disallow: /api
+
+User-agent: Claude-SearchBot
+Allow: /
+Disallow: /dashboard
+Disallow: /monitor
+Disallow: /api
+
+User-agent: Claude-User
+Allow: /
+Disallow: /dashboard
+Disallow: /monitor
+Disallow: /api
+
+User-agent: anthropic-ai
+Allow: /
+Disallow: /dashboard
+Disallow: /monitor
+Disallow: /api
+
+# DeepSeek
+User-agent: DeepSeekBot
+Allow: /
+Disallow: /dashboard
+Disallow: /monitor
+Disallow: /api
+
+# xAI / Grok
+User-agent: xAI-Bot
+Allow: /
+Disallow: /dashboard
+Disallow: /monitor
+Disallow: /api
+
+User-agent: Grok
+Allow: /
+Disallow: /dashboard
+Disallow: /monitor
+Disallow: /api
+
+# Perplexity, Meta AI & Bing
+User-agent: PerplexityBot
+Allow: /
+Disallow: /dashboard
+Disallow: /monitor
+Disallow: /api
+
+User-agent: Perplexity-User
+Allow: /
+Disallow: /dashboard
+Disallow: /monitor
+Disallow: /api
+
+User-agent: meta-externalagent
+Allow: /
+Disallow: /dashboard
+Disallow: /monitor
+Disallow: /api
+
+User-agent: meta-externalfetcher
+Allow: /
+Disallow: /dashboard
+Disallow: /monitor
+Disallow: /api
+
+User-agent: Bingbot
+Allow: /
+Disallow: /dashboard
+Disallow: /monitor
+Disallow: /api
+
+# Default rule for all other search & AI crawlers
+User-agent: *
+Allow: /
+Allow: /pricing
+Allow: /login
+Allow: /terms
+Allow: /privacy
+Allow: /refund-policy
+Disallow: /dashboard
+Disallow: /monitor
+Disallow: /api
 
 Sitemap: https://cloudguard.site/sitemap.xml
-
