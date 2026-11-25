@@ -3672,12 +3672,12 @@ function App() {
           }}
           role="button"
           tabIndex={0}
-          className={`py-2 mb-2 flex items-center cursor-pointer select-none shrink-0 ${isCollapsed ? 'justify-center px-2 gap-0' : 'px-3 gap-2.5'}`}
+          className={`w-full py-2 mb-2 flex items-center justify-center cursor-pointer select-none shrink-0 ${isCollapsed ? 'px-2 gap-0' : 'px-3 gap-2.5'}`}
         >
           <div className="flex justify-center items-center shrink-0">
             <CloudGuardLogo className="h-9 w-auto flex-shrink-0" />
           </div>
-          <div className={`overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-40 opacity-100'}`}>
+          <div className={`overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-auto opacity-100'}`}>
             <h1 className="font-headline-md text-xl font-bold text-primary dark:text-[#e3e3e3]">CloudGuard</h1>
           </div>
         </div>
