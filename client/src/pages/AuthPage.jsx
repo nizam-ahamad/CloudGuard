@@ -715,9 +715,9 @@ export default function AuthPage() {
           <SharkLogo className="w-14 h-14 sm:w-16 sm:h-16 shrink-0 transition-transform group-hover:scale-105" />
 
           {/* Restored Brand Title */}
-          <span className="text-2xl font-bold tracking-tight text-white group-hover:text-neutral-200 transition-colors">
+          <h1 className="text-2xl font-bold tracking-tight text-white group-hover:text-neutral-200 transition-colors">
             CloudGuard
-          </span>
+          </h1>
         </Link>
 
         {/* View Mode Router */}

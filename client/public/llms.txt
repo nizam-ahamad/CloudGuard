@@ -1,0 +1,27 @@
+# CloudGuard (CloudGuard Vault)
+
+> Zero-trust personal cloud storage vault with real-time pre-commit AI malware inspection — https://cloudguard.site
+
+## Core Value
+CloudGuard Vault secures personal and professional files with direct browser-to-object uploads, automated 3-gate pre-commit threat scanning, AES-256 encryption at rest, and zero-egress CDN delivery:
+- **Client-Side SHA-256 Hashing:** Files are fingerprinted in the browser before upload finalization.
+- **Abuse.ch MalwareBazaar Verification:** Known malware hashes are intercepted and purged automatically.
+- **Stream-Safe PE Header Machine Learning:** Portable Executable binaries (<= 512 MB) are analyzed via FastAPI Random Forest models without writing threats to active vault quotas.
+- **Zero-Egress Previews & Encrypted Storage:** Instant in-browser streaming video, WASM HEIC/HEIF decoding, client-side PDF page-1 thumbnails, and `.docx` previews served with `$0/GB` egress via Cloudflare Edge (`files.cloudguard.site`) backed by Backblaze B2.
+
+## Public Pages & Pricing
+- **Home:** https://cloudguard.site/
+- **Pricing & Plans:** https://cloudguard.site/pricing
+  - **Evaluation Trial:** 14-day 5 GB free evaluation trial (no credit card required).
+  - **Essential Vault (50 GB):** ₹49/month or ₹499/year
+  - **Pro Vault (100 GB):** ₹99/month or ₹999/year
+  - **Ultra Vault (200 GB):** ₹189/month or ₹1,899/year
+- **Sign In / Sign Up:** https://cloudguard.site/login
+- **Privacy Policy (DPDP Act Compliant):** https://cloudguard.site/privacy
+- **Terms of Service:** https://cloudguard.site/terms
+- **Refund Policy:** https://cloudguard.site/refund-policy
+- **Contact & Grievance Desk:** https://cloudguard.site/contact
+
+## Support & Governance
+- **Technical Support:** support@cloudguard.site
+- **Privacy & DPDP Grievance Officer:** privacy@cloudguard.site
