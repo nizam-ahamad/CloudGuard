@@ -534,7 +534,13 @@ function UnifiedFilePreviewModalInner({ previewFile, previewUrl, previewText, cl
   const isVideo = Boolean(
     previewFile.mimeType?.startsWith('video/') ||
     previewFile.mimetype?.startsWith('video/') ||
-    ['mp4', 'webm', 'ogg', 'mov', 'mkv', 'avi', 'm4v', '3gp'].includes(fileExt)
+    ['mp4', 'webm', 'ogg', 'mov', 'mkv', 'avi', 'flv', 'wmv', 'm4v', '3gp'].includes(fileExt)
+  );
+  const isMobileOrTouch = typeof window !== 'undefined' && (window.innerWidth < 768 || navigator.maxTouchPoints > 0 || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent));
+  const isUnsupportedMobileVideo = isVideo && isMobileOrTouch && (
+    /\.(mkv|avi|flv|wmv)$/i.test(previewFile.originalName || previewFile.name || '') ||
+    previewFile.mimeType === 'video/x-matroska' ||
+    previewFile.mimetype === 'video/x-matroska'
   );
   const isImage = Boolean(
     previewFile.mimeType?.startsWith('image/') ||
@@ -570,7 +576,7 @@ function UnifiedFilePreviewModalInner({ previewFile, previewUrl, previewText, cl
   }, [previewFile?._id || previewFile?.id, targetUrl]);
 
   useEffect(() => {
-    if (!isVideo || !targetUrl) return undefined;
+    if (!isVideo || !targetUrl || isUnsupportedMobileVideo) return undefined;
 
     hasBufferedVideoFrameRef.current = false;
     const videoEl = videoRef.current;
@@ -579,7 +585,7 @@ function UnifiedFilePreviewModalInner({ previewFile, previewUrl, previewText, cl
         setMediaLoaded(true);
         setVideoError(true);
       }
-    }, 12000);
+    }, 15000);
 
     return () => {
       clearTimeout(timeoutId);
@@ -591,7 +597,7 @@ function UnifiedFilePreviewModalInner({ previewFile, previewUrl, previewText, cl
         } catch (_) {}
       }
     };
-  }, [isVideo, targetUrl]);
+  }, [isVideo, targetUrl, isUnsupportedMobileVideo]);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -675,7 +681,27 @@ function UnifiedFilePreviewModalInner({ previewFile, previewUrl, previewText, cl
 
           {isVideo ? (
             <div className="relative z-10 flex items-center justify-center w-full h-full max-h-[75vh]">
-              {videoError ? (
+              {isUnsupportedMobileVideo ? (
+                <div className="relative z-10 max-w-sm w-full mx-auto rounded-2xl bg-neutral-900/80 backdrop-blur-xl border border-white/15 p-6 text-center shadow-2xl flex flex-col items-center gap-3">
+                  <span className="material-symbols-outlined text-4xl text-amber-400">videocam_off</span>
+                  <p className="text-sm font-semibold text-white">
+                    MKV format isn&apos;t supported for inline mobile playback
+                  </p>
+                  <p className="text-xs text-neutral-300 leading-relaxed">
+                    Mobile browsers only stream MP4, MOV, and WebM natively. Download the file to play it in VLC or your device&apos;s media player.
+                  </p>
+                  {typeof handleDownload === 'function' && (
+                    <button
+                      type="button"
+                      onClick={() => handleDownload(previewFile)}
+                      className="mt-1 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-colors cursor-pointer"
+                    >
+                      <Download className="w-4 h-4" />
+                      <span>Download Video</span>
+                    </button>
+                  )}
+                </div>
+              ) : videoError ? (
                 <div className="relative z-10 max-w-sm w-full mx-auto rounded-2xl bg-neutral-900/80 backdrop-blur-xl border border-white/15 p-6 text-center shadow-2xl flex flex-col items-center gap-3">
                   <span className="material-symbols-outlined text-4xl text-amber-400">videocam_off</span>
                   <p className="text-sm font-medium text-white">
@@ -693,15 +719,8 @@ function UnifiedFilePreviewModalInner({ previewFile, previewUrl, previewText, cl
                   )}
                 </div>
               ) : (
-                <>
-                  {!mediaLoaded && (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center text-white gap-2 pointer-events-none z-20">
-                      <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-                      <span className="text-xs font-medium">Loading video...</span>
-                    </div>
-                  )}
-
-                  {targetUrl && (
+                <div className="relative flex items-center justify-center w-full h-full">
+                  {targetUrl ? (
                     <video
                       ref={videoRef}
                       src={targetUrl}
@@ -710,6 +729,11 @@ function UnifiedFilePreviewModalInner({ previewFile, previewUrl, previewText, cl
                       playsInline
                       preload="metadata"
                       crossOrigin={typeof targetUrl === 'string' && (targetUrl.startsWith('https://files.cloudguard.site') || targetUrl.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
+                      onLoadedMetadata={() => {
+                        hasBufferedVideoFrameRef.current = true;
+                        setMediaLoaded(true);
+                        setVideoError(false);
+                      }}
                       onLoadedData={(e) => {
                         hasBufferedVideoFrameRef.current = true;
                         setMediaLoaded(true);
@@ -731,14 +755,26 @@ function UnifiedFilePreviewModalInner({ previewFile, previewUrl, previewText, cl
                         setMediaLoaded(true);
                         setVideoError(true);
                       }}
-                      className={`max-h-[75vh] w-auto max-w-full rounded-lg shadow-2xl bg-black relative z-10 transition-opacity duration-300 ${
-                        mediaLoaded ? 'opacity-100' : 'opacity-0'
-                      }`}
+                      className="max-h-[75vh] w-auto max-w-full rounded-lg shadow-2xl bg-black relative z-10"
                     >
                       Your browser does not support the video tag.
                     </video>
+                  ) : displayThumbnail ? (
+                    <img
+                      src={displayThumbnail}
+                      alt={previewFile.name}
+                      crossOrigin={typeof displayThumbnail === 'string' && (displayThumbnail.startsWith('https://files.cloudguard.site') || displayThumbnail.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
+                      className="max-h-[75vh] w-auto max-w-full rounded-lg shadow-2xl object-contain bg-black relative z-10"
+                    />
+                  ) : null}
+
+                  {!mediaLoaded && (
+                    <div className="pointer-events-none absolute bottom-14 left-1/2 -translate-x-1/2 z-20 inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/75 backdrop-blur-md border border-white/15 text-white text-xs font-medium shadow-lg">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-400" />
+                      <span>Buffering stream...</span>
+                    </div>
                   )}
-                </>
+                </div>
               )}
             </div>
           ) : isHeic ? (
@@ -1122,6 +1158,7 @@ function App() {
   const [previewText, setPreviewText] = useState("");
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const previewRequestIdRef = useRef(0);
+  const previewUrlCacheRef = useRef(new Map());
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -3315,22 +3352,47 @@ function App() {
     }
   };
 
+  const PREVIEW_URL_CACHE_TTL_MS = 20 * 60 * 1000;
+
+  const getCachedPreviewUrl = useCallback((fileId) => {
+    if (!fileId) return null;
+    const idStr = String(fileId);
+    const entry = previewUrlCacheRef.current.get(idStr);
+    if (entry && entry.expiresAt > Date.now()) {
+      return entry.url;
+    }
+    if (entry) {
+      previewUrlCacheRef.current.delete(idStr);
+    }
+    return getCachedFileAccessUrl(idStr) || getCachedAccessUrl(idStr);
+  }, []);
+
+  const cachePreviewUrl = useCallback((fileId, url) => {
+    if (!fileId || !url) return;
+    const idStr = String(fileId);
+    previewUrlCacheRef.current.set(idStr, {
+      url,
+      expiresAt: Date.now() + PREVIEW_URL_CACHE_TTL_MS,
+    });
+    setCachedFileAccessUrl(idStr, url);
+  }, []);
+
   const prefetchFileAccessUrl = useCallback(async (file) => {
     if (!file || file.isFolder) return;
     const fileId = file._id || file.id;
     if (!fileId) return;
     const idStr = String(fileId);
-    if (getCachedFileAccessUrl(idStr) || getCachedAccessUrl(idStr)) return;
+    if (getCachedPreviewUrl(idStr)) return;
 
     try {
       const url = await fetchAccessUrl(idStr, token);
       if (url) {
-        setCachedFileAccessUrl(idStr, url);
+        cachePreviewUrl(idStr, url);
       }
     } catch (e) {
       // Non-blocking prefetch failure ignored
     }
-  }, [token]);
+  }, [token, getCachedPreviewUrl, cachePreviewUrl]);
 
   const handlePreview = async (file) => {
     if (file.isFolder) {
@@ -3345,8 +3407,13 @@ function App() {
     const reqId = ++previewRequestIdRef.current;
 
     try {
-      const type = (file.type || '').toLowerCase();
-      const cachedUrl = getCachedFileAccessUrl(file._id) || getCachedAccessUrl(file._id);
+      const type = (file.type || (file.name || '').split('.').pop() || '').toLowerCase();
+      const isVideoFile = Boolean(
+        file.mimeType?.startsWith('video/') ||
+        file.mimetype?.startsWith('video/') ||
+        ['mp4', 'mkv', 'webm', 'mov', 'avi', 'flv', 'wmv', 'ogg', 'm4v', '3gp'].includes(type)
+      );
+      const cachedUrl = getCachedPreviewUrl(file._id);
 
       if (cachedUrl) {
         if (previewRequestIdRef.current !== reqId) return;
@@ -3354,7 +3421,7 @@ function App() {
         setPreviewFile(file);
         setIsPreviewOpen(true);
 
-        if (type === 'txt' || type === 'md') {
+        if (!isVideoFile && (type === 'txt' || type === 'md')) {
           const textResponse = await fetch(cachedUrl, { credentials: 'include' });
           if (previewRequestIdRef.current !== reqId) return;
           if (!textResponse.ok) throw new Error("Failed to fetch file content");
@@ -3365,16 +3432,20 @@ function App() {
         return;
       }
 
-      setPreviewText('Loading...');
+      setPreviewUrl(null);
+      setPreviewFile(file);
+      setIsPreviewOpen(true);
+      if (!isVideoFile && (type === 'txt' || type === 'md')) {
+        setPreviewText('Loading...');
+      }
+
       const url = await fetchAccessUrl(file._id, token);
       if (previewRequestIdRef.current !== reqId) return;
       if (!url) throw new Error("Could not fetch secure access URL");
-      setCachedFileAccessUrl(file._id, url);
+      cachePreviewUrl(file._id, url);
       setPreviewUrl(url);
-      setPreviewFile(file);
-      setIsPreviewOpen(true);
 
-      if (type === 'txt' || type === 'md') {
+      if (!isVideoFile && (type === 'txt' || type === 'md')) {
         const textResponse = await fetch(url, { credentials: 'include' });
         if (previewRequestIdRef.current !== reqId) return;
         if (!textResponse.ok) throw new Error("Failed to fetch file content");

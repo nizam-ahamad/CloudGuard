@@ -461,13 +461,29 @@ export function HeicPreviewImage({ fileId, src, alt, className, fallbackUrl, thu
  * Abortable video preview component that immediately halts network buffering and
  * detaches media streams when navigating slides or unmounting.
  */
-export function PreviewVideo({ src, className, posterUrl, onDownload, ...props }) {
+export function PreviewVideo({ src, className, posterUrl, onDownload, fileName, mimeType, ...props }) {
   const videoRef = React.useRef(null);
   const hasBufferedFrameRef = React.useRef(false);
   const [isBuffering, setIsBuffering] = useState(true);
   const [videoError, setVideoError] = useState(false);
 
+  const isMobileOrTouch = typeof window !== 'undefined' && (
+    window.innerWidth < 768 ||
+    navigator.maxTouchPoints > 0 ||
+    /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+  );
+  const isUnsupportedMobileVideo = isMobileOrTouch && (
+    /\.(mkv|avi|flv|wmv)$/i.test(fileName || '') ||
+    mimeType === 'video/x-matroska'
+  );
+
   useEffect(() => {
+    if (isUnsupportedMobileVideo) {
+      setIsBuffering(false);
+      setVideoError(false);
+      return undefined;
+    }
+
     hasBufferedFrameRef.current = false;
     setIsBuffering(true);
     setVideoError(false);
@@ -478,7 +494,7 @@ export function PreviewVideo({ src, className, posterUrl, onDownload, ...props }
         setIsBuffering(false);
         setVideoError(true);
       }
-    }, 12000);
+    }, 15000);
 
     return () => {
       clearTimeout(timeoutId);
@@ -492,7 +508,31 @@ export function PreviewVideo({ src, className, posterUrl, onDownload, ...props }
         }
       }
     };
-  }, [src]);
+  }, [src, isUnsupportedMobileVideo]);
+
+  if (isUnsupportedMobileVideo) {
+    return (
+      <div className="relative z-10 max-w-sm w-full mx-auto rounded-2xl bg-neutral-900/80 backdrop-blur-xl border border-white/15 p-6 text-center shadow-2xl flex flex-col items-center gap-3">
+        <span className="material-symbols-outlined text-4xl text-amber-400">videocam_off</span>
+        <p className="text-sm font-semibold text-white">
+          MKV format isn&apos;t supported for inline mobile playback
+        </p>
+        <p className="text-xs text-neutral-300 leading-relaxed">
+          Mobile browsers only stream MP4, MOV, and WebM natively. Download the file to play it in VLC or your device&apos;s media player.
+        </p>
+        {typeof onDownload === 'function' && (
+          <button
+            type="button"
+            onClick={onDownload}
+            className="mt-1 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-colors cursor-pointer"
+          >
+            <Download className="w-4 h-4" />
+            <span>Download Video</span>
+          </button>
+        )}
+      </div>
+    );
+  }
 
   if (videoError) {
     return (
@@ -526,6 +566,11 @@ export function PreviewVideo({ src, className, posterUrl, onDownload, ...props }
         preload="metadata"
         crossOrigin={typeof src === 'string' && (src.startsWith('https://files.cloudguard.site') || src.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
         className={className}
+        onLoadedMetadata={() => {
+          hasBufferedFrameRef.current = true;
+          setIsBuffering(false);
+          setVideoError(false);
+        }}
         onLoadedData={(e) => {
           hasBufferedFrameRef.current = true;
           setIsBuffering(false);
@@ -553,9 +598,9 @@ export function PreviewVideo({ src, className, posterUrl, onDownload, ...props }
         Your browser does not support the video tag.
       </video>
       {isBuffering && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/30 pointer-events-none rounded-lg z-20">
-          <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-          <span className="text-xs font-medium text-white/90 drop-shadow">Loading video...</span>
+        <div className="pointer-events-none absolute bottom-14 left-1/2 -translate-x-1/2 z-20 inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/75 backdrop-blur-md border border-white/15 text-white text-xs font-medium shadow-lg">
+          <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-400" />
+          <span>Buffering stream...</span>
         </div>
       )}
     </div>
@@ -844,18 +889,33 @@ function FilePreviewModalInner({
 
           {!isAudio && isVideo ? (
             <div className="relative z-10 flex items-center justify-center w-full h-full max-h-[75vh]">
-              {effectiveUrl ? (
+              {effectiveUrl || (isMobileViewport && /\.(mkv|avi|flv|wmv)$/i.test(previewFile.originalName || previewFile.name || '')) ? (
                 <PreviewVideo
-                  key={effectiveUrl}
+                  key={effectiveUrl || previewFile._id || previewFile.name}
                   src={effectiveUrl}
                   posterUrl={thumbnailUrl || undefined}
+                  fileName={previewFile.originalName || previewFile.name}
+                  mimeType={previewFile.mimeType || previewFile.mimetype}
                   onDownload={() => resolveDownload && resolveDownload(previewFile)}
                   className="max-w-full max-h-[75vh] rounded-lg object-contain shadow-2xl bg-black"
                 />
+              ) : thumbnailUrl ? (
+                <div className="relative flex items-center justify-center w-full h-full">
+                  <img
+                    src={thumbnailUrl}
+                    alt={previewFile.name}
+                    crossOrigin={typeof thumbnailUrl === 'string' && (thumbnailUrl.startsWith('https://files.cloudguard.site') || thumbnailUrl.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
+                    className="max-h-[75vh] w-auto max-w-full rounded-lg shadow-2xl object-contain bg-black relative z-10"
+                  />
+                  <div className="pointer-events-none absolute bottom-14 left-1/2 -translate-x-1/2 z-20 inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/75 backdrop-blur-md border border-white/15 text-white text-xs font-medium shadow-lg">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-400" />
+                    <span>Buffering stream...</span>
+                  </div>
+                </div>
               ) : (
                 <div className="flex flex-col items-center justify-center gap-2 text-white/80 min-h-[200px]">
                   <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-                  <span className="text-xs font-medium">Loading video...</span>
+                  <span className="text-xs font-medium">Buffering stream...</span>
                 </div>
               )}
             </div>
