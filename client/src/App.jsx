@@ -39,7 +39,7 @@ import {
 import { HeaderDownloadButton, useDownload } from './context/DownloadContext';
 import { HeaderUploadButton, useUpload, UploadProvider } from './context/UploadContext';
 import { getCachedAccessUrl, fetchAccessUrl, prefetchAccessUrl } from './utils/accessUrlCache';
-import { Folder, FolderInput, X, Search, MoreVertical, Pencil, Info, LayoutGrid, List, Check, Trash2, Image, Play, ChevronLeft, ChevronRight, Download, Clock, UploadCloud, FolderPlus, Menu, Sun, Moon, Loader2, FileText, ChevronDown, FileUp, FolderUp, ArrowUp, ArrowDown, ShieldCheck } from 'lucide-react';
+import { Folder, FolderInput, X, Search, MoreVertical, Pencil, Info, LayoutGrid, List, Check, Trash2, Image, Play, ChevronLeft, ChevronRight, Download, Clock, UploadCloud, FolderPlus, Menu, Sun, Moon, Loader2, FileText, ChevronDown, FileUp, FolderUp, ArrowUp, ArrowDown, ShieldCheck, Users } from 'lucide-react';
 import { extractDroppedItems, createFolderHierarchy } from './utils/folderUpload';
 
 import { API_BASE_URL } from "./config";
@@ -1210,7 +1210,8 @@ function App() {
   const [activeFolderMenuId, setActiveFolderMenuId] = useState(null);
 
   const isSettingsOpen = searchParams.get('view') === 'settings' && location.pathname === '/dashboard';
-  const isFilesActive = location.pathname === '/dashboard' && !searchParams.get('view') && searchParams.get('tab') !== 'recent' && searchParams.get('tab') !== 'bin' && viewMode === 'all';
+  const isSharedActive = location.pathname === '/dashboard' && !searchParams.get('view') && (searchParams.get('tab') === 'shared' || viewMode === 'shared');
+  const isFilesActive = location.pathname === '/dashboard' && !searchParams.get('view') && searchParams.get('tab') !== 'recent' && searchParams.get('tab') !== 'bin' && searchParams.get('tab') !== 'shared' && viewMode === 'all';
   const isRecentActive = location.pathname === '/dashboard' && !searchParams.get('view') && (searchParams.get('tab') === 'recent' || viewMode === 'recent');
   const isBinActive = location.pathname === '/dashboard' && (searchParams.get('view') === 'bin' || searchParams.get('tab') === 'bin' || viewMode === 'bin');
   const isPhotosActive = location.pathname === '/dashboard/photos';
@@ -1221,9 +1222,11 @@ function App() {
       setViewMode('settings');
     } else if (searchParams.get('view') === 'bin' || searchParams.get('tab') === 'bin') {
       setViewMode('bin');
+    } else if (searchParams.get('tab') === 'shared') {
+      setViewMode('shared');
     } else if (searchParams.get('tab') === 'recent') {
       setViewMode('recent');
-    } else if (viewMode === 'settings' || viewMode === 'bin') {
+    } else if (viewMode === 'settings' || viewMode === 'bin' || viewMode === 'shared') {
       setViewMode('all');
     }
   }, [location.pathname, searchParams]);
@@ -1641,6 +1644,15 @@ function App() {
       setViewMode('all');
       setSearchParams(newParams);
       navigate('/dashboard/photos');
+    } else if (tab === 'shared') {
+      newParams.delete('folder');
+      newParams.set('tab', 'shared');
+      setViewMode('shared');
+      setSearchParams(newParams);
+      if (location.pathname !== '/dashboard') {
+        navigate('/dashboard?tab=shared');
+      }
+      return;
     }
   };
 
@@ -1711,7 +1723,7 @@ function App() {
     if (currentPath !== '/dashboard' && currentPath !== '/dashboard/') {
       return;
     }
-    if (viewMode === 'settings' || viewMode === 'bin') {
+    if (viewMode === 'settings' || viewMode === 'bin' || viewMode === 'shared') {
       return;
     }
 
@@ -2220,7 +2232,7 @@ function App() {
     if (currentPath !== '/dashboard' && currentPath !== '/dashboard/') {
       return;
     }
-    if (viewMode === 'settings' || viewMode === 'bin') {
+    if (viewMode === 'settings' || viewMode === 'bin' || viewMode === 'shared') {
       return;
     }
 
@@ -3468,7 +3480,7 @@ function App() {
         </div>
       )}
       {/* SideNavBar */}
-      <nav className={`bg-slate-50 dark:bg-[#1e1f20] h-screen ${isCollapsed ? 'w-20' : 'w-64'} fixed left-0 top-0 border-r border-slate-200 dark:border-zinc-800 flex flex-col py-stack-lg z-50 transform transition-all duration-300 ease-in-out overflow-x-hidden md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+      <nav className={`bg-slate-50 dark:bg-[#1e1f20] h-screen ${isCollapsed ? 'w-20' : 'w-64'} fixed left-0 top-0 border-r border-slate-200 dark:border-zinc-800 flex flex-col py-3 z-50 transform transition-all duration-300 ease-in-out overflow-x-hidden md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div 
           onClick={handleNavigateHomeRoot}
           onKeyDown={(e) => {
@@ -3479,28 +3491,26 @@ function App() {
           }}
           role="button"
           tabIndex={0}
-          className="h-16 mb-6 flex items-center gap-2 px-4 cursor-pointer select-none"
+          className={`py-2 mb-2 flex items-center cursor-pointer select-none shrink-0 ${isCollapsed ? 'justify-center px-2 gap-0' : 'px-3 gap-2.5'}`}
         >
-          <div className="min-w-[3rem] flex justify-center items-center">
-            <CloudGuardLogo className="h-13 w-auto flex-shrink-0" />
+          <div className="flex justify-center items-center shrink-0">
+            <CloudGuardLogo className="h-9 w-auto flex-shrink-0" />
           </div>
           <div className={`overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-40 opacity-100'}`}>
-            <h1 className="font-headline-md text-2xl font-bold text-primary dark:text-[#e3e3e3]">CloudGuard</h1>
+            <h1 className="font-headline-md text-xl font-bold text-primary dark:text-[#e3e3e3]">CloudGuard</h1>
           </div>
         </div>
         {/* Main Navigation */}
-        <div className="flex-1 px-4 space-y-1">
+        <div className="flex-1 px-3 space-y-0.5">
           <button 
             type="button"
             onClick={() => handleNavClick('files')}
-            className={`group relative w-full flex items-center h-12 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${isFilesActive ? 'text-secondary bg-surface-container-low dark:bg-[#282a2c] dark:text-[#e3e3e3]' : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'}`}
+            className={`group relative w-full flex items-center min-h-[36px] py-1.5 rounded-full font-semibold cursor-pointer active:opacity-80 transition-colors duration-200 text-left ${isCollapsed ? 'justify-center px-0 gap-0' : 'px-3 gap-2.5'} ${isFilesActive ? 'text-secondary bg-surface-container-low dark:bg-[#282a2c] dark:text-[#e3e3e3]' : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'}`}
           >
-            <div className="min-w-[3rem] flex justify-center items-center">
-              <span className="material-symbols-outlined shrink-0" data-weight={isFilesActive ? "fill" : ""}>folder_open</span>
-            </div>
-            <span className={`font-semibold font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-32 opacity-100'}`}>My Files</span>
+            <span className="material-symbols-outlined w-4 h-4 !text-[17px] inline-flex items-center justify-center leading-none shrink-0" data-weight={isFilesActive ? "fill" : ""}>folder_open</span>
+            <span className={`font-semibold text-[13px] sm:text-sm overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-auto opacity-100'}`}>My Files</span>
             {isCollapsed && (
-              <div className="absolute left-full ml-4 px-3 py-1 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-800 dark:text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+              <div className="absolute left-full ml-4 px-3 py-1 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-800 dark:text-[#e3e3e3] text-xs rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
                 My Files
               </div>
             )}
@@ -3509,19 +3519,35 @@ function App() {
           <button 
             type="button"
             onClick={() => handleNavClick('photos')}
-            className={`group relative w-full flex items-center h-12 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 text-left ${
+            className={`group relative w-full flex items-center min-h-[36px] py-1.5 rounded-full font-semibold cursor-pointer active:opacity-80 transition-colors duration-200 text-left ${isCollapsed ? 'justify-center px-0 gap-0' : 'px-3 gap-2.5'} ${
               isPhotosActive
                 ? 'text-secondary bg-surface-container-low dark:bg-[#282a2c] dark:text-[#e3e3e3]'
                 : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'
             }`}
           >
-            <div className="min-w-[3rem] flex justify-center items-center">
-              <span className="material-symbols-outlined shrink-0" data-weight={isPhotosActive ? "fill" : ""}>photo_library</span>
-            </div>
-            <span className={`text-center font-semibold font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-32 opacity-100'}`}>Photos</span>
+            <span className="material-symbols-outlined w-4 h-4 !text-[17px] inline-flex items-center justify-center leading-none shrink-0" data-weight={isPhotosActive ? "fill" : ""}>photo_library</span>
+            <span className={`font-semibold text-[13px] sm:text-sm overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-auto opacity-100'}`}>Photos</span>
             {isCollapsed && (
-              <div className="absolute left-full ml-4 px-3 py-1 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-800 dark:text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+              <div className="absolute left-full ml-4 px-3 py-1 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-800 dark:text-[#e3e3e3] text-xs rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
                 Photos
+              </div>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleNavClick('shared')}
+            className={`group relative w-full flex items-center min-h-[36px] py-1.5 rounded-full font-semibold cursor-pointer active:opacity-80 transition-colors duration-200 text-left ${isCollapsed ? 'justify-center px-0 gap-0' : 'px-3 gap-2.5'} ${
+              isSharedActive
+                ? 'text-secondary bg-surface-container-low dark:bg-[#282a2c] dark:text-[#e3e3e3]'
+                : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'
+            }`}
+          >
+            <Users className="w-4 h-4 shrink-0" />
+            <span className={`font-semibold text-[13px] sm:text-sm overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-auto opacity-100'}`}>Shared with me</span>
+            {isCollapsed && (
+              <div className="absolute left-full ml-4 px-3 py-1 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-800 dark:text-[#e3e3e3] text-xs rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+                Shared with me
               </div>
             )}
           </button>
@@ -3529,14 +3555,12 @@ function App() {
           <button 
             type="button"
             onClick={() => handleNavClick('recent')}
-            className={`group relative w-full flex items-center h-12 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${isRecentActive ? 'text-secondary bg-surface-container-low dark:bg-[#282a2c] dark:text-[#e3e3e3]' : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'}`}
+            className={`group relative w-full flex items-center min-h-[36px] py-1.5 rounded-full font-semibold cursor-pointer active:opacity-80 transition-colors duration-200 text-left ${isCollapsed ? 'justify-center px-0 gap-0' : 'px-3 gap-2.5'} ${isRecentActive ? 'text-secondary bg-surface-container-low dark:bg-[#282a2c] dark:text-[#e3e3e3]' : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'}`}
           >
-            <div className="min-w-[3rem] flex justify-center items-center">
-              <span className="material-symbols-outlined shrink-0" data-weight={isRecentActive ? "fill" : ""}>history</span>
-            </div>
-            <span className={`font-semibold font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-32 opacity-100'}`}>Recent</span>
+            <span className="material-symbols-outlined w-4 h-4 !text-[17px] inline-flex items-center justify-center leading-none shrink-0" data-weight={isRecentActive ? "fill" : ""}>history</span>
+            <span className={`font-semibold text-[13px] sm:text-sm overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-auto opacity-100'}`}>Recent</span>
             {isCollapsed && (
-              <div className="absolute left-full ml-4 px-3 py-1 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-800 dark:text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+              <div className="absolute left-full ml-4 px-3 py-1 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-800 dark:text-[#e3e3e3] text-xs rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
                 Recent
               </div>
             )}
@@ -3545,29 +3569,29 @@ function App() {
           <button 
             type="button"
             onClick={() => handleNavClick('bin')}
-            className={`group relative w-full flex items-center h-12 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${
+            className={`group relative w-full flex items-center min-h-[36px] py-1.5 rounded-full font-semibold cursor-pointer active:opacity-80 transition-colors duration-200 text-left ${isCollapsed ? 'justify-center px-0 gap-0' : 'px-3 gap-2.5'} ${
               isBinActive
                 ? 'text-secondary bg-surface-container-low dark:bg-[#282a2c] dark:text-[#e3e3e3]'
                 : 'text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-[#333538] dark:hover:text-[#e3e3e3]'
             }`}
           >
-            <div className="min-w-[3rem] flex justify-center items-center">
-              <span className="material-symbols-outlined shrink-0" data-weight={isBinActive ? "fill" : ""}>delete</span>
-            </div>
-            <span className={`font-semibold font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-32 opacity-100'}`}>Bin</span>
+            <span className="material-symbols-outlined w-4 h-4 !text-[17px] inline-flex items-center justify-center leading-none shrink-0" data-weight={isBinActive ? "fill" : ""}>delete</span>
+            <span className={`font-semibold text-[13px] sm:text-sm overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-auto opacity-100'}`}>Bin</span>
             {isCollapsed && (
-              <div className="absolute left-full ml-4 px-3 py-1 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-800 dark:text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+              <div className="absolute left-full ml-4 px-3 py-1 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-800 dark:text-[#e3e3e3] text-xs rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
                 Bin
               </div>
             )}
           </button>
         </div>
 
-        {/* Persistent Sidebar Upgrade Card (Free/Trial accounts only) */}
-        <SidebarUpgradeCard user={user} isCollapsed={isCollapsed} />
+        {/* Persistent Sidebar Upgrade Card (Free/Trial & Vault Plan) */}
+        <div className="my-1.5 shrink-0 [&>a]:!my-0 [&>a]:!py-2 [&>a]:!h-auto [&>a]:min-h-[36px]">
+          <SidebarUpgradeCard user={user} isCollapsed={isCollapsed} />
+        </div>
 
-        {/* Footer Navigation */}
-        <div className="flex flex-col gap-2 mt-auto border-t border-slate-200 dark:border-zinc-800 pt-4 mx-4">
+        {/* Footer Navigation & Storage Meter */}
+        <div className="flex flex-col gap-0.5 mt-auto border-t border-slate-200 dark:border-zinc-800 pt-2 px-3 shrink-0">
           {isAdmin && (
             <button 
               type="button"
@@ -3575,14 +3599,12 @@ function App() {
                 setIsSidebarOpen(false); 
                 navigate('/monitor');
               }}
-              className={`group relative w-full flex items-center h-12 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${location.pathname === '/monitor' ? 'bg-surface-container-low dark:bg-[#282a2c] text-neutral-900 dark:text-white font-semibold' : 'text-neutral-500 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800/60 hover:text-neutral-900 dark:hover:text-white'}`}
+              className={`group relative w-full flex items-center min-h-[36px] py-1.5 rounded-full font-semibold cursor-pointer active:opacity-80 transition-colors duration-200 text-left ${isCollapsed ? 'justify-center px-0 gap-0' : 'px-3 gap-2.5'} ${location.pathname === '/monitor' ? 'bg-surface-container-low dark:bg-[#282a2c] text-neutral-900 dark:text-white' : 'text-neutral-500 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800/60 hover:text-neutral-900 dark:hover:text-white'}`}
             >
-              <div className="min-w-[3rem] flex justify-center items-center">
-                <span className="material-symbols-outlined shrink-0" data-weight={location.pathname === '/monitor' ? "fill" : ""}>monitoring</span>
-              </div>
-              <span className={`font-semibold font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-32 opacity-100'}`}>Monitor</span>
+              <span className="material-symbols-outlined w-4 h-4 !text-[17px] inline-flex items-center justify-center leading-none shrink-0" data-weight={location.pathname === '/monitor' ? "fill" : ""}>monitoring</span>
+              <span className={`font-semibold text-[13px] sm:text-sm overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-auto opacity-100'}`}>Monitor</span>
               {isCollapsed && (
-                <div className="absolute left-full ml-4 px-3 py-1 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-800 dark:text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+                <div className="absolute left-full ml-4 px-3 py-1 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-800 dark:text-[#e3e3e3] text-xs rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
                   Monitor
                 </div>
               )}
@@ -3595,27 +3617,46 @@ function App() {
               setIsSidebarOpen(false); 
               navigate('/dashboard?view=settings');
             }}
-            className={`group relative w-full flex items-center h-12 rounded-full font-bold cursor-pointer active:opacity-80 transition-colors duration-200 ${isSettingsOpen ? 'bg-surface-container-low dark:bg-[#282a2c] text-neutral-900 dark:text-white font-semibold' : 'text-neutral-500 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800/60 hover:text-neutral-900 dark:hover:text-white'}`}
+            className={`group relative w-full flex items-center min-h-[36px] py-1.5 rounded-full font-semibold cursor-pointer active:opacity-80 transition-colors duration-200 text-left ${isCollapsed ? 'justify-center px-0 gap-0' : 'px-3 gap-2.5'} ${isSettingsOpen ? 'bg-surface-container-low dark:bg-[#282a2c] text-neutral-900 dark:text-white' : 'text-neutral-500 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800/60 hover:text-neutral-900 dark:hover:text-white'}`}
           >
-            <div className="min-w-[3rem] flex justify-center items-center">
-              <span className="material-symbols-outlined shrink-0" data-weight={isSettingsOpen ? "fill" : ""}>settings</span>
-            </div>
-            <span className={`font-semibold font-body-md text-body-md overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-32 opacity-100'}`}>Settings</span>
+            <span className="material-symbols-outlined w-4 h-4 !text-[17px] inline-flex items-center justify-center leading-none shrink-0" data-weight={isSettingsOpen ? "fill" : ""}>settings</span>
+            <span className={`font-semibold text-[13px] sm:text-sm overflow-hidden whitespace-nowrap transition-all duration-300 ${isCollapsed ? 'w-0 opacity-0' : 'w-auto opacity-100'}`}>Settings</span>
             {isCollapsed && (
-              <div className="absolute left-full ml-4 px-3 py-1 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-800 dark:text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+              <div className="absolute left-full ml-4 px-3 py-1 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-800 dark:text-[#e3e3e3] text-xs rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
                 Settings
               </div>
             )}
           </button>
+
+          {!isCollapsed && (
+            <div className="pt-2 pb-3 px-3 mt-1 border-t border-slate-200/80 dark:border-zinc-800/80">
+              <div className="flex items-center justify-between text-[11px] font-medium text-neutral-600 dark:text-zinc-400 mb-1">
+                <span>Storage</span>
+                <span className="tabular-nums text-neutral-800 dark:text-zinc-200">
+                  {storageStats
+                    ? `${formatBytes(storageStats.storageUsed || storageStats.usedBytes || storageStats.used || 0)} / ${formatBytes(storageStats.storageLimit || storageStats.totalLimitBytes || storageStats.limit || defaultStorageLimit, 0)}`
+                    : '...'}
+                </span>
+              </div>
+              <div className="w-full h-1.5 rounded-full bg-neutral-200 dark:bg-zinc-800 overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-emerald-500 transition-all duration-300"
+                  style={{
+                    width: `${storageStats ? Math.min(100, Math.round(((storageStats.storageUsed || storageStats.usedBytes || storageStats.used || 0) / (storageStats.storageLimit || storageStats.totalLimitBytes || storageStats.limit || defaultStorageLimit)) * 100)) : 0}%`,
+                  }}
+                />
+              </div>
+            </div>
+          )}
           
           <button 
             onClick={() => setIsCollapsed(!isCollapsed)}
-            className="hidden md:flex group relative w-full items-center justify-center h-12 text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface dark:hover:text-white hover:bg-surface-container-high dark:hover:bg-white/5 rounded-xl transition-colors"
+            className="hidden md:flex group relative w-full items-center justify-center min-h-[36px] py-1.5 text-on-surface-variant dark:text-[#c4c7c5] hover:text-on-surface dark:hover:text-white hover:bg-surface-container-high dark:hover:bg-white/5 rounded-xl transition-colors"
           >
-            <span className="material-symbols-outlined transition-transform duration-300" style={{ transform: isCollapsed ? 'rotate(180deg)' : 'rotate(0deg)' }}>
+            <span className="material-symbols-outlined w-4 h-4 !text-[18px] inline-flex items-center justify-center leading-none transition-transform duration-300" style={{ transform: isCollapsed ? 'rotate(180deg)' : 'rotate(0deg)' }}>
               view_sidebar
             </span>
-            <div className="absolute left-full ml-4 px-3 py-1 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-800 dark:text-[#e3e3e3] rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+            <div className="absolute left-full ml-4 px-3 py-1 bg-white dark:bg-[#1e1f20] border border-neutral-200 dark:border-zinc-800 text-neutral-800 dark:text-[#e3e3e3] text-xs rounded-md shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
               Toggle Sidebar (Ctrl+B)
             </div>
           </button>
@@ -3808,6 +3849,29 @@ function App() {
           </div>
         ) : location.pathname === '/dashboard/photos' ? (
           <PhotosView token={token} />
+        ) : viewMode === 'shared' || searchParams.get('tab') === 'shared' ? (
+          <div className="space-y-6">
+            <div>
+              <h2 className="font-headline-lg-mobile md:font-headline-lg text-headline-lg-mobile md:text-headline-lg font-bold text-on-surface dark:text-[#e3e3e3] mb-1">
+                Shared with me
+              </h2>
+              <p className="text-xs sm:font-body-md sm:text-body-md text-on-surface-variant dark:text-zinc-400">
+                Collaborate securely on encrypted files and folders shared with your vault.
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-dashed border-neutral-300 dark:border-zinc-800 bg-neutral-50/70 dark:bg-[#1e1f20]/60 py-16 px-6 text-center flex flex-col items-center justify-center">
+              <div className="w-12 h-12 rounded-full bg-neutral-200/70 dark:bg-zinc-800/80 flex items-center justify-center mb-4">
+                <Users className="w-6 h-6 text-neutral-500 dark:text-zinc-400" />
+              </div>
+              <h3 className="text-sm sm:text-base font-semibold text-neutral-900 dark:text-[#e3e3e3] mb-1.5">
+                Nothing shared with you yet
+              </h3>
+              <p className="text-xs sm:text-sm text-neutral-500 dark:text-zinc-400 max-w-md">
+                Files and folders shared with you by other CloudGuard users will appear here.
+              </p>
+            </div>
+          </div>
         ) : viewMode === 'bin' || searchParams.get('view') === 'bin' || searchParams.get('tab') === 'bin' ? (
           <BinView onStorageUpdate={fetchStorageStats} searchQuery={searchQuery} token={token} />
         ) : (
@@ -4963,7 +5027,7 @@ function App() {
       />
 
       {/* Unified Floating Action Pill (Matches PhotosView) */}
-      {totalSelected > 0 && location.pathname !== '/dashboard/photos' && viewMode !== 'bin' && (
+      {totalSelected > 0 && location.pathname !== '/dashboard/photos' && viewMode !== 'bin' && viewMode !== 'shared' && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 sm:py-2.5 rounded-full bg-neutral-900/95 dark:bg-neutral-800/95 backdrop-blur-md border border-neutral-700/60 shadow-2xl text-white select-none max-w-[95vw]">
           
           {/* 1. Counter */}
