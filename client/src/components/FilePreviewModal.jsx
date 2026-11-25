@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Loader2, ChevronLeft, ChevronRight, Download, X } from 'lucide-react';
 import { fetchAccessUrl } from '../utils/accessUrlCache';
 import MobilePdfViewer from './MobilePdfViewer';
 
@@ -461,14 +461,27 @@ export function HeicPreviewImage({ fileId, src, alt, className, fallbackUrl, thu
  * Abortable video preview component that immediately halts network buffering and
  * detaches media streams when navigating slides or unmounting.
  */
-export function PreviewVideo({ src, className, posterUrl, ...props }) {
+export function PreviewVideo({ src, className, posterUrl, onDownload, ...props }) {
   const videoRef = React.useRef(null);
+  const hasBufferedFrameRef = React.useRef(false);
   const [isBuffering, setIsBuffering] = useState(true);
+  const [videoError, setVideoError] = useState(false);
 
   useEffect(() => {
+    hasBufferedFrameRef.current = false;
     setIsBuffering(true);
+    setVideoError(false);
+
     const video = videoRef.current;
+    const timeoutId = setTimeout(() => {
+      if (!hasBufferedFrameRef.current) {
+        setIsBuffering(false);
+        setVideoError(true);
+      }
+    }, 12000);
+
     return () => {
+      clearTimeout(timeoutId);
       if (video) {
         try {
           video.pause();
@@ -481,8 +494,29 @@ export function PreviewVideo({ src, className, posterUrl, ...props }) {
     };
   }, [src]);
 
+  if (videoError) {
+    return (
+      <div className="relative z-10 max-w-sm w-full mx-auto rounded-2xl bg-neutral-900/80 backdrop-blur-xl border border-white/15 p-6 text-center shadow-2xl flex flex-col items-center gap-3">
+        <span className="material-symbols-outlined text-4xl text-amber-400">videocam_off</span>
+        <p className="text-sm font-medium text-white">
+          This video format or slow connection couldn&apos;t stream inline
+        </p>
+        {typeof onDownload === 'function' && (
+          <button
+            type="button"
+            onClick={onDownload}
+            className="mt-1 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-colors cursor-pointer"
+          >
+            <Download className="w-4 h-4" />
+            <span>Download Video</span>
+          </button>
+        )}
+      </div>
+    );
+  }
+
   return (
-    <div className="relative flex items-center justify-center">
+    <div className="relative flex items-center justify-center w-full h-full">
       <video
         ref={videoRef}
         src={src}
@@ -493,19 +527,33 @@ export function PreviewVideo({ src, className, posterUrl, ...props }) {
         crossOrigin={typeof src === 'string' && (src.startsWith('https://files.cloudguard.site') || src.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
         className={className}
         onLoadedData={(e) => {
+          hasBufferedFrameRef.current = true;
           setIsBuffering(false);
+          setVideoError(false);
           const p = e.currentTarget.play();
           if (p && typeof p.catch === 'function') p.catch(() => {});
         }}
-        onPlaying={() => setIsBuffering(false)}
+        onCanPlay={() => {
+          hasBufferedFrameRef.current = true;
+          setIsBuffering(false);
+          setVideoError(false);
+        }}
+        onPlaying={() => {
+          hasBufferedFrameRef.current = true;
+          setIsBuffering(false);
+          setVideoError(false);
+        }}
         onWaiting={() => setIsBuffering(true)}
-        onError={() => setIsBuffering(false)}
+        onError={() => {
+          setIsBuffering(false);
+          setVideoError(true);
+        }}
         {...props}
       >
         Your browser does not support the video tag.
       </video>
       {isBuffering && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/30 pointer-events-none rounded-lg">
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/30 pointer-events-none rounded-lg z-20">
           <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
           <span className="text-xs font-medium text-white/90 drop-shadow">Loading video...</span>
         </div>
@@ -514,12 +562,22 @@ export function PreviewVideo({ src, className, posterUrl, ...props }) {
   );
 }
 
-export default function FilePreviewModal({
+export default function FilePreviewModal(props) {
+  const activeFile = props.previewFile || props.file;
+  const isOpen = props.isOpen !== undefined ? props.isOpen : Boolean(activeFile);
+  if (!isOpen || !activeFile) return null;
+  return <FilePreviewModalInner {...props} previewFile={activeFile} />;
+}
+
+function FilePreviewModalInner({
   previewFile,
   previewUrl,
+  url,
   previewText,
   closePreview,
+  onClose,
   handleDownload,
+  onDownload,
   files,
   fileList,
   allFiles,
@@ -529,24 +587,47 @@ export default function FilePreviewModal({
   onNext,
   onPrev,
 }) {
-  if (!previewFile) return null;
-
   const fileId = previewFile._id || previewFile.id;
+  const resolveClose = closePreview || onClose;
+  const resolveDownload = handleDownload || onDownload;
+
+  const [activeHeicLoadedId, setActiveHeicLoadedId] = useState(null);
+  const [mediaLoaded, setMediaLoaded] = useState(false);
+
+  const handleClose = useCallback(() => {
+    setActiveHeicLoadedId(null);
+    setMediaLoaded(false);
+    if (typeof document !== 'undefined') {
+      document.body.style.overflow = '';
+    }
+    if (typeof resolveClose === 'function') {
+      resolveClose();
+    }
+  }, [resolveClose]);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return undefined;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, []);
 
   // Populate LRU cache whenever previewUrl is passed
+  const passedUrl = previewUrl || url;
   useEffect(() => {
-    if (previewFile && previewUrl && fileId) {
+    if (previewFile && passedUrl && fileId) {
       putCachedPreviewEntry(fileId, {
-        signedUrl: previewUrl,
+        signedUrl: passedUrl,
         signedUrlFetchedAt: Date.now(),
       });
     }
-  }, [previewFile, previewUrl, fileId]);
+  }, [previewFile, passedUrl, fileId]);
 
   const cachedEntry = fileId ? getCachedPreviewEntry(fileId) : null;
   const effectiveUrl = (cachedEntry?.signedUrl && (Date.now() - cachedEntry.signedUrlFetchedAt < SIGNED_URL_TTL_MS))
     ? cachedEntry.signedUrl
-    : (previewUrl || previewFile.s3Url || previewFile.url || previewFile.downloadUrl || '');
+    : (passedUrl || previewFile.s3Url || previewFile.url || previewFile.downloadUrl || '');
 
   const items = files || fileList || allFiles || mediaList || [];
   const hasItems = Array.isArray(items) && items.length > 0;
@@ -582,30 +663,40 @@ export default function FilePreviewModal({
         handlePrev();
       } else if (e.key === 'ArrowRight' && hasNext) {
         handleNext();
-      } else if (e.key === 'Escape' && closePreview) {
-        closePreview();
+      } else if (e.key === 'Escape') {
+        handleClose();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [hasPrev, hasNext, handlePrev, handleNext, closePreview]);
+  }, [hasPrev, hasNext, handlePrev, handleNext, handleClose]);
 
   // File type detection
-  const [activeHeicLoadedId, setActiveHeicLoadedId] = useState(null);
   const thumbnailUrl = previewFile?.thumbnailUrl || previewFile?.thumbnail;
   const fileExt = (previewFile.type || (previewFile.name || '').split('.').pop() || '').toLowerCase();
   const isPdf = fileExt === 'pdf' || previewFile?.mimeType === 'application/pdf';
   const isMobileViewport = typeof window !== 'undefined' && (window.innerWidth < 768 || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent));
   const isHeic = fileExt === 'heic' || fileExt === 'heif' || previewFile?.mimeType === 'image/heic' || previewFile?.mimeType === 'image/heif';
+  const isVideo = Boolean(
+    previewFile?.mimeType?.startsWith('video/') ||
+    previewFile?.mimetype?.startsWith('video/') ||
+    ['mp4', 'webm', 'ogg', 'mov', 'mkv'].includes(fileExt)
+  );
+  const isStandardImage = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'bmp', 'ico'].includes(fileExt) ||
+    Boolean(!isHeic && (previewFile?.mimeType?.startsWith('image/') || previewFile?.mimetype?.startsWith('image/')));
   const isAudio = Boolean(
     previewFile?.mimeType?.startsWith('audio/') ||
     previewFile?.mimetype?.startsWith('audio/') ||
     /\.(mp3|wav|ogg|m4a|aac|flac)$/i.test(previewFile?.name || '')
   );
+  const isText = ['txt', 'md', 'json', 'js', 'jsx', 'ts', 'tsx', 'html', 'css', 'py', 'java', 'c', 'cpp', 'log', 'xml', 'yaml', 'yml'].includes(fileExt);
 
-  // Reset active HEIC loaded state on file switch
+  const ambientBlurSrc = thumbnailUrl || (isStandardImage && effectiveUrl ? effectiveUrl : null);
+
+  // Reset active slide states on file switch
   useEffect(() => {
     setActiveHeicLoadedId(null);
+    setMediaLoaded(false);
   }, [fileId]);
 
   // Eagerly pre-warm HEIC worker and WebAssembly module as soon as modal opens
@@ -669,97 +760,73 @@ export default function FilePreviewModal({
     };
   }, [previewFile, isActiveSlideBusy, hasItems, activeIdx, items]);
 
-  return !isAudio && ['mp4', 'webm', 'ogg', 'mov', 'mkv'].includes(fileExt) ? (
-    <div className="fixed inset-0 z-50 flex flex-col bg-black/95 backdrop-blur-md">
-      <div className="flex items-center justify-between p-4 bg-transparent text-white w-full">
-        <div className="flex items-center gap-3">
-          <span className="material-symbols-outlined text-white">movie</span>
-          <h3 className="font-title-md text-title-md font-medium truncate">{previewFile.name}</h3>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => handleDownload(previewFile)}
-            className="p-2 text-white/80 hover:bg-white/10 rounded-full transition-colors flex items-center cursor-pointer"
-            title="Download File"
-          >
-            <span className="material-symbols-outlined">download</span>
-          </button>
-          <button
-            onClick={closePreview}
-            className="p-2 text-white/80 hover:bg-white/10 rounded-full transition-colors cursor-pointer"
-            title="Close"
-          >
-            <span className="material-symbols-outlined">close</span>
-          </button>
-        </div>
-      </div>
-      <div className="relative flex-1 overflow-hidden flex items-center justify-center p-4 w-full max-w-5xl mx-auto">
-        {hasPrev && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              handlePrev();
-            }}
-            className="absolute left-2 sm:left-4 z-30 p-2 sm:p-3 rounded-full bg-black/60 hover:bg-black/80 text-white/90 hover:text-white border border-white/20 shadow-xl transition-all cursor-pointer active:scale-95"
-            aria-label="Previous file"
-            title="Previous (Left Arrow)"
-          >
-            <ChevronLeft className="w-5 h-5 sm:w-6 sm:h-6" />
-          </button>
-        )}
-        {effectiveUrl ? (
-          <PreviewVideo
-            key={effectiveUrl}
-            src={effectiveUrl}
-            posterUrl={thumbnailUrl || undefined}
-            className="max-w-full max-h-[80vh] rounded-lg object-contain shadow-2xl bg-black"
-          />
-        ) : (
-          <div className="flex flex-col items-center justify-center gap-2 text-white/80 min-h-[200px]">
-            <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-            <span className="text-xs font-medium">Loading preview...</span>
+  return (
+    <div
+      className="fixed inset-0 z-50 w-screen max-w-full overflow-x-hidden flex items-center justify-center bg-black/75 backdrop-blur-xl p-2 sm:p-4 animate-enter select-none"
+      onClick={handleClose}
+    >
+      <div
+        className="w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col bg-[#141414]/95 border border-white/10 rounded-2xl shadow-2xl text-neutral-100"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-2 sm:gap-3 w-full max-w-full px-3 sm:px-4 py-3 border-b border-white/10 shrink-0">
+          <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
+            {isVideo ? (
+              <span className="material-symbols-outlined text-amber-400 text-[20px] shrink-0">movie</span>
+            ) : isStandardImage || isHeic ? (
+              <span className="material-symbols-outlined text-blue-400 text-[20px] shrink-0">image</span>
+            ) : isPdf ? (
+              <span className="material-symbols-outlined text-red-400 text-[20px] shrink-0">picture_as_pdf</span>
+            ) : isAudio ? (
+              <span className="material-symbols-outlined text-emerald-400 text-[20px] shrink-0">music_note</span>
+            ) : (
+              <span className="material-symbols-outlined text-neutral-400 text-[20px] shrink-0">description</span>
+            )}
+            <span
+              className="block min-w-0 flex-1 truncate text-sm sm:text-base font-medium text-white"
+              title={previewFile.originalName || previewFile.name}
+            >
+              {previewFile.originalName || previewFile.name}
+            </span>
           </div>
-        )}
-        {hasNext && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              handleNext();
-            }}
-            className="absolute right-2 sm:right-4 z-30 p-2 sm:p-3 rounded-full bg-black/60 hover:bg-black/80 text-white/90 hover:text-white border border-white/20 shadow-xl transition-all cursor-pointer active:scale-95"
-            aria-label="Next file"
-            title="Next (Right Arrow)"
-          >
-            <ChevronRight className="w-5 h-5 sm:w-6 sm:h-6" />
-          </button>
-        )}
-      </div>
-    </div>
-  ) : (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="bg-white dark:bg-[#18181b] rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden border border-neutral-200 dark:border-neutral-800 text-neutral-900 dark:text-neutral-100">
-        <div className="flex items-center justify-between p-4 border-b border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900/60">
-          <h3 className="font-title-lg text-neutral-900 dark:text-white font-semibold truncate pr-4">{previewFile.name}</h3>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <button
-              onClick={() => handleDownload(previewFile)}
-              className="bg-primary text-on-primary hover:bg-primary/90 transition-colors p-2 rounded-lg flex items-center justify-center cursor-pointer"
+              type="button"
+              onClick={() => resolveDownload && resolveDownload(previewFile)}
+              className="p-2 rounded-full bg-neutral-800/80 hover:bg-neutral-700 text-neutral-200 hover:text-white border border-neutral-700/50 transition-colors cursor-pointer shrink-0"
               title="Download File"
+              aria-label="Download File"
             >
-              <span className="material-symbols-outlined">download</span>
+              <Download className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
             </button>
             <button
-              onClick={closePreview}
-              className="p-2 text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white hover:bg-neutral-200 dark:hover:bg-neutral-800 rounded-full transition-colors cursor-pointer"
+              type="button"
+              onClick={handleClose}
+              className="p-2 rounded-full bg-neutral-800/80 hover:bg-neutral-700 text-neutral-200 hover:text-white border border-neutral-700/50 transition-colors cursor-pointer shrink-0"
               title="Close"
+              aria-label="Close"
             >
-              <span className="material-symbols-outlined">close</span>
+              <X className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
             </button>
           </div>
         </div>
-        <div className="relative flex-1 overflow-auto bg-neutral-100 dark:bg-neutral-950 p-4 flex items-center justify-center">
+
+        <div className="relative flex-1 overflow-hidden bg-black/40 p-2 sm:p-4 flex items-center justify-center min-h-[300px]">
+          {ambientBlurSrc ? (
+            <img
+              src={ambientBlurSrc}
+              alt=""
+              aria-hidden="true"
+              crossOrigin={typeof ambientBlurSrc === 'string' && (ambientBlurSrc.startsWith('https://files.cloudguard.site') || ambientBlurSrc.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
+              className="absolute inset-0 w-full h-full object-cover scale-110 blur-2xl opacity-35 pointer-events-none select-none"
+            />
+          ) : (
+            <div
+              aria-hidden="true"
+              className="absolute inset-0 bg-gradient-to-br from-white/5 via-neutral-900/60 to-black/80 backdrop-blur-md pointer-events-none select-none"
+            />
+          )}
+
           {hasPrev && (
             <button
               type="button"
@@ -775,54 +842,93 @@ export default function FilePreviewModal({
             </button>
           )}
 
-          {isHeic ? (
-            <HeicPreviewImage
-              key={fileId}
-              src={effectiveUrl}
-              alt={previewFile.name}
-              file={previewFile}
-              fileId={fileId}
-              className="max-w-full max-h-[70vh] object-contain shadow-sm rounded"
-              fallbackUrl={previewFile.thumbnailUrl || previewFile.thumbnail}
-              onLoad={() => setActiveHeicLoadedId(fileId)}
-            />
-          ) : ['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'].includes(fileExt) ? (
-            effectiveUrl ? (
-              <img
+          {!isAudio && isVideo ? (
+            <div className="relative z-10 flex items-center justify-center w-full h-full max-h-[75vh]">
+              {effectiveUrl ? (
+                <PreviewVideo
+                  key={effectiveUrl}
+                  src={effectiveUrl}
+                  posterUrl={thumbnailUrl || undefined}
+                  onDownload={() => resolveDownload && resolveDownload(previewFile)}
+                  className="max-w-full max-h-[75vh] rounded-lg object-contain shadow-2xl bg-black"
+                />
+              ) : (
+                <div className="flex flex-col items-center justify-center gap-2 text-white/80 min-h-[200px]">
+                  <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+                  <span className="text-xs font-medium">Loading video...</span>
+                </div>
+              )}
+            </div>
+          ) : isHeic ? (
+            <div className="relative z-10 flex items-center justify-center w-full h-full max-h-[75vh]">
+              <HeicPreviewImage
+                key={fileId}
                 src={effectiveUrl}
                 alt={previewFile.name}
-                crossOrigin={typeof effectiveUrl === 'string' && (effectiveUrl.startsWith('https://files.cloudguard.site') || effectiveUrl.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
-                className="max-w-full max-h-[70vh] object-contain shadow-sm rounded"
+                file={previewFile}
+                fileId={fileId}
+                className="max-w-full max-h-[75vh] object-contain shadow-sm rounded-lg"
+                fallbackUrl={thumbnailUrl}
+                onLoad={() => setActiveHeicLoadedId(fileId)}
               />
-            ) : (
-              <div className="flex flex-col items-center justify-center gap-2 text-neutral-400 min-h-[200px]">
-                <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-                <span className="text-xs font-medium">Loading high-resolution photo...</span>
-              </div>
-            )
+            </div>
+          ) : isStandardImage ? (
+            <div className="relative z-10 flex items-center justify-center w-full h-full max-h-[75vh]">
+              {!mediaLoaded && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-neutral-300 z-20 pointer-events-none">
+                  <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+                  <span className="text-xs font-medium">Loading high-resolution photo...</span>
+                </div>
+              )}
+              {effectiveUrl && (
+                <img
+                  src={effectiveUrl}
+                  alt={previewFile.name}
+                  onLoad={() => setMediaLoaded(true)}
+                  onError={() => setMediaLoaded(true)}
+                  crossOrigin={typeof effectiveUrl === 'string' && (effectiveUrl.startsWith('https://files.cloudguard.site') || effectiveUrl.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
+                  className={`max-w-full max-h-[75vh] object-contain shadow-sm rounded-lg transition-opacity duration-300 ${
+                    mediaLoaded ? 'opacity-100' : 'opacity-0'
+                  }`}
+                />
+              )}
+            </div>
           ) : isPdf ? (
-            isMobileViewport ? (
-              <div className="w-full h-[70vh] relative flex items-center justify-center">
+            <div className="w-full h-[75vh] relative z-10 flex items-center justify-center">
+              {isMobileViewport ? (
                 <MobilePdfViewer
                   url={effectiveUrl}
                   fileName={previewFile.originalName || previewFile.name}
-                  onDownload={() => handleDownload && handleDownload(previewFile)}
+                  onDownload={() => resolveDownload && resolveDownload(previewFile)}
                 />
-              </div>
-            ) : effectiveUrl ? (
-              <iframe src={effectiveUrl} className="w-full h-[70vh] border-0 rounded" title="PDF Preview" />
-            ) : (
-              <div className="flex flex-col items-center justify-center gap-2 text-neutral-400 min-h-[200px]">
-                <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-                <span className="text-xs font-medium">Loading preview...</span>
-              </div>
-            )
-          ) : (fileExt === 'txt' || fileExt === 'md') ? (
-            <pre className="w-full h-full text-left bg-white dark:bg-[#121212] text-neutral-900 dark:text-neutral-100 p-6 rounded-lg overflow-auto text-sm font-mono whitespace-pre-wrap shadow-inner border border-neutral-200 dark:border-neutral-800">
+              ) : effectiveUrl ? (
+                <>
+                  {!mediaLoaded && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-neutral-300 pointer-events-none">
+                      <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+                      <span className="text-xs font-medium">Loading document...</span>
+                    </div>
+                  )}
+                  <iframe
+                    src={effectiveUrl}
+                    onLoad={() => setMediaLoaded(true)}
+                    className="w-full h-full border-0 rounded-lg bg-white relative z-10"
+                    title="PDF Preview"
+                  />
+                </>
+              ) : (
+                <div className="flex flex-col items-center justify-center gap-2 text-neutral-300 min-h-[200px]">
+                  <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+                  <span className="text-xs font-medium">Loading document...</span>
+                </div>
+              )}
+            </div>
+          ) : isText ? (
+            <pre className="relative z-10 w-full h-full max-h-[75vh] text-left bg-white dark:bg-[#121212] text-neutral-900 dark:text-neutral-100 p-6 rounded-lg overflow-auto text-sm font-mono whitespace-pre-wrap shadow-inner border border-neutral-200 dark:border-neutral-800">
               {previewText || 'Loading preview...'}
             </pre>
           ) : (isAudio && effectiveUrl) ? (
-            <div className="w-full max-w-md bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl p-6 sm:p-8 shadow-xl flex flex-col items-center text-center space-y-4">
+            <div className="relative z-10 w-full max-w-md bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl p-6 sm:p-8 shadow-xl flex flex-col items-center text-center space-y-4">
               <div className="w-16 h-16 rounded-full bg-primary/10 text-primary flex items-center justify-center">
                 <span className="material-symbols-outlined text-3xl">music_note</span>
               </div>
@@ -841,9 +947,18 @@ export default function FilePreviewModal({
               />
             </div>
           ) : (
-            <div className="text-neutral-500 dark:text-neutral-400 flex flex-col items-center gap-3">
+            <div className="relative z-10 text-neutral-300 flex flex-col items-center gap-3 p-8 text-center">
               <span className="material-symbols-outlined text-4xl">visibility_off</span>
-              <p>Preview not available for this file type.</p>
+              <p className="text-sm">Preview not available for this file type.</p>
+              {typeof resolveDownload === 'function' && (
+                <button
+                  type="button"
+                  onClick={() => resolveDownload(previewFile)}
+                  className="mt-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium transition-colors cursor-pointer"
+                >
+                  Download to view
+                </button>
+              )}
             </div>
           )}
 

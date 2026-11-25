@@ -255,14 +255,28 @@ export const setCachedFileAccessUrl = (fileId, url) => {
  * Clean In-Modal .docx Document Preview
  * Unzips word/document.xml with JSZip and renders structured paragraphs, headings, and tables.
  */
-function DocxPreviewModal({ previewFile, previewUrl, closePreview, handleDownload, token }) {
+function DocxPreviewModal(props) {
+  const isOpen = props.isOpen !== undefined ? props.isOpen : Boolean(props.previewFile);
+  if (!isOpen || !props.previewFile) return null;
+  return <DocxPreviewModalInner {...props} />;
+}
+
+function DocxPreviewModalInner({ previewFile, previewUrl, closePreview, handleDownload, token }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [blocks, setBlocks] = useState([]);
 
   useEffect(() => {
+    if (typeof document === 'undefined') return undefined;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, []);
+
+  useEffect(() => {
     const handleKeyDown = (e) => {
-      if (e.key === 'Escape') {
+      if (e.key === 'Escape' && closePreview) {
         closePreview();
       }
     };
@@ -390,11 +404,11 @@ function DocxPreviewModal({ previewFile, previewUrl, closePreview, handleDownloa
 
   return (
     <div
-      className="fixed inset-0 z-50 w-screen max-w-full overflow-x-hidden flex items-center justify-center bg-black/80 backdrop-blur-md p-2 sm:p-4 animate-enter select-none"
+      className="fixed inset-0 z-50 w-screen max-w-full overflow-x-hidden flex items-center justify-center bg-black/75 backdrop-blur-xl p-2 sm:p-4 animate-enter select-none"
       onClick={closePreview}
     >
       <div
-        className="w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col bg-[#141414] border border-white/10 rounded-2xl shadow-2xl text-neutral-100"
+        className="w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col bg-[#141414]/95 border border-white/10 rounded-2xl shadow-2xl text-neutral-100"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Top Bar */}
@@ -432,19 +446,23 @@ function DocxPreviewModal({ previewFile, previewUrl, closePreview, handleDownloa
 
         {/* Body Container */}
         <div className="relative flex-1 overflow-y-auto bg-neutral-100 dark:bg-neutral-950 p-4 sm:p-6 flex justify-center items-start">
+          <div
+            aria-hidden="true"
+            className="absolute inset-0 bg-gradient-to-br from-white/5 via-neutral-900/60 to-black/80 backdrop-blur-md pointer-events-none select-none"
+          />
           {loading ? (
-            <div className="flex flex-col items-center justify-center py-12 gap-3 text-neutral-400 my-auto">
+            <div className="relative z-10 flex flex-col items-center justify-center py-12 gap-3 text-neutral-300 my-auto">
               <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
               <span className="text-xs sm:text-sm font-medium">Parsing Word document...</span>
             </div>
           ) : error ? (
-            <div className="text-neutral-500 dark:text-neutral-400 flex flex-col items-center gap-3 text-center max-w-md p-6 my-auto">
+            <div className="relative z-10 text-neutral-400 flex flex-col items-center gap-3 text-center max-w-md p-6 my-auto">
               <span className="material-symbols-outlined text-4xl text-neutral-400">visibility_off</span>
               <p className="font-medium text-sm">Preview not available for this file type.</p>
               <p className="text-xs text-neutral-400">The document may be password-protected, encrypted, or malformed. Download the file to view it in Microsoft Word.</p>
             </div>
           ) : (
-            <div className="w-full max-w-3xl mx-auto rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-5 sm:p-8 text-neutral-900 dark:text-neutral-100 shadow-xl space-y-3 text-sm leading-relaxed select-text">
+            <div className="relative z-10 w-full max-w-3xl mx-auto rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-5 sm:p-8 text-neutral-900 dark:text-neutral-100 shadow-xl space-y-3 text-sm leading-relaxed select-text">
               {blocks.length === 0 ? (
                 <div className="text-center py-12 text-neutral-400">
                   <p className="text-sm">This Word document is empty.</p>
@@ -499,24 +517,18 @@ function DocxPreviewModal({ previewFile, previewUrl, closePreview, handleDownloa
  * Unified Media & Document File Preview Modal for My Files, Recents, and Bin
  * Matches PhotosView.jsx mobile header geometry, pinned controls, blurred video posters, and single loader.
  */
-function UnifiedFilePreviewModal({ previewFile, previewUrl, previewText, closePreview, handleDownload }) {
+function UnifiedFilePreviewModal(props) {
+  const activeFile = props.previewFile || props.file;
+  const isOpen = props.isOpen !== undefined ? props.isOpen : Boolean(activeFile);
+  if (!isOpen || !activeFile) return null;
+  return <UnifiedFilePreviewModalInner {...props} previewFile={activeFile} />;
+}
+
+function UnifiedFilePreviewModalInner({ previewFile, previewUrl, previewText, closePreview, handleDownload }) {
   const [mediaLoaded, setMediaLoaded] = useState(false);
-
-  useEffect(() => {
-    setMediaLoaded(false);
-  }, [previewFile?._id || previewFile?.id]);
-
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      if (e.key === 'Escape' && closePreview) {
-        closePreview();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [closePreview]);
-
-  if (!previewFile) return null;
+  const [videoError, setVideoError] = useState(false);
+  const videoRef = useRef(null);
+  const hasBufferedVideoFrameRef = useRef(false);
 
   const fileExt = (previewFile.type || (previewFile.name || '').split('.').pop() || '').toLowerCase();
   const isVideo = Boolean(
@@ -541,14 +553,63 @@ function UnifiedFilePreviewModal({ previewFile, previewUrl, previewText, closePr
 
   const displayThumbnail = previewFile.thumbnailUrl || previewFile.thumbnail || null;
   const targetUrl = previewUrl || previewFile.url || previewFile.accessUrl || previewFile.downloadUrl || '';
+  const ambientBlurSrc = displayThumbnail || (isImage && !isHeic && targetUrl ? targetUrl : null);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return undefined;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, []);
+
+  useEffect(() => {
+    setMediaLoaded(false);
+    setVideoError(false);
+    hasBufferedVideoFrameRef.current = false;
+  }, [previewFile?._id || previewFile?.id, targetUrl]);
+
+  useEffect(() => {
+    if (!isVideo || !targetUrl) return undefined;
+
+    hasBufferedVideoFrameRef.current = false;
+    const videoEl = videoRef.current;
+    const timeoutId = setTimeout(() => {
+      if (!hasBufferedVideoFrameRef.current) {
+        setMediaLoaded(true);
+        setVideoError(true);
+      }
+    }, 12000);
+
+    return () => {
+      clearTimeout(timeoutId);
+      if (videoEl) {
+        try {
+          videoEl.pause();
+          videoEl.removeAttribute('src');
+          videoEl.load();
+        } catch (_) {}
+      }
+    };
+  }, [isVideo, targetUrl]);
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape' && closePreview) {
+        closePreview();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [closePreview]);
 
   return (
     <div
-      className="fixed inset-0 z-50 w-screen max-w-full overflow-x-hidden flex items-center justify-center bg-black/80 backdrop-blur-md p-2 sm:p-4 animate-enter select-none"
+      className="fixed inset-0 z-50 w-screen max-w-full overflow-x-hidden flex items-center justify-center bg-black/75 backdrop-blur-xl p-2 sm:p-4 animate-enter select-none"
       onClick={closePreview}
     >
       <div
-        className="w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col bg-[#141414] border border-white/10 rounded-2xl shadow-2xl text-neutral-100"
+        className="w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col bg-[#141414]/95 border border-white/10 rounded-2xl shadow-2xl text-neutral-100"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Top Header Bar */}
@@ -596,55 +657,94 @@ function UnifiedFilePreviewModal({ previewFile, previewUrl, previewText, closePr
         </div>
 
         {/* Media Viewport Container */}
-        <div className="relative flex-1 overflow-auto bg-black/40 p-2 sm:p-4 flex items-center justify-center min-h-[300px]">
+        <div className="relative flex-1 overflow-hidden bg-black/40 p-2 sm:p-4 flex items-center justify-center min-h-[300px]">
+          {ambientBlurSrc ? (
+            <img
+              src={ambientBlurSrc}
+              alt=""
+              aria-hidden="true"
+              crossOrigin={typeof ambientBlurSrc === 'string' && (ambientBlurSrc.startsWith('https://files.cloudguard.site') || ambientBlurSrc.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
+              className="absolute inset-0 w-full h-full object-cover scale-110 blur-2xl opacity-35 pointer-events-none select-none"
+            />
+          ) : (
+            <div
+              aria-hidden="true"
+              className="absolute inset-0 bg-gradient-to-br from-white/5 via-neutral-900/60 to-black/80 backdrop-blur-md pointer-events-none select-none"
+            />
+          )}
+
           {isVideo ? (
-            <div className="relative flex items-center justify-center w-full h-full max-h-[75vh]">
-              {displayThumbnail && !mediaLoaded && (
-                <img
-                  src={displayThumbnail}
-                  alt={previewFile.name}
-                  loading="lazy"
-                  decoding="async"
-                  crossOrigin={typeof displayThumbnail === 'string' && (displayThumbnail.startsWith('https://files.cloudguard.site') || displayThumbnail.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
-                  className="max-h-[75vh] max-w-full object-contain rounded-lg filter blur-sm opacity-60 absolute inset-0 m-auto"
-                />
-              )}
-
-              {!mediaLoaded && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center text-white gap-2 pointer-events-none z-20">
-                  <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-                  <span className="text-xs font-medium">Loading video...</span>
+            <div className="relative z-10 flex items-center justify-center w-full h-full max-h-[75vh]">
+              {videoError ? (
+                <div className="relative z-10 max-w-sm w-full mx-auto rounded-2xl bg-neutral-900/80 backdrop-blur-xl border border-white/15 p-6 text-center shadow-2xl flex flex-col items-center gap-3">
+                  <span className="material-symbols-outlined text-4xl text-amber-400">videocam_off</span>
+                  <p className="text-sm font-medium text-white">
+                    This video format or slow connection couldn&apos;t stream inline
+                  </p>
+                  {typeof handleDownload === 'function' && (
+                    <button
+                      type="button"
+                      onClick={() => handleDownload(previewFile)}
+                      className="mt-1 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-colors cursor-pointer"
+                    >
+                      <Download className="w-4 h-4" />
+                      <span>Download Video</span>
+                    </button>
+                  )}
                 </div>
-              )}
+              ) : (
+                <>
+                  {!mediaLoaded && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center text-white gap-2 pointer-events-none z-20">
+                      <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+                      <span className="text-xs font-medium">Loading video...</span>
+                    </div>
+                  )}
 
-              {targetUrl && (
-                <video
-                  src={targetUrl}
-                  poster={displayThumbnail || undefined}
-                  controls
-                  playsInline
-                  preload="metadata"
-                  crossOrigin={typeof targetUrl === 'string' && (targetUrl.startsWith('https://files.cloudguard.site') || targetUrl.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
-                  onLoadedData={(e) => {
-                    setMediaLoaded(true);
-                    const p = e.currentTarget.play();
-                    if (p && typeof p.catch === 'function') p.catch(() => {});
-                  }}
-                  onCanPlay={() => setMediaLoaded(true)}
-                  onPlaying={() => setMediaLoaded(true)}
-                  onError={() => setMediaLoaded(true)}
-                  className={`max-h-[75vh] w-auto max-w-full rounded-lg shadow-2xl bg-black relative z-10 transition-opacity duration-300 ${
-                    mediaLoaded ? 'opacity-100' : 'opacity-0'
-                  }`}
-                >
-                  Your browser does not support the video tag.
-                </video>
+                  {targetUrl && (
+                    <video
+                      ref={videoRef}
+                      src={targetUrl}
+                      poster={displayThumbnail || undefined}
+                      controls
+                      playsInline
+                      preload="metadata"
+                      crossOrigin={typeof targetUrl === 'string' && (targetUrl.startsWith('https://files.cloudguard.site') || targetUrl.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
+                      onLoadedData={(e) => {
+                        hasBufferedVideoFrameRef.current = true;
+                        setMediaLoaded(true);
+                        setVideoError(false);
+                        const p = e.currentTarget.play();
+                        if (p && typeof p.catch === 'function') p.catch(() => {});
+                      }}
+                      onCanPlay={() => {
+                        hasBufferedVideoFrameRef.current = true;
+                        setMediaLoaded(true);
+                        setVideoError(false);
+                      }}
+                      onPlaying={() => {
+                        hasBufferedVideoFrameRef.current = true;
+                        setMediaLoaded(true);
+                        setVideoError(false);
+                      }}
+                      onError={() => {
+                        setMediaLoaded(true);
+                        setVideoError(true);
+                      }}
+                      className={`max-h-[75vh] w-auto max-w-full rounded-lg shadow-2xl bg-black relative z-10 transition-opacity duration-300 ${
+                        mediaLoaded ? 'opacity-100' : 'opacity-0'
+                      }`}
+                    >
+                      Your browser does not support the video tag.
+                    </video>
+                  )}
+                </>
               )}
             </div>
           ) : isHeic ? (
-            <div className="relative flex items-center justify-center w-full h-full max-h-[75vh]">
+            <div className="relative z-10 flex items-center justify-center w-full h-full max-h-[75vh]">
               {!mediaLoaded && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center text-neutral-400 gap-2">
+                <div className="absolute inset-0 flex flex-col items-center justify-center text-neutral-300 gap-2 z-20 pointer-events-none">
                   <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
                   <span className="text-xs font-medium">Loading high-resolution photo...</span>
                 </div>
@@ -661,20 +761,9 @@ function UnifiedFilePreviewModal({ previewFile, previewUrl, previewText, closePr
               />
             </div>
           ) : isImage ? (
-            <div className="relative flex items-center justify-center w-full h-full max-h-[75vh]">
-              {displayThumbnail && !mediaLoaded && (
-                <img
-                  src={displayThumbnail}
-                  alt={previewFile.name}
-                  loading="lazy"
-                  decoding="async"
-                  crossOrigin={typeof displayThumbnail === 'string' && (displayThumbnail.startsWith('https://files.cloudguard.site') || displayThumbnail.includes('files.cloudguard.site')) ? 'use-credentials' : undefined}
-                  className="max-h-[75vh] max-w-full object-contain rounded-lg filter blur-sm opacity-60 absolute inset-0 m-auto"
-                />
-              )}
-
+            <div className="relative z-10 flex items-center justify-center w-full h-full max-h-[75vh]">
               {!mediaLoaded && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center text-neutral-400 gap-2 z-20 pointer-events-none">
+                <div className="absolute inset-0 flex flex-col items-center justify-center text-neutral-300 gap-2 z-20 pointer-events-none">
                   <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
                   <span className="text-xs font-medium">Loading image...</span>
                 </div>
@@ -696,7 +785,7 @@ function UnifiedFilePreviewModal({ previewFile, previewUrl, previewText, closePr
               )}
             </div>
           ) : isPdf ? (
-            <div className="w-full h-[75vh] relative flex items-center justify-center">
+            <div className="w-full h-[75vh] relative z-10 flex items-center justify-center">
               {isMobileViewport ? (
                 <MobilePdfViewer
                   url={targetUrl}
@@ -706,7 +795,7 @@ function UnifiedFilePreviewModal({ previewFile, previewUrl, previewText, closePr
               ) : (
                 <>
                   {!mediaLoaded && (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center text-neutral-400 gap-2">
+                    <div className="absolute inset-0 flex flex-col items-center justify-center text-neutral-300 gap-2 pointer-events-none">
                       <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
                       <span className="text-xs font-medium">Loading document...</span>
                     </div>
@@ -715,7 +804,7 @@ function UnifiedFilePreviewModal({ previewFile, previewUrl, previewText, closePr
                     <iframe
                       src={targetUrl}
                       onLoad={() => setMediaLoaded(true)}
-                      className="w-full h-full border-0 rounded-lg bg-white"
+                      className="w-full h-full border-0 rounded-lg bg-white relative z-10"
                       title="PDF Preview"
                     />
                   )}
@@ -723,11 +812,11 @@ function UnifiedFilePreviewModal({ previewFile, previewUrl, previewText, closePr
               )}
             </div>
           ) : isText ? (
-            <pre className="w-full h-full max-h-[75vh] text-left bg-white dark:bg-[#121212] text-neutral-900 dark:text-neutral-100 p-6 rounded-lg overflow-auto text-sm font-mono whitespace-pre-wrap shadow-inner border border-neutral-200 dark:border-neutral-800">
+            <pre className="relative z-10 w-full h-full max-h-[75vh] text-left bg-white dark:bg-[#121212] text-neutral-900 dark:text-neutral-100 p-6 rounded-lg overflow-auto text-sm font-mono whitespace-pre-wrap shadow-inner border border-neutral-200 dark:border-neutral-800">
               {previewText || 'Loading preview...'}
             </pre>
           ) : isAudio ? (
-            <div className="w-full max-w-md bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl p-6 sm:p-8 shadow-xl flex flex-col items-center text-center space-y-4">
+            <div className="relative z-10 w-full max-w-md bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl p-6 sm:p-8 shadow-xl flex flex-col items-center text-center space-y-4">
               <div className="w-16 h-16 rounded-full bg-primary/10 text-primary flex items-center justify-center">
                 <span className="material-symbols-outlined text-3xl">music_note</span>
               </div>
@@ -746,13 +835,13 @@ function UnifiedFilePreviewModal({ previewFile, previewUrl, previewText, closePr
               />
             </div>
           ) : (
-            <div className="text-neutral-400 flex flex-col items-center gap-3 p-8 text-center">
+            <div className="relative z-10 text-neutral-300 flex flex-col items-center gap-3 p-8 text-center">
               <span className="material-symbols-outlined text-4xl">visibility_off</span>
               <p className="text-sm">Preview not available for this file type.</p>
               <button
                 type="button"
                 onClick={() => handleDownload && handleDownload(previewFile)}
-                className="mt-2 px-4 py-2 rounded-lg bg-primary text-white text-xs font-medium hover:bg-primary/90 transition-colors"
+                className="mt-2 px-4 py-2 rounded-lg bg-primary text-white text-xs font-medium hover:bg-primary/90 transition-colors cursor-pointer"
               >
                 Download to view
               </button>
@@ -1029,8 +1118,10 @@ function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [previewFile, setPreviewFile] = useState(null);
-  const [previewUrl, setPreviewUrl] = useState("");
+  const [previewUrl, setPreviewUrl] = useState(null);
   const [previewText, setPreviewText] = useState("");
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const previewRequestIdRef = useRef(0);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -1056,11 +1147,17 @@ function App() {
     setIsMobileSearchOpen(false);
   }, [location.pathname, searchParams]);
 
-  const closePreview = () => {
+  const handleClosePreview = useCallback(() => {
+    previewRequestIdRef.current += 1;
     setPreviewFile(null);
-    setPreviewUrl("");
+    setPreviewUrl(null);
     setPreviewText("");
-  };
+    setIsPreviewOpen(false);
+    if (typeof document !== 'undefined') {
+      document.body.style.overflow = '';
+    }
+  }, []);
+  const closePreview = handleClosePreview;
 
   const formatBytes = (bytes, decimals = 1) => {
     const numericBytes = Number(bytes);
@@ -3245,18 +3342,24 @@ function App() {
       return;
     }
     
+    const reqId = ++previewRequestIdRef.current;
+
     try {
       const type = (file.type || '').toLowerCase();
       const cachedUrl = getCachedFileAccessUrl(file._id) || getCachedAccessUrl(file._id);
 
       if (cachedUrl) {
+        if (previewRequestIdRef.current !== reqId) return;
         setPreviewUrl(cachedUrl);
         setPreviewFile(file);
+        setIsPreviewOpen(true);
 
         if (type === 'txt' || type === 'md') {
           const textResponse = await fetch(cachedUrl, { credentials: 'include' });
+          if (previewRequestIdRef.current !== reqId) return;
           if (!textResponse.ok) throw new Error("Failed to fetch file content");
           const text = await textResponse.text();
+          if (previewRequestIdRef.current !== reqId) return;
           setPreviewText(text);
         }
         return;
@@ -3264,20 +3367,25 @@ function App() {
 
       setPreviewText('Loading...');
       const url = await fetchAccessUrl(file._id, token);
+      if (previewRequestIdRef.current !== reqId) return;
       if (!url) throw new Error("Could not fetch secure access URL");
       setCachedFileAccessUrl(file._id, url);
       setPreviewUrl(url);
       setPreviewFile(file);
+      setIsPreviewOpen(true);
 
       if (type === 'txt' || type === 'md') {
         const textResponse = await fetch(url, { credentials: 'include' });
+        if (previewRequestIdRef.current !== reqId) return;
         if (!textResponse.ok) throw new Error("Failed to fetch file content");
         const text = await textResponse.text();
+        if (previewRequestIdRef.current !== reqId) return;
         setPreviewText(text);
       }
     } catch (err) {
+      if (previewRequestIdRef.current !== reqId) return;
       addToast('error', "Preview failed: " + err.message);
-      closePreview();
+      handleClosePreview();
     }
   };
 
@@ -3306,11 +3414,13 @@ function App() {
 
   const handleSharedFilePreview = async (file) => {
     if (!file || !file._id) return;
+    const reqId = ++previewRequestIdRef.current;
     try {
       const res = await axios.get(`${API_BASE_URL}/api/shares/file/${file._id}/access`, {
         headers: getAuthHeaders(),
         withCredentials: true,
       });
+      if (previewRequestIdRef.current !== reqId) return;
       const signedUrl = res.data?.url;
       if (!signedUrl) throw new Error('Could not generate shared preview URL');
 
@@ -3325,10 +3435,12 @@ function App() {
         type: ext,
         isShared: true,
       });
+      setIsPreviewOpen(true);
 
       if (ext === 'txt' || ext === 'md' || ext === 'csv' || ext === 'json' || ext === 'log') {
         setPreviewText('Loading...');
         const textRes = await fetch(signedUrl);
+        if (previewRequestIdRef.current !== reqId) return;
         if (textRes.ok) {
           setPreviewText(await textRes.text());
         } else {
@@ -3336,6 +3448,7 @@ function App() {
         }
       }
     } catch (err) {
+      if (previewRequestIdRef.current !== reqId) return;
       addToast('error', err.response?.data?.error || err.message || 'Shared preview failed');
     }
   };
@@ -5705,20 +5818,22 @@ function App() {
       />
 
       {/* Preview Modal */}
-      {previewFile && (previewFile.name || '').toLowerCase().endsWith('.docx') && Number(previewFile.size || 0) <= 25 * 1024 * 1024 ? (
+      {isPreviewOpen && previewFile && (previewFile.name || '').toLowerCase().endsWith('.docx') && Number(previewFile.size || 0) <= 25 * 1024 * 1024 ? (
         <DocxPreviewModal
+          isOpen={isPreviewOpen}
           previewFile={previewFile}
           previewUrl={previewUrl}
-          closePreview={closePreview}
+          closePreview={handleClosePreview}
           handleDownload={handleDownload}
           token={token}
         />
-      ) : previewFile ? (
+      ) : isPreviewOpen && previewFile ? (
         <UnifiedFilePreviewModal
+          isOpen={isPreviewOpen}
           previewFile={previewFile}
           previewUrl={previewUrl}
           previewText={previewText}
-          closePreview={closePreview}
+          closePreview={handleClosePreview}
           handleDownload={handleDownload}
         />
       ) : null}

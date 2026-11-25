@@ -150,13 +150,22 @@ export default function MobilePdfViewer({ url, fileName, onDownload }) {
 
     return () => {
       cancelled = true;
-      abortController.abort();
-      if (pdfDocument) {
-        pdfDocument.destroy().catch(() => {});
-      }
-      if (pagesContainerRef.current) {
-        pagesContainerRef.current.replaceChildren();
-      }
+      try {
+        abortController.abort();
+      } catch (_) {}
+      try {
+        if (pdfDocument && typeof pdfDocument.destroy === 'function') {
+          const destroyPromise = pdfDocument.destroy();
+          if (destroyPromise && typeof destroyPromise.catch === 'function') {
+            destroyPromise.catch(() => {});
+          }
+        }
+      } catch (_) {}
+      try {
+        if (pagesContainerRef.current) {
+          pagesContainerRef.current.replaceChildren();
+        }
+      } catch (_) {}
     };
   }, [url, fileName]);
 
