@@ -112,13 +112,20 @@ function SharedPdfCardPreview({ file, fileName }) {
   return (
     <div className="relative w-full h-full flex items-center justify-center">
       {thumbUrl ? (
-        <img
-          src={thumbUrl}
-          alt={fileName}
-          loading="lazy"
-          decoding="async"
-          className="w-full h-full object-cover object-top transition-transform duration-200 group-hover:scale-105"
-        />
+        <>
+          <img
+            src={thumbUrl}
+            alt={fileName}
+            loading="lazy"
+            decoding="async"
+            className="w-full h-full object-cover object-top transition-transform duration-200 group-hover:scale-105"
+          />
+          <div className="absolute top-2 left-2 z-10 pointer-events-none">
+            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider leading-none uppercase bg-red-500 text-white shadow-sm">
+              PDF
+            </span>
+          </div>
+        </>
       ) : (
         <div className="w-20 sm:w-24 h-24 sm:h-28 bg-white dark:bg-[#1c1d20] rounded-md shadow-sm border border-neutral-200/90 dark:border-neutral-700/80 p-2 sm:p-2.5 flex flex-col justify-between select-none">
           <div className="flex items-center justify-between">
@@ -138,11 +145,6 @@ function SharedPdfCardPreview({ file, fileName }) {
           </div>
         </div>
       )}
-      <div className="absolute top-2 left-2 z-10 pointer-events-none">
-        <span className="px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider leading-none uppercase bg-red-500 text-white shadow-sm">
-          PDF
-        </span>
-      </div>
     </div>
   );
 }
