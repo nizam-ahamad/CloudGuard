@@ -1250,6 +1250,81 @@ const handleCancelUpload = async (req, res) => {
 router.post('/cancel-upload', authMiddleware, handleCancelUpload);
 router.post('/multipart/abort', authMiddleware, handleCancelUpload);
 
+// POST /api/files/refresh-presigned-url — Re-sign single-PUT upload URL after offline recovery
+router.post('/refresh-presigned-url', authMiddleware, async (req, res) => {
+  try {
+    const { fileId } = req.body;
+    const userId = req.user.id || req.user._id;
+
+    if (!fileId) {
+      return res.status(400).json({ error: 'fileId is required' });
+    }
+    if (!mongoose.Types.ObjectId.isValid(String(fileId))) {
+      return res.status(400).json({ error: 'Invalid fileId' });
+    }
+
+    const file = await File.findOne({ _id: fileId, userId, securityStatus: 'pending_scan' }).lean();
+    if (!file) {
+      return res.status(404).json({ error: 'Pending upload record not found or already finalized' });
+    }
+
+    const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
+    const command = new PutObjectCommand({
+      Bucket: bucket,
+      Key: file.s3Key,
+      ContentType: file.mimeType || 'application/octet-stream',
+    });
+
+    const presignedUrl = await getSignedUrl(s3Client, command, { expiresIn: 900 });
+    return res.status(200).json({
+      presignedUrl,
+      fileId: file._id,
+      s3Key: file.s3Key,
+    });
+  } catch (err) {
+    console.error('[Refresh Presigned URL Error]:', err.message || err);
+    return res.status(502).json({ error: 'Failed to refresh presigned upload URL' });
+  }
+});
+
+// POST /api/files/multipart/refresh-part-url — Re-sign individual multipart chunk URL after offline recovery
+router.post('/multipart/refresh-part-url', authMiddleware, async (req, res) => {
+  try {
+    const { fileId, s3Key, uploadId, partNumber } = req.body;
+    const userId = req.user.id || req.user._id;
+    const parsedPartNumber = Number(partNumber);
+
+    if (!fileId || !s3Key || !uploadId || partNumber === undefined || partNumber === null || partNumber === '' || Number.isNaN(parsedPartNumber) || parsedPartNumber < 1 || parsedPartNumber > 10000) {
+      return res.status(400).json({ error: 'Missing or invalid multipart part refresh parameters' });
+    }
+    if (!mongoose.Types.ObjectId.isValid(String(fileId))) {
+      return res.status(400).json({ error: 'Invalid fileId' });
+    }
+
+    const file = await File.findOne({ _id: fileId, userId, s3Key, securityStatus: 'pending_scan' }).lean();
+    if (!file) {
+      return res.status(404).json({ error: 'Pending multipart upload record not found' });
+    }
+
+    const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
+    const partCmd = new UploadPartCommand({
+      Bucket: bucket,
+      Key: file.s3Key,
+      UploadId: uploadId,
+      PartNumber: parsedPartNumber,
+    });
+
+    const signedUrl = await getSignedUrl(s3Client, partCmd, { expiresIn: 14400 });
+    return res.status(200).json({
+      partNumber: parsedPartNumber,
+      signedUrl,
+    });
+  } catch (err) {
+    console.error('[Refresh Multipart Part URL Error]:', err.message || err);
+    return res.status(502).json({ error: 'Failed to refresh multipart part URL' });
+  }
+});
+
 // -------------------------------------------------------------
 // 4. FINALIZE UPLOAD & THREAT AUTO-DELETE PIPELINE
 // -------------------------------------------------------------

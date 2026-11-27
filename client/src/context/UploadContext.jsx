@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import axios from 'axios';
-import { Upload, UploadCloud, CheckCircle2, AlertTriangle, X, Loader2, Folder } from 'lucide-react';
+import { Upload, UploadCloud, CheckCircle2, AlertTriangle, X, Loader2, Folder, WifiOff } from 'lucide-react';
 import { computeFileSHA256 } from '../utils/cryptoHelper';
 import { generateMediaThumbnail } from '../utils/thumbnailHelper';
 import { useToast } from './ToastContext';
@@ -16,10 +16,266 @@ const MULTIPART_THRESHOLD = 25 * 1024 * 1024; // 25 MB
 const MULTIPART_PART_CONCURRENCY = 6;
 const MULTIPART_WORKERS = MULTIPART_PART_CONCURRENCY;
 const MAX_PART_RETRIES = 6; // Up to 6 retries with backoff on network stall/timeout
+const MAX_OFFLINE_WAIT_MS = 23 * 60 * 60 * 1000; // 23h ceiling (inside B2's 24h multipart lifecycle)
+const SINGLE_PUT_REFRESH_AFTER_MS = 12 * 60 * 1000; // Refresh 15m PUT URL after 12m
+const MULTIPART_PART_REFRESH_AFTER_MS = 3.5 * 60 * 60 * 1000; // Refresh 4h part URL after 3.5h
 const TERMINAL_STATUSES = new Set(['clean', 'unverified', 'threat_purged', 'error']);
+
+function isUserAbortError(err) {
+  return Boolean(
+    err?.code === 'ERR_CANCELED' ||
+    err?.name === 'CanceledError' ||
+    err?.name === 'AbortError' ||
+    err?.isUserCanceled
+  );
+}
+
+function isOfflineNetworkError(err) {
+  if (isUserAbortError(err) || err?.isFatalUploadError) return false;
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return true;
+  if (
+    err?.code === 'ERR_NETWORK' ||
+    err?.code === 'ECONNABORTED' ||
+    err?.code === 'ERR_NETWORK_IO_SUSPENDED' ||
+    err?.code === 'ERR_INTERNET_DISCONNECTED' ||
+    err?.message?.includes('ERR_NETWORK_IO_SUSPENDED') ||
+    err?.message?.includes('ERR_INTERNET_DISCONNECTED')
+  ) {
+    return true;
+  }
+  return Boolean(!err?.response && !err?.status);
+}
+
+function createAbortError() {
+  return Object.assign(new Error('Upload canceled'), {
+    name: 'AbortError',
+    isUserCanceled: true,
+  });
+}
+
+function waitForInternetConnection(signal) {
+  if (signal?.aborted) {
+    return Promise.reject(createAbortError());
+  }
+
+  return new Promise((resolve, reject) => {
+    const offlineStartedAt = Date.now();
+    let settled = false;
+    let probeInterval = null;
+    let ceilingTimer = null;
+    let stabilizeTimer = null;
+    let activeProbeController = null;
+
+    const cleanup = () => {
+      if (probeInterval) {
+        clearInterval(probeInterval);
+        probeInterval = null;
+      }
+      if (ceilingTimer) {
+        clearTimeout(ceilingTimer);
+        ceilingTimer = null;
+      }
+      if (stabilizeTimer) {
+        clearTimeout(stabilizeTimer);
+        stabilizeTimer = null;
+      }
+      if (activeProbeController) {
+        try { activeProbeController.abort(); } catch {}
+        activeProbeController = null;
+      }
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('online', triggerStabilizeAndResolve);
+      }
+      if (signal) {
+        signal.removeEventListener('abort', handleAbort);
+      }
+    };
+
+    const handleAbort = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(createAbortError());
+    };
+
+    const failOnCeiling = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error('Offline timeout exceeded (23h). Please retry upload.'));
+    };
+
+    const triggerStabilizeAndResolve = () => {
+      if (settled || signal?.aborted) return;
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+      if (stabilizeTimer) return;
+
+      stabilizeTimer = setTimeout(() => {
+        stabilizeTimer = null;
+        if (settled) return;
+        if (signal?.aborted) {
+          handleAbort();
+          return;
+        }
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+          return;
+        }
+        if (Date.now() - offlineStartedAt >= MAX_OFFLINE_WAIT_MS) {
+          failOnCeiling();
+          return;
+        }
+        settled = true;
+        cleanup();
+        resolve();
+      }, 1500);
+    };
+
+    const runConnectivityProbe = async () => {
+      if (settled || signal?.aborted) return;
+      if (Date.now() - offlineStartedAt >= MAX_OFFLINE_WAIT_MS) {
+        failOnCeiling();
+        return;
+      }
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+
+      if (activeProbeController) {
+        try { activeProbeController.abort(); } catch {}
+      }
+      activeProbeController = new AbortController();
+      try {
+        const res = await fetch(`/manifest.json?ping=${Date.now()}`, {
+          method: 'HEAD',
+          cache: 'no-store',
+          signal: activeProbeController.signal,
+        });
+        if (!settled && res && res.status < 500) {
+          triggerStabilizeAndResolve();
+        }
+      } catch {
+        // Still offline or probe aborted
+      } finally {
+        activeProbeController = null;
+      }
+    };
+
+    if (signal) {
+      signal.addEventListener('abort', handleAbort, { once: true });
+    }
+    if (typeof window !== 'undefined') {
+      window.addEventListener('online', triggerStabilizeAndResolve);
+    }
+
+    ceilingTimer = setTimeout(failOnCeiling, MAX_OFFLINE_WAIT_MS);
+    probeInterval = setInterval(runConnectivityProbe, 15000);
+    runConnectivityProbe();
+  });
+}
 
 // Dedicated Axios instance without default Authorization header for direct S3 PUTs (credential-free)
 const s3Axios = axios.create({ withCredentials: false });
+
+const PENDING_CANCEL_STORAGE_KEY = 'cloudguard:pending-upload-cancels';
+let isFlushingPendingCancels = false;
+
+function readPendingBackendCancels() {
+  try {
+    if (typeof localStorage === 'undefined') return [];
+    const raw = localStorage.getItem(PENDING_CANCEL_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writePendingBackendCancels(items) {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    if (!items || items.length === 0) {
+      localStorage.removeItem(PENDING_CANCEL_STORAGE_KEY);
+    } else {
+      localStorage.setItem(PENDING_CANCEL_STORAGE_KEY, JSON.stringify(items));
+    }
+  } catch {
+    // Ignore storage quota or private browsing errors
+  }
+}
+
+function getPendingCancelKey(payload) {
+  return String(payload?.fileId || payload?.uploadId || payload?.s3Key || '');
+}
+
+function enqueuePendingBackendCancel(payload) {
+  const key = getPendingCancelKey(payload);
+  if (!key) return;
+  const existing = readPendingBackendCancels();
+  if (existing.some((item) => getPendingCancelKey(item) === key)) {
+    return;
+  }
+  writePendingBackendCancels([
+    ...existing,
+    {
+      fileId: payload?.fileId || null,
+      s3Key: payload?.s3Key || null,
+      uploadId: payload?.uploadId || null,
+      createdAt: payload?.createdAt || Date.now(),
+    },
+  ]);
+}
+
+function removePendingBackendCancel(payload) {
+  const key = getPendingCancelKey(payload);
+  if (!key) return;
+  const existing = readPendingBackendCancels();
+  const filtered = existing.filter((item) => getPendingCancelKey(item) !== key);
+  writePendingBackendCancels(filtered);
+}
+
+async function flushPendingBackendCancels() {
+  if (isFlushingPendingCancels) return;
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+
+  const pendingCancels = readPendingBackendCancels();
+  if (!pendingCancels.length) return;
+
+  const rawToken = typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null;
+  const hasValidToken = Boolean(rawToken && rawToken !== 'null' && rawToken !== 'undefined' && rawToken !== 'cookie-session');
+  const hasCookieSession = typeof localStorage !== 'undefined' && localStorage.getItem('cg_session_active') === '1';
+  if (!hasValidToken && !hasCookieSession) return;
+
+  const authHeaders = hasValidToken ? { Authorization: `Bearer ${rawToken}` } : {};
+
+  isFlushingPendingCancels = true;
+  try {
+    for (const entry of pendingCancels) {
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) break;
+      const endpoint = entry?.uploadId ? '/api/files/multipart/abort' : '/api/files/cancel-upload';
+      try {
+        await axios.post(
+          `${API_BASE_URL || ''}${endpoint}`,
+          {
+            fileId: entry?.fileId || null,
+            s3Key: entry?.s3Key || null,
+            uploadId: entry?.uploadId || null,
+          },
+          { headers: authHeaders, withCredentials: true }
+        );
+        removePendingBackendCancel(entry);
+      } catch (err) {
+        const status = err?.response?.status;
+        if (status === 404) {
+          removePendingBackendCancel(entry);
+        } else if (!err?.response || err?.code === 'ERR_NETWORK') {
+          // Retain in localStorage for the next online reconnect
+          continue;
+        }
+      }
+    }
+  } finally {
+    isFlushingPendingCancels = false;
+  }
+}
 
 // Format raw bytes into readable units
 export function formatBytes(bytes) {
@@ -176,7 +432,7 @@ function computeQueueMetrics(items) {
     if (TERMINAL_STATUSES.has(item.status) || item.status === 'completed' || item.status === 'malicious' || item.status === 'failed') {
       completedCount++;
       uploadedBytes += size;
-    } else if (['uploading', 'hashing', 'finalizing'].includes(item.status)) {
+    } else if (['uploading', 'hashing', 'finalizing', 'paused_offline'].includes(item.status)) {
       activeCount++;
       const currentUploaded = typeof item.uploadedBytes === 'number' ? item.uploadedBytes : 0;
       uploadedBytes += Math.min(size, Math.max(0, currentUploaded));
@@ -208,13 +464,17 @@ export function UploadProvider({ children }) {
   const [etaSeconds, setEtaSeconds] = useState(null);
   const [quotaUpgradeState, setQuotaUpgradeState] = useState(null);
   const [folderPrep, setFolderPrep] = useState(null);
+  const [isOnline, setIsOnline] = useState(() => (typeof navigator !== 'undefined' ? navigator.onLine : true));
+  const isOnlineRef = useRef(isOnline);
   const dropdownRef = useRef(null);
 
   const processingIdsRef = useRef(new Set());
   const inFlightIdsRef = useRef(new Set());
-  const activeControllersRef = useRef(new Map());
-  const abortControllersRef = activeControllersRef;
+  const itemAbortControllersRef = useRef(new Map());
+  const activeControllersRef = itemAbortControllersRef;
+  const abortControllersRef = itemAbortControllersRef;
   const activeTicketsRef = useRef(new Map());
+  const speedTrackerRef = useRef({ idleTicks: 0 });
   const batchCancelledRef = useRef(false);
   const batchTotalRef = useRef(0);
   const batchStartTimeRef = useRef(0);
@@ -229,12 +489,20 @@ export function UploadProvider({ children }) {
   const eventDebounceTimerRef = useRef(null);
   const cancelledTicketsRef = useRef(new Set());
   const cancelledIdsRef = useRef(new Set());
-  const wakeLockRef = useRef(null);
+  const shouldKeepScreenAwake =
+    Boolean(folderPrep) ||
+    queue.some((item) =>
+      ['queued', 'hashing', 'uploading', 'paused_offline', 'finalizing'].includes(item.status)
+    );
+  const shouldKeepScreenAwakeRef = useRef(shouldKeepScreenAwake);
+  shouldKeepScreenAwakeRef.current = shouldKeepScreenAwake;
+  const wakeLockSentinelRef = useRef(null);
+  const wakeLockRequestingRef = useRef(false);
   const toastCtx = useToast();
 
   const notifyBackendCancel = useCallback((ticket) => {
-    if (!ticket || (!ticket.fileId && !ticket.s3Key)) return;
-    const key = String(ticket.fileId || ticket.s3Key);
+    if (!ticket || (!ticket.fileId && !ticket.s3Key && !ticket.uploadId)) return;
+    const key = String(ticket.fileId || ticket.uploadId || ticket.s3Key);
     if (cancelledTicketsRef.current.has(key)) return;
 
     cancelledTicketsRef.current.add(key);
@@ -244,19 +512,39 @@ export function UploadProvider({ children }) {
       }
     }
 
-    const token = localStorage.getItem('token');
-    const authHeaders = token && token !== 'null' && token !== 'undefined' && token !== 'cookie-session' ? { Authorization: `Bearer ${token}` } : {};
+    const payload = {
+      fileId: ticket.fileId || null,
+      s3Key: ticket.s3Key || null,
+      uploadId: ticket.uploadId || null,
+    };
+
+    // Persist first so cancels clicked while offline survive network outages and page reloads
+    enqueuePendingBackendCancel(payload);
+
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      return;
+    }
+
+    const rawToken = typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null;
+    const authHeaders = rawToken && rawToken !== 'null' && rawToken !== 'undefined' && rawToken !== 'cookie-session'
+      ? { Authorization: `Bearer ${rawToken}` }
+      : {};
+    const endpoint = payload.uploadId ? '/api/files/multipart/abort' : '/api/files/cancel-upload';
+
     axios
       .post(
-        `${API_BASE_URL || ''}/api/files/cancel-upload`,
-        {
-          fileId: ticket.fileId,
-          s3Key: ticket.s3Key,
-          uploadId: ticket.uploadId || null,
-        },
+        `${API_BASE_URL || ''}${endpoint}`,
+        payload,
         { headers: authHeaders, withCredentials: true }
       )
-      .catch(() => {});
+      .then(() => {
+        removePendingBackendCancel(payload);
+      })
+      .catch((err) => {
+        if (err?.response?.status === 404) {
+          removePendingBackendCancel(payload);
+        }
+      });
   }, []);
 
   const notifyCancelBackend = notifyBackendCancel;
@@ -302,42 +590,63 @@ export function UploadProvider({ children }) {
     };
   }, []);
 
-  const releaseWakeLock = useCallback(async () => {
-    if (wakeLockRef.current) {
-      try {
-        await wakeLockRef.current.release();
-      } catch {}
-      wakeLockRef.current = null;
+  const releaseScreenWakeLock = useCallback(async () => {
+    const sentinel = wakeLockSentinelRef.current;
+    wakeLockSentinelRef.current = null;
+    if (sentinel) {
+      await sentinel.release().catch(() => {});
     }
   }, []);
 
-  const acquireWakeLock = useCallback(async () => {
-    if (typeof navigator === 'undefined' || !('wakeLock' in navigator)) return;
-    if (wakeLockRef.current && !wakeLockRef.current.released) return;
+  const acquireScreenWakeLock = useCallback(async () => {
+    if (
+      !shouldKeepScreenAwakeRef.current ||
+      wakeLockSentinelRef.current ||
+      wakeLockRequestingRef.current ||
+      typeof navigator === 'undefined' ||
+      !('wakeLock' in navigator) ||
+      (typeof document !== 'undefined' && document.visibilityState !== 'visible')
+    ) {
+      return;
+    }
 
-    // Only request when active transfers exist and total queue size >= 50 MB
-    const metrics = computeQueueMetrics(queueRef.current || []);
-    if (metrics.activeCount === 0 && metrics.queuedCount === 0) return;
-    if (metrics.totalBytes < 50 * 1024 * 1024) return;
-
+    wakeLockRequestingRef.current = true;
     try {
-      wakeLockRef.current = await navigator.wakeLock.request('screen');
-      wakeLockRef.current.addEventListener('release', () => {
-        wakeLockRef.current = null;
+      const sentinel = await navigator.wakeLock.request('screen');
+      if (!shouldKeepScreenAwakeRef.current) {
+        await sentinel.release().catch(() => {});
+        return;
+      }
+      sentinel.addEventListener('release', () => {
+        if (wakeLockSentinelRef.current === sentinel) {
+          wakeLockSentinelRef.current = null;
+        }
       });
+      wakeLockSentinelRef.current = sentinel;
     } catch {
-      wakeLockRef.current = null;
+      // Silently ignore Battery Saver / permission NotAllowedError
+    } finally {
+      wakeLockRequestingRef.current = false;
     }
   }, []);
 
-  // Screen Wake Lock visibility-change re-acquisition and lifecycle cleanup
+  const releaseWakeLock = releaseScreenWakeLock;
+  const acquireWakeLock = acquireScreenWakeLock;
+
+  useEffect(() => {
+    shouldKeepScreenAwakeRef.current = shouldKeepScreenAwake;
+    if (shouldKeepScreenAwake) {
+      acquireScreenWakeLock();
+    } else {
+      releaseScreenWakeLock();
+    }
+  }, [shouldKeepScreenAwake, acquireScreenWakeLock, releaseScreenWakeLock]);
+
+  // Screen Wake Lock visibility-change re-acquisition and unmount cleanup
   useEffect(() => {
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        const metrics = computeQueueMetrics(queueRef.current || []);
-        if ((metrics.activeCount > 0 || metrics.queuedCount > 0) && metrics.totalBytes >= 50 * 1024 * 1024) {
-          acquireWakeLock();
-        }
+      if (document.visibilityState === 'visible' && shouldKeepScreenAwakeRef.current) {
+        acquireScreenWakeLock();
       }
     };
 
@@ -348,14 +657,14 @@ export function UploadProvider({ children }) {
       if (typeof document !== 'undefined') {
         document.removeEventListener('visibilitychange', handleVisibilityChange);
       }
-      releaseWakeLock();
+      releaseScreenWakeLock();
     };
-  }, [acquireWakeLock, releaseWakeLock]);
+  }, [acquireScreenWakeLock, releaseScreenWakeLock]);
 
   // Accidental Tab-Close / Reload Guard while uploads are actively transferring
   useEffect(() => {
     const hasActive = queue.some((i) =>
-      ['uploading', 'hashing', 'finalizing'].includes(i.status)
+      ['uploading', 'hashing', 'finalizing', 'paused_offline'].includes(i.status)
     );
 
     if (!hasActive) return;
@@ -420,17 +729,71 @@ export function UploadProvider({ children }) {
     queueRef.current = uploadQueue;
   }, [uploadQueue]);
 
+  useEffect(() => {
+    isOnlineRef.current = isOnline;
+  }, [isOnline]);
+
+  useEffect(() => {
+    flushPendingBackendCancels();
+  }, []);
+
+  useEffect(() => {
+    let onlineFlushTimer = null;
+
+    const handleOnline = () => {
+      isOnlineRef.current = true;
+      setIsOnline(true);
+      if (onlineFlushTimer) {
+        clearTimeout(onlineFlushTimer);
+      }
+      onlineFlushTimer = setTimeout(() => {
+        onlineFlushTimer = null;
+        flushPendingBackendCancels();
+      }, 1500);
+    };
+    const handleOffline = () => {
+      isOnlineRef.current = false;
+      setIsOnline(false);
+      if (onlineFlushTimer) {
+        clearTimeout(onlineFlushTimer);
+        onlineFlushTimer = null;
+      }
+      setGlobalSpeed('');
+      speedTrackerRef.current.idleTicks = 0;
+      lastActiveSpeedRef.current = 0;
+      emaBytesPerSecRef.current = 0;
+      speedSamplesRef.current = [];
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('online', handleOnline);
+      window.addEventListener('offline', handleOffline);
+    }
+    return () => {
+      if (onlineFlushTimer) {
+        clearTimeout(onlineFlushTimer);
+      }
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('online', handleOnline);
+        window.removeEventListener('offline', handleOffline);
+      }
+    };
+  }, []);
+
   const trackByteSpeedTick = useCallback(() => {
     const now = Date.now();
-    const metrics = computeQueueMetrics(queueRef.current || []);
+    const currentItems = queueRef.current || [];
+    const metrics = computeQueueMetrics(currentItems);
     const currentUploaded = metrics.uploadedBytes;
 
-    const hasActiveTransfers = (queueRef.current || []).some((i) =>
+    const onlineActiveItems = currentItems.filter((i) =>
       ['uploading', 'hashing', 'finalizing'].includes(i.status)
     );
+    const hasActiveTransfers = isOnlineRef.current && onlineActiveItems.length > 0;
 
     if (!hasActiveTransfers) {
       setGlobalSpeed('');
+      speedTrackerRef.current.idleTicks = 0;
       lastActiveSpeedRef.current = 0;
       emaBytesPerSecRef.current = 0;
       speedSamplesRef.current = [];
@@ -448,6 +811,7 @@ export function UploadProvider({ children }) {
     const deltaBytes = Math.max(0, currentUploaded - oldest.bytes);
 
     if (deltaSec >= 0.4 && deltaBytes > 0) {
+      speedTrackerRef.current.idleTicks = 0;
       const activeWindowSpeed = deltaBytes / deltaSec;
       emaBytesPerSecRef.current =
         emaBytesPerSecRef.current > 0
@@ -463,8 +827,8 @@ export function UploadProvider({ children }) {
       setGlobalSpeed(speedStr);
       lastProgressSampleRef.current = { time: now, bytes: currentUploaded };
     } else if (hasActiveTransfers) {
-      const anyFinalizing = (queueRef.current || []).some((i) => i.status === 'finalizing');
-      const anyHashing = (queueRef.current || []).some((i) => i.status === 'hashing');
+      const anyFinalizing = onlineActiveItems.some((i) => i.status === 'finalizing');
+      const anyHashing = onlineActiveItems.some((i) => i.status === 'hashing');
 
       if (anyFinalizing) {
         setGlobalSpeed('Finalizing...');
@@ -486,13 +850,14 @@ export function UploadProvider({ children }) {
   // Hybrid EMA ETA Engine: 500ms ticker with cold-start and positive-only countdown
   useEffect(() => {
     const hasActiveTransfers = queue.some((i) =>
-      ['uploading', 'hashing', 'finalizing', 'queued', 'pending'].includes(i.status)
+      ['uploading', 'hashing', 'finalizing', 'queued', 'pending', 'paused_offline'].includes(i.status)
     );
 
     if (!hasActiveTransfers) {
       releaseWakeLock();
       setEtaSeconds(null);
       setGlobalSpeed('');
+      speedTrackerRef.current.idleTicks = 0;
       batchStartTimeRef.current = 0;
       emaBytesPerSecRef.current = 0;
       lastActiveSpeedRef.current = 0;
@@ -513,15 +878,28 @@ export function UploadProvider({ children }) {
     const interval = setInterval(() => {
       trackByteSpeedTick();
 
-      const metrics = computeQueueMetrics(queueRef.current || []);
+      const currentItems = queueRef.current || [];
+      const metrics = computeQueueMetrics(currentItems);
       if (metrics.activeCount === 0 && metrics.queuedCount === 0) {
         releaseWakeLock();
         setEtaSeconds(null);
         setGlobalSpeed('');
+        speedTrackerRef.current.idleTicks = 0;
         batchStartTimeRef.current = 0;
         emaBytesPerSecRef.current = 0;
         lastActiveSpeedRef.current = 0;
         speedSamplesRef.current = [];
+        return;
+      }
+
+      const everyActivePausedOffline = currentItems
+        .filter((i) => ['uploading', 'hashing', 'finalizing', 'queued', 'pending', 'paused_offline'].includes(i.status))
+        .every((i) => i.status === 'paused_offline');
+
+      if (!isOnlineRef.current || everyActivePausedOffline) {
+        setGlobalSpeed('');
+        speedTrackerRef.current.idleTicks = 0;
+        setEtaSeconds(-1);
         return;
       }
 
@@ -655,7 +1033,7 @@ export function UploadProvider({ children }) {
     if (batchCancelledRef.current) return;
 
     const activeItems = queue.filter((item) =>
-      ['hashing', 'uploading', 'finalizing'].includes(item.status)
+      ['hashing', 'uploading', 'paused_offline', 'finalizing'].includes(item.status)
     );
     const activeCount = Math.max(activeItems.length, inFlightIdsRef.current.size);
 
@@ -717,26 +1095,26 @@ export function UploadProvider({ children }) {
     });
   }, []);
 
-  const uploadLargeFileMultipart = async ({ id, file, folderId, headers, updateItem, signal }) => {
+  const uploadLargeFileMultipart = async ({ id, file, folderId, headers, updateItem, signal: itemSignal }) => {
     // 1. Acquire multipart session + 512px thumbnail in parallel
     let isAborted = false;
     const abortController = new AbortController();
-    activeControllersRef.current.set(id, abortController);
 
-    if (signal) {
-      if (signal.aborted) {
-        isAborted = true;
-        abortController.abort();
+    const handleParentAbort = () => {
+      isAborted = true;
+      abortController.abort();
+    };
+
+    if (itemSignal) {
+      if (itemSignal.aborted) {
+        handleParentAbort();
       } else {
-        signal.addEventListener('abort', () => {
-          isAborted = true;
-          abortController.abort();
-        }, { once: true });
+        itemSignal.addEventListener('abort', handleParentAbort, { once: true });
       }
     }
 
     if (batchCancelledRef.current || cancelledIdsRef.current.has(id) || abortController.signal.aborted || isAborted) {
-      throw new Error('Upload cancelled');
+      throw createAbortError();
     }
 
     updateItem(id, { status: 'uploading', progress: 0, uploadedBytes: 0, statusLabel: 'Starting...' });
@@ -749,7 +1127,7 @@ export function UploadProvider({ children }) {
     const MAX_INIT_RETRIES = 2; // initial + 2 retries
     while (initAttempt <= MAX_INIT_RETRIES) {
       if (batchCancelledRef.current || cancelledIdsRef.current.has(id) || abortController.signal.aborted || isAborted) {
-        throw new Error('Upload cancelled');
+        throw createAbortError();
       }
       try {
         initRes = await axios.post(
@@ -771,13 +1149,10 @@ export function UploadProvider({ children }) {
         if (
           batchCancelledRef.current ||
           cancelledIdsRef.current.has(id) ||
-          axios.isCancel(initErr) ||
-          initErr?.name === 'CanceledError' ||
-          initErr?.name === 'AbortError' ||
-          initErr?.code === 'ERR_CANCELED' ||
+          isUserAbortError(initErr) ||
           abortController.signal.aborted
         ) {
-          throw initErr;
+          throw createAbortError();
         }
         if (initErr.response?.status === 403) {
           const quotaError = new Error('Storage quota exceeded');
@@ -786,6 +1161,13 @@ export function UploadProvider({ children }) {
           throw quotaError;
         }
         initAttempt += 1;
+        if (isOfflineNetworkError(initErr)) {
+          updateItem(id, { status: 'paused_offline', statusLabel: null });
+          await waitForInternetConnection(abortController.signal);
+          updateItem(id, { status: 'uploading', statusLabel: 'Starting...' });
+          initAttempt -= 1;
+          continue;
+        }
         const isNetworkOrTimeout =
           !initErr.response ||
           initErr.code === 'ECONNABORTED' ||
@@ -813,11 +1195,13 @@ export function UploadProvider({ children }) {
       isAborted = true;
       abortController.abort();
       notifyBackendCancel({ fileId, s3Key, uploadId });
-      throw new Error('Upload cancelled');
+      throw createAbortError();
     }
 
     let highWaterBytes = 0;
     const partProgressMap = new Array(partUrls.length).fill(0);
+    const partIssuedAt = new Array(partUrls.length).fill(Date.now());
+    const currentPartUrls = partUrls.map((p) => p?.signedUrl || p?.uploadUrl || null);
     const completedParts = new Array(partUrls.length);
 
     let lastProgressTime = 0;
@@ -847,8 +1231,26 @@ export function UploadProvider({ children }) {
     };
 
     const onPartProgress = (partIndex, loaded) => {
+      if (!navigator.onLine || !isOnlineRef.current || isAborted || itemSignal?.aborted || abortController.signal.aborted) {
+        return;
+      }
       partProgressMap[partIndex] = loaded;
       syncAggregateProgress();
+    };
+
+    const refreshPartSignedUrl = async (partNumber, index) => {
+      const refreshRes = await axios.post(
+        `${API_BASE_URL || ''}/api/files/multipart/refresh-part-url`,
+        { fileId, s3Key, uploadId, partNumber },
+        { headers, signal: itemSignal || abortController.signal, withCredentials: true }
+      );
+      const freshUrl = refreshRes.data?.signedUrl || refreshRes.data?.uploadUrl;
+      if (!freshUrl) {
+        throw new Error(`Missing refreshed URL for part ${partNumber}`);
+      }
+      currentPartUrls[index] = freshUrl;
+      partIssuedAt[index] = Date.now();
+      return freshUrl;
     };
 
     const uploadSinglePartWithRetry = async (partMeta, index) => {
@@ -857,19 +1259,25 @@ export function UploadProvider({ children }) {
       const end = Math.min(start + effectivePartSize, file.size);
       const partBytes = end - start;
 
-      let currentPartMeta = partMeta;
-      let targetUrl = currentPartMeta?.uploadUrl || currentPartMeta?.signedUrl;
       let attempt = 0;
-      let backgroundResumeCycles = 0;
-      const MAX_BACKGROUND_RESUMES = 10;
 
       while (attempt < MAX_PART_RETRIES) {
-        if (isAborted || abortController.signal.aborted) throw new Error('Multipart upload aborted');
+        if (isAborted || itemSignal?.aborted || abortController.signal.aborted) {
+          throw createAbortError();
+        }
         try {
+          // Proactively refresh part URL if older than 3.5h before issuing PUT
+          if (!currentPartUrls[index] || Date.now() - partIssuedAt[index] >= MULTIPART_PART_REFRESH_AFTER_MS) {
+            await refreshPartSignedUrl(partNumber, index);
+          }
+
           // Re-slice freshly per attempt to ensure handle remains valid
           const chunkBlob = file.slice(start, end);
           if (!chunkBlob || chunkBlob.size === 0) {
-            throw new Error('File chunk is empty (0 bytes) or could not be read from device');
+            throw Object.assign(
+              new Error('File chunk is empty (0 bytes) or could not be read from device'),
+              { isFatalUploadError: true }
+            );
           }
 
           // Stream Blob slices directly without arrayBuffer() for files > 25 MB (and on Android):
@@ -878,27 +1286,21 @@ export function UploadProvider({ children }) {
           if (isIOS && file.size <= 25 * 1024 * 1024) {
             const chunkBuf = await chunkBlob.arrayBuffer();
             if (chunkBuf.byteLength === 0) {
-              throw new Error('iOS revoked file access — please retry this file');
+              throw Object.assign(
+                new Error('iOS revoked file access — please retry this file'),
+                { isFatalUploadError: true }
+              );
             }
             bodyToSend = chunkBuf;
           }
 
-          if (!targetUrl) {
-            const signRes = await axios.post(
-              `${API_BASE_URL || ''}/api/files/multipart/sign-part`,
-              { s3Key, uploadId, partNumber },
-              { headers, signal: abortController.signal }
-            );
-            targetUrl = signRes.data?.uploadUrl || signRes.data?.signedUrl;
-            currentPartMeta.uploadUrl = targetUrl;
-          }
-
+          const targetUrl = currentPartUrls[index];
           partProgressMap[index] = 0;
 
           // Native XMLHttpRequest provides zero-copy streaming and true real-time onprogress byte ticks
           const eTag = await new Promise((resolve, reject) => {
-            if (isAborted || abortController.signal.aborted) {
-              return reject(new Error('Multipart upload aborted'));
+            if (isAborted || itemSignal?.aborted || abortController.signal.aborted) {
+              return reject(createAbortError());
             }
 
             const xhr = new XMLHttpRequest();
@@ -908,14 +1310,24 @@ export function UploadProvider({ children }) {
 
             const abortHandler = () => {
               try { xhr.abort(); } catch {}
-              reject(new Error('Multipart upload aborted'));
+              reject(createAbortError());
             };
 
             abortController.signal.addEventListener('abort', abortHandler, { once: true });
 
             // Attach xhr.upload.onprogress BEFORE calling xhr.send()
             xhr.upload.onprogress = (e) => {
-              if (isAborted || abortController.signal.aborted || batchCancelledRef.current || cancelledIdsRef.current.has(id)) return;
+              if (
+                !navigator.onLine ||
+                !isOnlineRef.current ||
+                isAborted ||
+                itemSignal?.aborted ||
+                abortController.signal.aborted ||
+                batchCancelledRef.current ||
+                cancelledIdsRef.current.has(id)
+              ) {
+                return;
+              }
               if (e.lengthComputable) {
                 onPartProgress(index, e.loaded);
               }
@@ -926,7 +1338,11 @@ export function UploadProvider({ children }) {
               if (xhr.status >= 200 && xhr.status < 300) {
                 const rawEtag = xhr.getResponseHeader('ETag') || xhr.getResponseHeader('etag');
                 if (!rawEtag) {
-                  return reject(new Error('Bucket CORS missing ExposeHeaders: ["ETag"]'));
+                  return reject(
+                    Object.assign(new Error('Bucket CORS missing ExposeHeaders: ["ETag"]'), {
+                      isFatalUploadError: true,
+                    })
+                  );
                 }
                 resolve(rawEtag);
               } else {
@@ -939,6 +1355,7 @@ export function UploadProvider({ children }) {
             xhr.onerror = () => {
               abortController.signal.removeEventListener('abort', abortHandler);
               const err = new Error('Chunk upload network error');
+              err.code = 'ERR_NETWORK';
               reject(err);
             };
 
@@ -951,7 +1368,7 @@ export function UploadProvider({ children }) {
 
             xhr.onabort = () => {
               abortController.signal.removeEventListener('abort', abortHandler);
-              reject(new Error('Multipart upload aborted'));
+              reject(createAbortError());
             };
 
             xhr.send(bodyToSend);
@@ -966,61 +1383,47 @@ export function UploadProvider({ children }) {
           syncAggregateProgress();
 
           if (
+            isUserAbortError(err) ||
+            itemSignal?.aborted ||
             isAborted ||
-            abortController.signal.aborted ||
-            axios.isCancel(err) ||
-            err?.name === 'CanceledError' ||
-            err?.name === 'AbortError' ||
-            err?.code === 'ERR_CANCELED'
+            abortController.signal.aborted
           ) {
             throw err;
           }
 
+          // Indefinite offline auto-resume without consuming retry budget
+          if (isOfflineNetworkError(err)) {
+            partProgressMap[index] = 0;
+            syncAggregateProgress(true);
+            updateItem(id, { status: 'paused_offline', statusLabel: null });
+            await waitForInternetConnection(itemSignal || abortController.signal);
+            updateItem(id, { status: 'uploading', statusLabel: null });
+            continue;
+          }
+
           const status = err.status || err.response?.status;
 
-          // 1. Expired Presigned URL Fallback (HTTP 403)
+          // Expired Presigned URL Fallback (HTTP 403)
           if (status === 403) {
-            console.warn(`[Multipart Part ${partNumber}] Presigned URL expired (HTTP 403). Refreshing signed URL...`);
+            console.warn(`[Multipart Part ${partNumber}] Presigned URL expired (HTTP 403). Refreshing part URL...`);
             try {
-              const signRes = await axios.post(
-                `${API_BASE_URL || ''}/api/files/multipart/sign-part`,
-                { s3Key, uploadId, partNumber },
-                { headers, signal: abortController.signal }
-              );
-              const refreshedUrl = signRes.data?.uploadUrl || signRes.data?.signedUrl;
-              if (refreshedUrl) {
-                targetUrl = refreshedUrl;
-                currentPartMeta.uploadUrl = refreshedUrl;
+              await refreshPartSignedUrl(partNumber, index);
+              continue;
+            } catch (refreshErr) {
+              if (isUserAbortError(refreshErr) || itemSignal?.aborted || abortController.signal.aborted) {
+                throw refreshErr;
+              }
+              if (isOfflineNetworkError(refreshErr)) {
+                updateItem(id, { status: 'paused_offline', statusLabel: null });
+                await waitForInternetConnection(itemSignal || abortController.signal);
+                updateItem(id, { status: 'uploading', statusLabel: null });
                 continue;
               }
-            } catch (refreshErr) {
               console.error(`[Multipart Part ${partNumber}] Failed to refresh presigned URL:`, refreshErr);
             }
           }
 
-          // 2. Background Pause / Network Auto-Resume
-          const isSuspendedOrOffline =
-            (typeof document !== 'undefined' && document.visibilityState === 'hidden') ||
-            (typeof navigator !== 'undefined' && navigator.onLine === false) ||
-            err.code === 'ERR_NETWORK_IO_SUSPENDED' ||
-            err.code === 'ERR_INTERNET_DISCONNECTED' ||
-            err.message?.includes('ERR_NETWORK_IO_SUSPENDED') ||
-            err.message?.includes('ERR_INTERNET_DISCONNECTED');
-
-          if (isSuspendedOrOffline && backgroundResumeCycles < MAX_BACKGROUND_RESUMES) {
-            backgroundResumeCycles += 1;
-            updateItem(id, { statusLabel: 'Paused (in background) — auto-resuming...' });
-            try {
-              await waitForOnlineAndVisible(abortController.signal);
-            } catch (waitErr) {
-              throw waitErr;
-            }
-            updateItem(id, { statusLabel: null });
-            await new Promise((r) => setTimeout(r, 300));
-            continue;
-          }
-
-          // 3. Regular Transient Network Retry
+          // Transient server errors while online
           const isTransient =
             !status ||
             err.code === 'ECONNABORTED' ||
@@ -1045,17 +1448,16 @@ export function UploadProvider({ children }) {
             throw err;
           }
 
-          // Jittered exponential backoff with instant wakeup upon 'online' event
           const backoffMs =
             Math.min(8000, 1000 * Math.pow(2, attempt - 1)) +
             Math.floor(Math.random() * 500);
-          await sleepOrOnline(backoffMs, abortController.signal);
+          await sleepOrOnline(backoffMs, itemSignal || abortController.signal);
         }
       }
     };
 
     try {
-      // 2. Strict 5-Worker Concurrency Pool (High-throughput parallel chunk streaming)
+      // 2. Parallel chunk streaming worker pool
       const CONCURRENCY = MULTIPART_PART_CONCURRENCY;
       const workerCount = Math.min(CONCURRENCY, partUrls.length);
       let cursor = 0;
@@ -1081,19 +1483,51 @@ export function UploadProvider({ children }) {
         new Promise((resolve) => setTimeout(() => resolve(null), 500)),
       ]).catch(() => null);
 
-      // 3. Complete multipart assembly on S3 / Backblaze B2
-      await axios.post(
-        `${API_BASE_URL || ''}/api/files/multipart/complete`,
-        { fileId, s3Key, uploadId, parts: completedParts },
-        { headers, signal: abortController.signal }
-      );
+      // 3. Complete multipart assembly on S3 / Backblaze B2 with offline-aware retry
+      let completeAttempt = 0;
+      while (true) {
+        if (isAborted || itemSignal?.aborted || abortController.signal.aborted) {
+          throw createAbortError();
+        }
+        try {
+          await axios.post(
+            `${API_BASE_URL || ''}/api/files/multipart/complete`,
+            { fileId, s3Key, uploadId, parts: completedParts },
+            { headers, signal: itemSignal || abortController.signal }
+          );
+          break;
+        } catch (compErr) {
+          if (isUserAbortError(compErr) || itemSignal?.aborted || abortController.signal.aborted) {
+            throw compErr;
+          }
+          if (isOfflineNetworkError(compErr)) {
+            updateItem(id, { status: 'paused_offline', statusLabel: null });
+            await waitForInternetConnection(itemSignal || abortController.signal);
+            updateItem(id, { status: 'uploading', statusLabel: 'Assembling vault blocks...' });
+            continue;
+          }
+          const compStatus = compErr.status || compErr.response?.status;
+          const isCompTransient = !compStatus || compStatus >= 500 || compStatus === 429;
+          completeAttempt += 1;
+          if (!isCompTransient || completeAttempt >= 4) {
+            throw compErr;
+          }
+          await sleepOrOnline(Math.min(5000, 1000 * completeAttempt), itemSignal || abortController.signal);
+        }
+      }
 
+      if (itemSignal) {
+        itemSignal.removeEventListener('abort', handleParentAbort);
+      }
       return { fileId, s3Key, sha256, thumbnail };
     } catch (err) {
+      if (itemSignal) {
+        itemSignal.removeEventListener('abort', handleParentAbort);
+      }
       isAborted = true;
       abortController.abort();
 
-      // Deduplicated cancel: routes through notifyBackendCancel so only one cancel request fires per file
+      // Deduplicated abort cleanup on both real failures and user cancellation
       notifyBackendCancel({ fileId, s3Key, uploadId });
       throw err;
     }
@@ -1110,29 +1544,50 @@ export function UploadProvider({ children }) {
     trackByteSpeedTick,
   }) => {
     let attempt = 0;
-    let backgroundResumeCycles = 0;
     const MAX_SINGLE_RETRIES = 3;
-    const MAX_BACKGROUND_RESUMES = 10;
-    let currentPresignedUrl = ticket?.presignedUrl || ticket?.signedUrl;
+    let putUrl = ticket?.presignedUrl || ticket?.signedUrl;
+    let putUrlIssuedAt = Date.now();
+    const itemSignal = controller.signal;
+
+    const refreshSinglePutUrl = async () => {
+      const token = localStorage.getItem('token');
+      const tokenHdr = token && token !== 'null' && token !== 'undefined' && token !== 'cookie-session' ? { Authorization: `Bearer ${token}` } : {};
+      const authHdr = headers || tokenHdr;
+      const refreshRes = await axios.post(
+        `${API_BASE_URL || ''}/api/files/refresh-presigned-url`,
+        { fileId: ticket.fileId },
+        { headers: authHdr, signal: itemSignal, withCredentials: true }
+      );
+      if (!refreshRes.data?.presignedUrl) {
+        throw new Error('Failed to refresh presigned upload URL');
+      }
+      putUrl = refreshRes.data.presignedUrl;
+      putUrlIssuedAt = Date.now();
+      ticket.presignedUrl = putUrl;
+      if (refreshRes.data.s3Key) ticket.s3Key = refreshRes.data.s3Key;
+      return putUrl;
+    };
 
     while (attempt < MAX_SINGLE_RETRIES) {
-      if (controller.signal.aborted || batchCancelledRef.current) {
-        throw new Error('Upload cancelled');
+      if (itemSignal.aborted || batchCancelledRef.current || cancelledIdsRef.current.has(id)) {
+        throw createAbortError();
       }
 
       let stallTimer = null;
       let totalTimer = null;
+      let timedOutInternally = false;
       const singleAbort = new AbortController();
       const abortHandler = () => {
         try {
           singleAbort.abort();
         } catch {}
       };
-      controller.signal.addEventListener('abort', abortHandler, { once: true });
+      itemSignal.addEventListener('abort', abortHandler, { once: true });
 
       const resetStallTimer = () => {
         if (stallTimer) clearTimeout(stallTimer);
         stallTimer = setTimeout(() => {
+          timedOutInternally = true;
           console.warn(`[Single PUT Stall] No progress for 20s on attempt ${attempt + 1}, aborting socket.`);
           try {
             singleAbort.abort();
@@ -1141,8 +1596,13 @@ export function UploadProvider({ children }) {
       };
 
       try {
+        if (!putUrl || Date.now() - putUrlIssuedAt >= SINGLE_PUT_REFRESH_AFTER_MS) {
+          await refreshSinglePutUrl();
+        }
+
         resetStallTimer();
         totalTimer = setTimeout(() => {
+          timedOutInternally = true;
           console.warn(`[Single PUT Timeout] Total request exceeded 45s on attempt ${attempt + 1}, aborting socket.`);
           try {
             singleAbort.abort();
@@ -1150,7 +1610,7 @@ export function UploadProvider({ children }) {
         }, 45000);
 
         let lastSingleProgressTime = 0;
-        await s3Axios.put(currentPresignedUrl, uploadFile, {
+        await s3Axios.put(putUrl, uploadFile, {
           signal: singleAbort.signal,
           headers: { 'Content-Type': uploadFile.type || 'application/octet-stream' },
           transformRequest: [(data, reqHeaders) => {
@@ -1162,7 +1622,15 @@ export function UploadProvider({ children }) {
           }],
           onUploadProgress: (progressEvent) => {
             resetStallTimer();
-            if (controller.signal.aborted || batchCancelledRef.current) return;
+            if (
+              !navigator.onLine ||
+              !isOnlineRef.current ||
+              itemSignal.aborted ||
+              batchCancelledRef.current ||
+              cancelledIdsRef.current.has(id)
+            ) {
+              return;
+            }
             if (progressEvent.total) {
               const percent = Math.min(
                 99,
@@ -1184,97 +1652,80 @@ export function UploadProvider({ children }) {
 
         if (stallTimer) clearTimeout(stallTimer);
         if (totalTimer) clearTimeout(totalTimer);
-        controller.signal.removeEventListener('abort', abortHandler);
+        itemSignal.removeEventListener('abort', abortHandler);
         return;
       } catch (putErr) {
         if (stallTimer) clearTimeout(stallTimer);
         if (totalTimer) clearTimeout(totalTimer);
-        controller.signal.removeEventListener('abort', abortHandler);
+        itemSignal.removeEventListener('abort', abortHandler);
 
         if (
-          controller.signal.aborted ||
+          itemSignal.aborted ||
           batchCancelledRef.current ||
-          axios.isCancel(putErr) ||
-          putErr?.name === 'CanceledError' ||
-          putErr?.name === 'AbortError' ||
-          putErr?.code === 'ERR_CANCELED'
+          cancelledIdsRef.current.has(id) ||
+          (!timedOutInternally && isUserAbortError(putErr))
         ) {
-          throw putErr;
+          throw createAbortError();
         }
 
-        const status = putErr.status || putErr.response?.status;
+        const effectiveErr = timedOutInternally
+          ? Object.assign(new Error('Single PUT timed out'), { code: 'ECONNABORTED' })
+          : putErr;
 
-        // 1. Expired Presigned URL Fallback (HTTP 403)
+        // Indefinite offline auto-resume without exhausting retry budget
+        if (isOfflineNetworkError(effectiveErr)) {
+          updateItem(id, {
+            status: 'paused_offline',
+            uploadedBytes: 0,
+            progress: 0,
+            statusLabel: null,
+          });
+          await waitForInternetConnection(itemSignal);
+          updateItem(id, { status: 'uploading', statusLabel: null });
+          continue;
+        }
+
+        const status = effectiveErr.status || effectiveErr.response?.status;
+
+        // Expired Presigned URL Fallback (HTTP 403)
         if (status === 403) {
           console.warn(`[Single PUT ${id}] Presigned URL expired (HTTP 403). Refreshing URL...`);
           try {
-            const token = localStorage.getItem('token');
-            const tokenHdr = token && token !== 'null' && token !== 'undefined' && token !== 'cookie-session' ? { Authorization: `Bearer ${token}` } : {};
-            const authHdr = headers || tokenHdr;
-            const refreshRes = await axios.post(
-              `${API_BASE_URL || ''}/api/files/presigned-url`,
-              {
-                fileName: uploadFile.name,
-                fileSize: uploadFile.size,
-                mimeType: uploadFile.type || 'application/octet-stream',
-                folderId: folderId || null,
-              },
-              { headers: authHdr, signal: controller.signal, withCredentials: true }
-            );
-            if (refreshRes.data?.presignedUrl) {
-              currentPresignedUrl = refreshRes.data.presignedUrl;
-              ticket.presignedUrl = refreshRes.data.presignedUrl;
-              if (refreshRes.data.fileId) ticket.fileId = refreshRes.data.fileId;
-              if (refreshRes.data.s3Key) ticket.s3Key = refreshRes.data.s3Key;
-              activeTicketsRef.current.set(id, {
-                fileId: ticket.fileId,
-                s3Key: ticket.s3Key,
-                uploadId: null,
+            await refreshSinglePutUrl();
+            continue;
+          } catch (refreshErr) {
+            if (isUserAbortError(refreshErr) || itemSignal.aborted) {
+              throw createAbortError();
+            }
+            if (isOfflineNetworkError(refreshErr)) {
+              updateItem(id, {
+                status: 'paused_offline',
+                uploadedBytes: 0,
+                progress: 0,
+                statusLabel: null,
               });
+              await waitForInternetConnection(itemSignal);
+              updateItem(id, { status: 'uploading', statusLabel: null });
               continue;
             }
-          } catch (refreshErr) {
             console.error(`[Single PUT ${id}] Failed to refresh presigned URL:`, refreshErr);
           }
         }
 
-        // 2. Background Pause / Network Auto-Resume
-        const isSuspendedOrOffline =
-          (typeof document !== 'undefined' && document.visibilityState === 'hidden') ||
-          (typeof navigator !== 'undefined' && navigator.onLine === false) ||
-          putErr.code === 'ERR_NETWORK_IO_SUSPENDED' ||
-          putErr.code === 'ERR_INTERNET_DISCONNECTED' ||
-          putErr.message?.includes('ERR_NETWORK_IO_SUSPENDED') ||
-          putErr.message?.includes('ERR_INTERNET_DISCONNECTED');
-
-        if (isSuspendedOrOffline && backgroundResumeCycles < MAX_BACKGROUND_RESUMES) {
-          backgroundResumeCycles += 1;
-          updateItem(id, { statusLabel: 'Paused (in background) — auto-resuming...' });
-          try {
-            await waitForOnlineAndVisible(controller.signal);
-          } catch (waitErr) {
-            throw waitErr;
-          }
-          updateItem(id, { statusLabel: null });
-          await new Promise((r) => setTimeout(r, 300));
-          continue;
-        }
-
-        // 3. Regular Transient Network Retry
         const isNetworkOrTimeout =
-          !putErr.response ||
-          putErr.code === 'ECONNABORTED' ||
-          putErr.message?.includes('timeout') ||
-          putErr.message?.includes('Network Error') ||
-          singleAbort.signal.aborted;
+          !effectiveErr.response ||
+          effectiveErr.code === 'ECONNABORTED' ||
+          effectiveErr.message?.includes('timeout') ||
+          effectiveErr.message?.includes('Network Error') ||
+          timedOutInternally;
 
         attempt += 1;
         if (attempt >= MAX_SINGLE_RETRIES || !isNetworkOrTimeout) {
-          throw putErr;
+          throw effectiveErr;
         }
 
         const backoffMs = 1000 * Math.pow(2, attempt - 1);
-        await new Promise((r) => setTimeout(r, backoffMs));
+        await sleepOrOnline(backoffMs, itemSignal);
       }
     }
   };
@@ -1396,86 +1847,96 @@ export function UploadProvider({ children }) {
 
         // Parallelize thumbnail generation and ticket retrieval
         let ticket;
-        try {
-          const [ticketRes, thumb] = await Promise.all([
-            axios.post(
-              `${API_BASE_URL || ''}/api/files/presigned-url`,
-              {
-                fileName: uploadFile.name,
-                fileSize: uploadFile.size,
-                mimeType: uploadFile.type || 'application/octet-stream',
-                folderId: folderId || null,
-              },
-              { headers, signal: controller.signal }
-            ),
-            generateThumbnailWithTimeout(uploadFile),
-          ]);
-          ticket = ticketRes.data;
-          thumbnail = thumb;
-          fileId = ticket.fileId;
-          s3Key = ticket.s3Key;
-          activeTicketsRef.current.set(id, { fileId, s3Key, uploadId: null });
-
-          if (batchCancelledRef.current || controller.signal.aborted) {
-            notifyCancelBackend({ fileId, s3Key, uploadId: null });
+        while (true) {
+          if (batchCancelledRef.current || controller.signal.aborted || cancelledIdsRef.current.has(id)) {
             return;
           }
-        } catch (err) {
-          if (
-            batchCancelledRef.current ||
-            controller.signal.aborted ||
-            axios.isCancel(err) ||
-            err?.name === 'CanceledError' ||
-            err?.name === 'AbortError' ||
-            err?.code === 'ERR_CANCELED'
-          ) {
-            return;
-          }
-          const errorData = err.response?.data;
-          const errorCode = errorData?.code || errorData?.error;
+          try {
+            const [ticketRes, thumb] = await Promise.all([
+              axios.post(
+                `${API_BASE_URL || ''}/api/files/presigned-url`,
+                {
+                  fileName: uploadFile.name,
+                  fileSize: uploadFile.size,
+                  mimeType: uploadFile.type || 'application/octet-stream',
+                  folderId: folderId || null,
+                },
+                { headers, signal: controller.signal }
+              ),
+              generateThumbnailWithTimeout(uploadFile),
+            ]);
+            ticket = ticketRes.data;
+            thumbnail = thumb;
+            fileId = ticket.fileId;
+            s3Key = ticket.s3Key;
+            activeTicketsRef.current.set(id, { fileId, s3Key, uploadId: null });
 
-          if (err.response?.status === 403 && ['SUBSCRIPTION_EXPIRED', 'SUBSCRIPTION_PAST_DUE', 'TRIAL_EXPIRED'].includes(errorCode)) {
-            updateItem(id, {
-              status: 'error',
-              error: errorData?.error || 'Uploads locked: subscription expired or past due.',
-              progress: 100,
-            });
-            if (!batchCancelledRef.current && !controller.signal.aborted) {
-              toast.error(errorData?.error || 'Your subscription has expired. Select a plan on the Pricing page to resume uploading.', { id: `write-lock-${id}` });
+            if (batchCancelledRef.current || controller.signal.aborted) {
+              notifyCancelBackend({ fileId, s3Key, uploadId: null });
+              return;
             }
-            return;
-          }
-
-          if (err.response?.status === 403 && errorCode === 'QUOTA_EXCEEDED') {
-            // 1. Mark upload state as paused_for_upgrade instead of failed
-            setQueue((prev) =>
-              prev.map((qItem) =>
-                qItem.id === id
-                  ? { ...qItem, status: 'paused_for_upgrade', progress: 0 }
-                  : qItem
-              )
-            );
-
-            // 2. Open Quota Upgrade Modal with error data and active file reference
-            setQuotaUpgradeState({
-              fileItem: item, // Preserves DOM File object
-              quotaInfo: errorData
-            });
-            return;
-          }
-
-          if (err.response?.status === 403) {
-            updateItem(id, {
-              status: 'error',
-              error: errorData?.error || 'Storage quota exceeded',
-              progress: 100,
-            });
-            if (!batchCancelledRef.current && !controller.signal.aborted) {
-              toast.error(`Not enough vault storage for "${uploadFile.name}".`, { id: `quota-${id}` });
+            break;
+          } catch (err) {
+            if (
+              batchCancelledRef.current ||
+              cancelledIdsRef.current.has(id) ||
+              controller.signal.aborted ||
+              isUserAbortError(err)
+            ) {
+              return;
             }
-            return;
+            if (isOfflineNetworkError(err)) {
+              updateItem(id, { status: 'paused_offline', statusLabel: null });
+              await waitForInternetConnection(controller.signal);
+              updateItem(id, { status: 'uploading', statusLabel: 'Starting...' });
+              continue;
+            }
+            const errorData = err.response?.data;
+            const errorCode = errorData?.code || errorData?.error;
+
+            if (err.response?.status === 403 && ['SUBSCRIPTION_EXPIRED', 'SUBSCRIPTION_PAST_DUE', 'TRIAL_EXPIRED'].includes(errorCode)) {
+              updateItem(id, {
+                status: 'error',
+                error: errorData?.error || 'Uploads locked: subscription expired or past due.',
+                progress: 100,
+              });
+              if (!batchCancelledRef.current && !controller.signal.aborted) {
+                toast.error(errorData?.error || 'Your subscription has expired. Select a plan on the Pricing page to resume uploading.', { id: `write-lock-${id}` });
+              }
+              return;
+            }
+
+            if (err.response?.status === 403 && errorCode === 'QUOTA_EXCEEDED') {
+              // 1. Mark upload state as paused_for_upgrade instead of failed
+              setQueue((prev) =>
+                prev.map((qItem) =>
+                  qItem.id === id
+                    ? { ...qItem, status: 'paused_for_upgrade', progress: 0 }
+                    : qItem
+                )
+              );
+
+              // 2. Open Quota Upgrade Modal with error data and active file reference
+              setQuotaUpgradeState({
+                fileItem: item, // Preserves DOM File object
+                quotaInfo: errorData
+              });
+              return;
+            }
+
+            if (err.response?.status === 403) {
+              updateItem(id, {
+                status: 'error',
+                error: errorData?.error || 'Storage quota exceeded',
+                progress: 100,
+              });
+              if (!batchCancelledRef.current && !controller.signal.aborted) {
+                toast.error(`Not enough vault storage for "${uploadFile.name}".`, { id: `quota-${id}` });
+              }
+              return;
+            }
+            throw new Error(err.response?.data?.error || 'Failed to acquire upload ticket');
           }
-          throw new Error(err.response?.data?.error || 'Failed to acquire upload ticket');
         }
 
         if (batchCancelledRef.current || controller.signal.aborted) return;
@@ -1505,21 +1966,41 @@ export function UploadProvider({ children }) {
 
       if (batchCancelledRef.current || controller.signal.aborted) return;
 
-      // Step 3: Finalize upload with backend, attaching thumbnail
+      // Step 3: Finalize upload with backend, attaching thumbnail (offline-aware retry)
       updateItem(id, { status: 'finalizing', progress: 96, uploadedBytes: uploadFile.size });
 
       if (batchCancelledRef.current || controller.signal.aborted) return;
 
-      const finalizeRes = await axios.post(
-        `${API_BASE_URL || ''}/api/files/finalize-upload`,
-        {
-          fileId,
-          s3Key,
-          sha256,
-          thumbnail, // Attach generated 15KB thumbnail
-        },
-        { headers, signal: controller.signal }
-      );
+      let finalizeRes;
+      while (true) {
+        if (batchCancelledRef.current || controller.signal.aborted || cancelledIdsRef.current.has(id)) {
+          throw createAbortError();
+        }
+        try {
+          finalizeRes = await axios.post(
+            `${API_BASE_URL || ''}/api/files/finalize-upload`,
+            {
+              fileId,
+              s3Key,
+              sha256,
+              thumbnail, // Attach generated 15KB thumbnail
+            },
+            { headers, signal: controller.signal }
+          );
+          break;
+        } catch (finErr) {
+          if (isUserAbortError(finErr) || controller.signal.aborted || batchCancelledRef.current || cancelledIdsRef.current.has(id)) {
+            throw finErr;
+          }
+          if (isOfflineNetworkError(finErr)) {
+            updateItem(id, { status: 'paused_offline', statusLabel: null });
+            await waitForInternetConnection(controller.signal);
+            updateItem(id, { status: 'finalizing', statusLabel: null });
+            continue;
+          }
+          throw finErr;
+        }
+      }
 
       if (batchCancelledRef.current || controller.signal.aborted) return;
 
@@ -1574,10 +2055,7 @@ export function UploadProvider({ children }) {
         batchCancelledRef.current ||
         cancelledIdsRef.current.has(id) ||
         controller.signal.aborted ||
-        axios.isCancel(err) ||
-        err?.name === 'CanceledError' ||
-        err?.name === 'AbortError' ||
-        err?.code === 'ERR_CANCELED' ||
+        isUserAbortError(err) ||
         err?.message?.includes('aborted') ||
         err?.message?.includes('cancelled');
 
@@ -1610,12 +2088,12 @@ export function UploadProvider({ children }) {
     } finally {
       inFlightIdsRef.current.delete(id);
       activeTicketsRef.current.delete(id);
-      activeControllersRef.current.delete(id);
+      itemAbortControllersRef.current.delete(id);
       processingIdsRef.current.delete(id);
       setTimeout(() => {
         if (batchCancelledRef.current) return;
         const remaining = (queueRef.current || []).filter((i) =>
-          ['uploading', 'hashing', 'finalizing', 'queued', 'pending'].includes(i.status)
+          ['uploading', 'hashing', 'finalizing', 'queued', 'pending', 'paused_offline'].includes(i.status)
         );
         if (remaining.length === 0) {
           batchTotalRef.current = 0;
@@ -1663,6 +2141,9 @@ export function UploadProvider({ children }) {
   };
 
   const removeQueueItem = (id) => {
+    const targetItem = (queueRef.current || []).find((item) => item.id === id);
+    const isCancelableActive = targetItem && ['queued', 'hashing', 'uploading', 'paused_offline', 'finalizing'].includes(targetItem.status);
+
     cancelledIdsRef.current.add(id);
     inFlightIdsRef.current.delete(id);
     const ticket = activeTicketsRef.current.get(id);
@@ -1670,18 +2151,20 @@ export function UploadProvider({ children }) {
       notifyCancelBackend(ticket);
       activeTicketsRef.current.delete(id);
     }
-    const controller = activeControllersRef.current.get(id);
+    const controller = itemAbortControllersRef.current.get(id);
     if (controller) {
       try {
         controller.abort();
       } catch (e) {
         // ignore
       }
-      activeControllersRef.current.delete(id);
+      itemAbortControllersRef.current.delete(id);
     }
     processingIdsRef.current.delete(id);
     setQueue((prev) => prev.filter((item) => item.id !== id));
-    toast.info('Upload cancelled', { id: `cancel-${id}`, duration: 3000 });
+    if (isCancelableActive) {
+      toast.info('Upload cancelled', { id: `cancel-${id}`, duration: 3000 });
+    }
   };
 
   const cancelAllUploads = useCallback(() => {
@@ -1736,12 +2219,12 @@ export function UploadProvider({ children }) {
 
   const clearFinished = () => {
     setQueue((prev) =>
-      prev.filter((item) => ['uploading', 'hashing', 'finalizing', 'queued', 'pending', 'paused_for_upgrade'].includes(item.status))
+      prev.filter((item) => ['uploading', 'hashing', 'finalizing', 'queued', 'pending', 'paused_offline', 'paused_for_upgrade'].includes(item.status))
     );
   };
 
   const hasActiveTransfers = queue.some((i) =>
-    ['uploading', 'hashing', 'finalizing', 'queued', 'pending'].includes(i.status)
+    ['uploading', 'hashing', 'finalizing', 'queued', 'pending', 'paused_offline'].includes(i.status)
   );
 
   return (
@@ -1750,6 +2233,7 @@ export function UploadProvider({ children }) {
         queue,
         uploadQueue: queue,
         isUploading: hasActiveTransfers,
+        isOnline,
         clearCompleted: clearFinished,
         isOpen,
         globalSpeed,
@@ -1784,6 +2268,7 @@ export const useUpload = () => {
       queue: [],
       uploadQueue: [],
       isUploading: false,
+      isOnline: true,
       clearCompleted: () => {},
       isOpen: false,
       globalSpeed: '',
@@ -1816,6 +2301,7 @@ export const HeaderUploadButton = () => {
     uploadQueue,
     queue,
     isUploading,
+    isOnline,
     clearCompleted,
     clearFinished,
     globalSpeed,
@@ -1830,7 +2316,7 @@ export const HeaderUploadButton = () => {
 
   const activeQueue = uploadQueue || queue || [];
   const activeItems = activeQueue.filter((i) =>
-    ['uploading', 'hashing', 'finalizing'].includes(i.status)
+    ['uploading', 'hashing', 'finalizing', 'paused_offline'].includes(i.status)
   );
 
   // Close when download tray opens or global close is dispatched
@@ -1886,6 +2372,7 @@ export const HeaderUploadButton = () => {
   let errorCount = 0;
   let purgedCount = 0;
   let activeCount = 0;
+  let pausedOfflineCount = 0;
 
   for (let i = 0; i < totalCount; i++) {
     const item = activeQueue[i];
@@ -1901,8 +2388,11 @@ export const HeaderUploadButton = () => {
       } else {
         errorCount++;
       }
-    } else if (['uploading', 'hashing', 'finalizing'].includes(item.status)) {
+    } else if (['uploading', 'hashing', 'finalizing', 'paused_offline'].includes(item.status)) {
       activeCount++;
+      if (item.status === 'paused_offline') {
+        pausedOfflineCount++;
+      }
       const currentUploaded = typeof item.uploadedBytes === 'number' ? item.uploadedBytes : 0;
       uploadedBytes += Math.min(size, Math.max(0, currentUploaded));
     } else if (['queued', 'pending', 'paused_for_upgrade'].includes(item.status)) {
@@ -1953,7 +2443,7 @@ export const HeaderUploadButton = () => {
     const finished = [];
     for (let i = 0; i < activeQueue.length; i++) {
       const item = activeQueue[i];
-      if (['uploading', 'hashing', 'finalizing', 'queued', 'pending', 'paused_for_upgrade'].includes(item.status)) {
+      if (['uploading', 'hashing', 'finalizing', 'queued', 'pending', 'paused_offline', 'paused_for_upgrade'].includes(item.status)) {
         active.push(item);
       } else {
         finished.push(item);
@@ -1967,11 +2457,16 @@ export const HeaderUploadButton = () => {
     return [...active, ...recentFinished];
   }, [activeQueue]);
 
+  const allActivePausedOffline = isWorking && (pausedOfflineCount === activeCount || !isOnline);
+
   const getHeaderTitle = () => {
     if (folderPrep) {
       return `Preparing folders (${(folderPrep.createdCount || 0).toLocaleString()}/${(folderPrep.totalFolders || 0).toLocaleString()})`;
     }
     if (isWorking) {
+      if (allActivePausedOffline) {
+        return `Waiting for internet (${activeCount.toLocaleString()} paused)`;
+      }
       return `Uploading (${activeCount.toLocaleString()} left)`;
     }
     if (errorCount > 0 && completedCount === 0) {
@@ -2142,6 +2637,8 @@ export const HeaderUploadButton = () => {
                             (item.uploadedBytes > 0
                               ? `${formatBytes(item.uploadedBytes || 0)} of ${formatBytes(item.file?.size || item.size)}`
                               : `${formatBytes(item.file?.size || item.size)} • Starting...`))}
+                        {item.status === 'paused_offline' &&
+                          `${formatBytes(item.uploadedBytes || 0)} of ${formatBytes(item.file?.size || item.size)} • Paused (offline)`}
                         {item.status === 'hashing' && `${formatBytes(item.file?.size || item.size)} • Preparing`}
                         {item.status === 'finalizing' && `${formatBytes(item.file?.size || item.size)} • Inspecting security`}
                         {item.status === 'queued' && `${formatBytes(item.file?.size || item.size)} • Queued`}
@@ -2157,6 +2654,13 @@ export const HeaderUploadButton = () => {
                       <span className="text-[10px] text-neutral-500 dark:text-neutral-400 font-medium tabular-nums">
                         {item.status === 'completed' || item.status === 'clean'
                           ? 'Done'
+                          : item.status === 'paused_offline'
+                          ? (
+                            <span className="inline-flex items-center gap-1 text-amber-500 font-medium">
+                              <WifiOff className="w-3 h-3 shrink-0" />
+                              Offline
+                            </span>
+                          )
                           : item.status === 'unverified'
                           ? (
                             <span className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400 font-medium">
@@ -2182,13 +2686,17 @@ export const HeaderUploadButton = () => {
                     </div>
                   </div>
 
-                  {['uploading', 'hashing', 'finalizing'].includes(item.status) && (
+                  {['uploading', 'hashing', 'finalizing', 'paused_offline'].includes(item.status) && (
                     <div className="w-full bg-neutral-200 dark:bg-neutral-800 h-1 rounded-full overflow-hidden mt-1">
                       <div
                         className={`h-full transition-all duration-150 ${
-                          item.status === 'finalizing' ? 'bg-amber-500' : 'bg-blue-600'
+                          item.status === 'paused_offline'
+                            ? 'bg-amber-500/80'
+                            : item.status === 'finalizing'
+                            ? 'bg-amber-500'
+                            : 'bg-blue-600'
                         }`}
-                        style={{ width: `${item.progress}%` }}
+                        style={{ width: `${item.progress || 0}%` }}
                       />
                     </div>
                   )}
