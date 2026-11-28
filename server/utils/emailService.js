@@ -8,6 +8,41 @@ const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KE
 const FROM_EMAIL = process.env.EMAIL_FROM || 'CloudGuard <noreply@cloudguard.site>';
 const REFUND_MAX_PEAK_BYTES = 2 * 1024 * 1024 * 1024; // 2 GB (2,147,483,648 bytes)
 
+const isLocalhostUrl = (u) => typeof u === 'string' && /^https?:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/i.test(u.trim());
+
+function getClientUrl(candidateUrl) {
+  const isProd = process.env.NODE_ENV === 'production';
+  const rawCandidate = typeof candidateUrl === 'string' ? candidateUrl.trim() : '';
+  if (rawCandidate && !(isProd && isLocalhostUrl(rawCandidate))) {
+    return rawCandidate.replace(/\/+$/, '');
+  }
+  const envClient = (process.env.CLIENT_URL || process.env.FRONTEND_URL || '').trim();
+  if (envClient && !(isProd && isLocalhostUrl(envClient))) {
+    return envClient.replace(/\/+$/, '');
+  }
+  return isProd ? 'https://cloudguard.site' : 'http://localhost:5173';
+}
+
+function getActionUrl(explicitUrl, defaultPath = '/pricing') {
+  const isProd = process.env.NODE_ENV === 'production';
+  const rawExplicit = typeof explicitUrl === 'string' ? explicitUrl.trim() : '';
+  if (rawExplicit && !(isProd && isLocalhostUrl(rawExplicit))) {
+    return rawExplicit;
+  }
+  return `${getClientUrl()}${defaultPath}`;
+}
+
+function getBackendUrl() {
+  const isProd = process.env.NODE_ENV === 'production';
+  const envBackend = (process.env.BACKEND_URL || process.env.API_URL || '').trim();
+  if (envBackend && !(isProd && isLocalhostUrl(envBackend))) {
+    return envBackend.replace(/\/+$/, '');
+  }
+  return isProd ? 'https://api.cloudguard.site' : 'http://localhost:5000';
+}
+
+const CLIENT_URL = getClientUrl();
+
 // -------------------------------------------------------------
 // Format & Safety Helpers
 // -------------------------------------------------------------
@@ -244,7 +279,7 @@ function generateScheduledDowngradeEmail({ user, targetPlan, expiresAt, clientUr
   const planName = targetPlan?.name || 'Free Vault';
   const targetGB = targetPlan?.storageGB || 5;
   const formattedExpiry = formatDate(expiresAt);
-  const baseUrl = clientUrl || process.env.CLIENT_URL || 'https://cloudguard.site';
+  const baseUrl = getClientUrl(clientUrl);
 
   const subject = `Scheduled Plan Transition: ${planName} — CloudGuard`;
   const contentHtml = `
@@ -278,7 +313,7 @@ function generateScheduledDowngradeEmail({ user, targetPlan, expiresAt, clientUr
 function generateDowngradeRevocationEmail({ user, activePlanName, expiresAt, clientUrl }) {
   const currentPlan = activePlanName || 'Active Vault Plan';
   const formattedExpiry = formatDate(expiresAt);
-  const baseUrl = clientUrl || process.env.CLIENT_URL || 'https://cloudguard.site';
+  const baseUrl = getClientUrl(clientUrl);
 
   const subject = `Scheduled Downgrade Cancelled — CloudGuard Vault`;
   const contentHtml = `
@@ -310,7 +345,7 @@ function generateQuotaGatePassEmail({ user, targetPlanName, storageUsedGB, targe
   const planName = targetPlanName || 'Free Vault';
   const usedGB = formatGB(storageUsedGB);
   const quotaGB = targetQuotaGB || 5;
-  const baseUrl = clientUrl || process.env.CLIENT_URL || 'https://cloudguard.site';
+  const baseUrl = getClientUrl(clientUrl);
 
   const subject = `Plan Transition Completed — CloudGuard Vault`;
   const contentHtml = `
@@ -344,7 +379,7 @@ function generateQuotaGateBlockedEmail({ user, targetPlanName, targetQuotaGB, st
   const quotaGB = targetQuotaGB || 5;
   const excessStr = formatGB(excessGB);
   const formattedGrace = formatDate(gracePeriodExpiresAt);
-  const baseUrl = clientUrl || process.env.CLIENT_URL || 'https://cloudguard.site';
+  const baseUrl = getClientUrl(clientUrl);
 
   const subject = `Action Required: Storage Quota Exceeded — CloudGuard Vault`;
   const contentHtml = `
@@ -395,7 +430,7 @@ function generateAnnual7DayReminderEmail({ user, planName, storageGB, expiresAt,
   const plan = planName || 'Annual Vault Plan';
   const quotaGB = storageGB || 50;
   const formattedExpiry = formatDate(expiresAt);
-  const url = renewalUrl || `${process.env.CLIENT_URL || 'https://cloudguard.site'}/pricing`;
+  const url = getActionUrl(renewalUrl, '/pricing');
 
   const subject = `Your Annual CloudGuard Plan Renews in 7 Days`;
   const contentHtml = `
@@ -429,7 +464,7 @@ function generatePrepaidExpiryWarningEmail({ user, planName, storageGB, expiresA
   const plan = planName || 'Paid Vault Plan';
   const quotaGB = storageGB || 50;
   const formattedExpiry = formatDate(expiresAt);
-  const url = renewalUrl || `${process.env.CLIENT_URL || 'https://cloudguard.site'}/pricing`;
+  const url = getActionUrl(renewalUrl, '/pricing');
 
   const subject = `Action Needed: Your CloudGuard Plan Expires in 3 Days`;
   const contentHtml = `
@@ -463,7 +498,7 @@ function generate24HourPreExpiryEmail({ user, planName, storageGB, expiresAt, re
   const plan = planName || 'Vault Plan';
   const quotaGB = storageGB || 50;
   const formattedExpiry = formatDate(expiresAt);
-  const url = renewalUrl || `${process.env.CLIENT_URL || 'https://cloudguard.site'}/pricing`;
+  const url = getActionUrl(renewalUrl, '/pricing');
 
   const subject = `Urgent: Your CloudGuard Plan Expires in 24 Hours`;
   const contentHtml = `
@@ -495,7 +530,7 @@ function generate24HourPreExpiryEmail({ user, planName, storageGB, expiresAt, re
  */
 function generateGracePeriodStartedEmail({ user, gracePeriodExpiresAt, renewalUrl }) {
   const formattedGrace = formatDate(gracePeriodExpiresAt);
-  const url = renewalUrl || `${process.env.CLIENT_URL || 'https://cloudguard.site'}/pricing`;
+  const url = getActionUrl(renewalUrl, '/pricing');
 
   const subject = `Vault Write-Locked: 7-Day Grace Period Started — CloudGuard`;
   const contentHtml = `
@@ -528,7 +563,7 @@ function generateGracePeriodStartedEmail({ user, gracePeriodExpiresAt, renewalUr
 function generate24HourPurgeAlertEmail({ user, excessGB, purgeDate, deleteUrl }) {
   const excessStr = formatGB(excessGB);
   const formattedCutoff = formatDate(purgeDate);
-  const url = deleteUrl || `${process.env.CLIENT_URL || 'https://cloudguard.site'}/pricing`;
+  const url = getActionUrl(deleteUrl, '/pricing');
 
   const subject = `Urgent: Your Vault Files Will Be Permanently Deleted in 24 Hours`;
   const contentHtml = `
@@ -559,7 +594,7 @@ function generate24HourPurgeAlertEmail({ user, excessGB, purgeDate, deleteUrl })
  * Scenario 9: Hard Cloud Purge Completed (Day 7 Cutoff)
  */
 function generateHardPurgeCompletedEmail({ user, clientUrl }) {
-  const baseUrl = clientUrl || process.env.CLIENT_URL || 'https://cloudguard.site';
+  const baseUrl = getClientUrl(clientUrl);
 
   const subject = `Vault Files Deleted — CloudGuard Account Notice`;
   const contentHtml = `
@@ -594,7 +629,7 @@ function generateRefundAcknowledgmentEmail({ user, planName, refundAmount, order
   const amountStr = formatAmount(refundAmount);
   const ordId = orderId || 'N/A';
   const dateStr = formatDate(processedDate || new Date());
-  const baseUrl = clientUrl || process.env.CLIENT_URL || 'https://cloudguard.site';
+  const baseUrl = getClientUrl(clientUrl);
 
   const subject = `Refund Processed — CloudGuard Vault`;
   const contentHtml = `
@@ -695,7 +730,7 @@ async function sendAnnual7DayReminderEmail(user, planName, storageGB, expiresAt,
   const pName = typeof planName === 'string' ? planName : resolved.planName;
   const sGB = typeof storageGB === 'number' ? storageGB : resolved.storageGB;
   const expAt = expiresAt || resolved.expiresAt;
-  const url = typeof renewalUrl === 'string' ? renewalUrl : `${process.env.CLIENT_URL || 'https://cloudguard.site'}/pricing`;
+  const url = getActionUrl(typeof renewalUrl === 'string' ? renewalUrl : null, '/pricing');
   const { subject, html } = generateAnnual7DayReminderEmail({ user, planName: pName, storageGB: sGB, expiresAt: expAt, renewalUrl: url });
   return sendSubscriptionEmail({ to: user.email, subject, html });
 }
@@ -706,7 +741,7 @@ async function sendPrepaidExpiryWarningEmail(user, planName, storageGB, expiresA
   const pName = typeof planName === 'string' ? planName : resolved.planName;
   const sGB = typeof storageGB === 'number' ? storageGB : resolved.storageGB;
   const expAt = expiresAt || resolved.expiresAt;
-  const url = typeof renewalUrl === 'string' ? renewalUrl : `${process.env.CLIENT_URL || 'https://cloudguard.site'}/pricing`;
+  const url = getActionUrl(typeof renewalUrl === 'string' ? renewalUrl : null, '/pricing');
   const { subject, html } = generatePrepaidExpiryWarningEmail({ user, planName: pName, storageGB: sGB, expiresAt: expAt, renewalUrl: url });
   return sendSubscriptionEmail({ to: user.email, subject, html });
 }
@@ -717,7 +752,7 @@ async function send24HourPreExpiryEmail(user, planName, storageGB, expiresAt, re
   const pName = typeof planName === 'string' ? planName : resolved.planName;
   const sGB = typeof storageGB === 'number' ? storageGB : resolved.storageGB;
   const expAt = expiresAt || resolved.expiresAt;
-  const url = typeof renewalUrl === 'string' ? renewalUrl : `${process.env.CLIENT_URL || 'https://cloudguard.site'}/pricing`;
+  const url = getActionUrl(typeof renewalUrl === 'string' ? renewalUrl : null, '/pricing');
   const { subject, html } = generate24HourPreExpiryEmail({ user, planName: pName, storageGB: sGB, expiresAt: expAt, renewalUrl: url });
   return sendSubscriptionEmail({ to: user.email, subject, html });
 }
@@ -725,7 +760,7 @@ async function send24HourPreExpiryEmail(user, planName, storageGB, expiresAt, re
 async function sendGracePeriodStartedEmail(user, gracePeriodExpiresAt, renewalUrl) {
   if (!user?.email) return { success: false, error: 'User email missing' };
   const graceEnd = gracePeriodExpiresAt || user.subscription?.gracePeriodExpiresAt || new Date(Date.now() + 7 * 86400000);
-  const url = typeof renewalUrl === 'string' ? renewalUrl : `${process.env.CLIENT_URL || 'https://cloudguard.site'}/pricing`;
+  const url = getActionUrl(typeof renewalUrl === 'string' ? renewalUrl : null, '/pricing');
   const { subject, html } = generateGracePeriodStartedEmail({ user, gracePeriodExpiresAt: graceEnd, renewalUrl: url });
   return sendSubscriptionEmail({ to: user.email, subject, html });
 }
@@ -736,7 +771,7 @@ async function send24HourPurgeAlertEmail(user, excessGB, purgeDate, deleteUrl) {
     ? excessGB
     : Math.max(0, ((user.storageUsed || 0) - (user.storageLimit || 5368709120)) / (1024 ** 3));
   const pDate = purgeDate || user.subscription?.gracePeriodExpiresAt || new Date(Date.now() + 24 * 3600 * 1000);
-  const dUrl = deleteUrl || `${process.env.CLIENT_URL || 'https://cloudguard.site'}/pricing`;
+  const dUrl = getActionUrl(deleteUrl, '/pricing');
   const { subject, html } = generate24HourPurgeAlertEmail({ user, excessGB: computedExcess, purgeDate: pDate, deleteUrl: dUrl });
   return sendSubscriptionEmail({ to: user.email, subject, html });
 }
@@ -860,7 +895,7 @@ function getWelcomeEmailHtml(name) {
                 <table border="0" cellspacing="0" cellpadding="0">
                   <tr>
                     <td>
-                      <a href="https://cloudguard.site/dashboard" target="_blank" style="display: inline-block; background-color: #ffffff; color: #0a0a0a; font-size: 13px; font-weight: 600; text-decoration: none; padding: 10px 22px; border-radius: 8px; white-space: nowrap;">
+                      <a href="${getClientUrl()}/dashboard" target="_blank" style="display: inline-block; background-color: #ffffff; color: #0a0a0a; font-size: 13px; font-weight: 600; text-decoration: none; padding: 10px 22px; border-radius: 8px; white-space: nowrap;">
                         Open Vault →
                       </a>
                     </td>
@@ -992,4 +1027,8 @@ module.exports = {
   sendHardPurgeCompletedEmail,
   sendRefundAcknowledgmentEmail,
   sendAccountDeletedEmail,
+  getClientUrl,
+  getActionUrl,
+  getBackendUrl,
+  CLIENT_URL,
 };

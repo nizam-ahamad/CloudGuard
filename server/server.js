@@ -23,7 +23,7 @@ const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { buildTenantQuery } = require('./utils/tenantQuery');
 const { permanentlyDeleteS3Keys } = require('./utils/s3Delete');
 const { apiLimiter } = require('./middleware/rateLimiter');
-const { sendActivationOtp, sendResetOtp, sendWelcomeEmail } = require('./utils/emailService');
+const { sendActivationOtp, sendResetOtp, sendWelcomeEmail, getClientUrl } = require('./utils/emailService');
 
 // Multer in-memory storage configuration (prevent EC2 disk space exhaustion)
 const multer = require('multer');
@@ -525,7 +525,7 @@ async function reconcileExpiredSubscriptions() {
             await user.save();
             console.log(`[Subscription Manager] Downgrade cleanly executed for ${user.email} -> ${targetPlanName}`);
 
-            const clientUrl = process.env.CLIENT_URL || 'https://cloudguard.site';
+            const clientUrl = getClientUrl();
             const { subject, html } = generateQuotaGatePassEmail({
               user,
               targetPlanName,
@@ -584,7 +584,7 @@ async function reconcileExpiredSubscriptions() {
         const baselineQuota = 5 * 1024 * 1024 * 1024;
         const excessGB = Math.max(0, ((dUser.storageUsed || 0) - baselineQuota) / (1024 ** 3));
         const purgeDate = dUser.subscription?.gracePeriodExpiresAt;
-        const deleteUrl = `${process.env.CLIENT_URL || 'https://cloudguard.site'}/pricing`;
+        const deleteUrl = `${getClientUrl()}/pricing`;
         await send24HourPurgeAlertEmail(dUser, excessGB, purgeDate, deleteUrl);
         dUser.subscription.dunningStep = 5;
         await dUser.save();
@@ -714,7 +714,7 @@ async function reconcileExpiredSubscriptions() {
         console.log(`[Subscription Manager] Successfully purged vault for ${delinquentUser.email} to 0 B storage used.`);
 
         // Final transactional notification email (Scenario 9)
-        const clientUrl = process.env.CLIENT_URL || 'https://cloudguard.site';
+        const clientUrl = getClientUrl();
         await sendHardPurgeCompletedEmail(delinquentUser, clientUrl).catch(e => {
           console.error('[Hard Purge Notice Error]:', e.message);
         });

@@ -17,7 +17,9 @@ const {
   generateDowngradeRevocationEmail,
   sendScheduledDowngradeEmail,
   sendDowngradeRevocationEmail,
-  sendRefundAcknowledgmentEmail
+  sendRefundAcknowledgmentEmail,
+  getClientUrl,
+  getBackendUrl
 } = require('../utils/emailService');
 
 const router = express.Router();
@@ -275,7 +277,7 @@ router.post('/create-order', auth, async (req, res) => {
 
       // Scenario 3: Dispatch Scheduled Downgrade Confirmation Email
       const targetPlanObj = PLAN_CATALOG[planId] || { name: planId, storageGB: 5 };
-      const clientBaseUrl = process.env.CLIENT_URL || req.headers.origin;
+      const clientBaseUrl = getClientUrl(req.headers.origin);
       sendScheduledDowngradeEmail(user, targetPlanObj, user.subscription.expiresAt, clientBaseUrl).catch(err => {
         console.error('[Scheduled Downgrade Email Error]:', err.message);
       });
@@ -303,8 +305,8 @@ router.post('/create-order', auth, async (req, res) => {
         customer_name: user.name || 'CloudGuard User'
       },
       order_meta: {
-        return_url: `${process.env.CLIENT_URL || 'https://cloudguard.site'}/dashboard?order_id={order_id}`,
-        notify_url: `${process.env.BACKEND_URL || 'https://api.cloudguard.site'}/api/payments/webhook`,
+        return_url: `${getClientUrl(req.headers.origin)}/dashboard?order_id={order_id}`,
+        notify_url: `${getBackendUrl()}/api/payments/webhook`,
       },
       order_note: `CloudGuard|${planId}|${targetCycle}|${storageGB}GB|${transition.transitionType}`
     };
@@ -603,7 +605,7 @@ async function activatePaidCashfreeOrder(orderData, clientOrigin = '') {
   await user.save();
 
   // Dispatch and await transactional confirmation + Bill of Supply email
-  const invoiceBaseUrl = process.env.BACKEND_URL || process.env.CLIENT_URL || 'https://api.cloudguard.site';
+  const invoiceBaseUrl = getBackendUrl();
   const invoiceUrl = `${invoiceBaseUrl}/api/payments/invoice/${orderId}`;
   const invNum = paymentRecord?.invoiceNumber || invoiceNumber || 'CG-INV-PENDING';
 
@@ -938,7 +940,7 @@ router.post('/cancel-subscription', auth, async (req, res) => {
         </div>
       `,
       ctaText: 'Resume Subscription',
-      ctaUrl: `${process.env.CLIENT_URL || 'https://cloudguard.site'}/pricing`
+      ctaUrl: `${getClientUrl()}/pricing`
     });
 
     sendSubscriptionEmail({
@@ -999,7 +1001,7 @@ router.post('/reactivate-subscription', auth, async (req, res) => {
         </div>
       `,
       ctaText: 'Open Vault',
-      ctaUrl: `${process.env.CLIENT_URL || 'https://cloudguard.site'}/dashboard`
+      ctaUrl: `${getClientUrl()}/dashboard`
     });
 
     sendSubscriptionEmail({
@@ -1332,7 +1334,7 @@ router.post('/cancel-scheduled-downgrade', auth, async (req, res) => {
 
     // Scenario 4: Dispatch Scheduled Downgrade Cancellation Notice
     const activePlanName = PLAN_CATALOG[user.subscription?.planId]?.name || user.plan || 'Active Vault Plan';
-    const baseUrl = process.env.CLIENT_URL || req.headers.origin;
+    const baseUrl = getClientUrl(req.headers.origin);
     sendDowngradeRevocationEmail(user, activePlanName, user.subscription?.expiresAt, baseUrl).catch(err => {
       console.error('[Downgrade Cancellation Email Error]:', err.message);
     });
