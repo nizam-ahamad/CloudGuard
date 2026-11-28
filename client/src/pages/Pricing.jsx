@@ -19,7 +19,7 @@ import toast, { Toaster } from 'react-hot-toast';
 
 const API_BASE_URL = (
   import.meta.env.VITE_API_URL ||
-  (window.location.hostname.endsWith('cloudguard.site') ? 'https://api.cloudguard.site' : 'http://localhost:5000')
+  ((window.location.hostname.endsWith('cloudguard.site') || import.meta.env.PROD) ? 'https://api.cloudguard.site' : 'http://localhost:5000')
 ).replace(/\/$/, '');
 
 const api = axios.create({
