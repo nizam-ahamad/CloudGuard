@@ -118,7 +118,7 @@ function buildCloudGuardEmail({ title, badge, contentHtml, ctaText, ctaUrl, isUr
         </tr>
         <tr>
           <td style="padding: 20px 20px; background-color: #f8fafc; border-top: 1px solid #f1f5f9; font-size: 12px; color: #64748b; line-height: 1.5;">
-            CloudGuard Vault • Zero-Knowledge AI-Protected Cloud Storage<br>
+            CloudGuard Vault • AI-Protected Cloud Storage<br>
             For support or questions, reach us at <a href="mailto:support@cloudguard.site" style="color: #2563eb; text-decoration: none;">support@cloudguard.site</a>.
           </td>
         </tr>
